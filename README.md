@@ -141,3 +141,25 @@ O guia para agentes, os cenários demo e o fluxo de verificações foram
 inspirados no [zapfast](https://github.com/crmne/zapfast), adaptados para este
 projeto. A simulação de dois participantes com atraso e falhas será adicionada
 quando a lógica de sincronização existir.
+
+## Travamento da janela em Wayland
+
+A janela também desativa a espera de VSync do EGL. Em Wayland/Hyprland, foi
+capturado um travamento em `eglSwapBuffers` com a janela sem foco e sem vídeo
+carregado. Esperar a apresentação na thread da janela impedia processar os
+eventos e responder aos pings do compositor. Essa opção não inicia um loop de pintura contínuo. A apresentação pode ter tearing em ambientes sem
+composição que não sincronizem a saída.
+
+Na sessão Wayland com Hyprland 0.55 ou posterior, Python 3 e GDB instalados,
+o teste do travamento em EGL pode ser executado com:
+
+```sh
+python3 scripts/test-wayland-focus.py
+```
+
+Ele compila e abre uma instância sem vídeo pelo GDB, move somente essa janela
+para um workspace especial oculto por 12 segundos e captura as threads.
+Falha se a thread principal estiver esperando em `SwapBuffers`, em vez de
+esperar eventos. O teste encerra sua própria instância. Não modifica regras
+do compositor e não faz parte do CI sem sessão gráfica. O backtrace fica em
+`.cache/wayland-focus-backtrace.log`.

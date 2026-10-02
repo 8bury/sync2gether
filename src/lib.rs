@@ -5,3 +5,4 @@ pub mod app;
 pub mod demo;
 pub mod model;
 pub mod ui;
+pub mod window;

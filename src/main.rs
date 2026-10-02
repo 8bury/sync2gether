@@ -1,5 +1,4 @@
 use clap::Parser;
-use eframe::egui;
 use sync2gether::app::App;
 
 #[derive(Parser)]
@@ -23,12 +22,7 @@ struct Args {
 
 fn main() -> eframe::Result {
     let _args = Args::parse();
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 640.0])
-            .with_min_inner_size([480.0, 480.0]),
-        ..Default::default()
-    };
+    let options = sync2gether::window::options();
     eframe::run_native(
         "sync2gether",
         options,

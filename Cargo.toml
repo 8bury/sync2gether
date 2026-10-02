@@ -1,0 +1,21 @@
+[package]
+name = "sync2gether"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "Assista a filmes locais em sincronia com outra pessoa pelo Tailscale"
+publish = false
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+
+[features]
+default = []
+demo = ["dep:image"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

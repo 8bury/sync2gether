@@ -1,0 +1,54 @@
+name: Verificações
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências de desenvolvimento e captura
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libgl1-mesa-dev libmpv-dev xvfb xauth
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/check.sh
+      - name: Captura da interface demo
+        run: |
+          mkdir -p .cache
+          cargo build --locked --features demo
+          timeout 30s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 target/debug/sync2gether --demo --demo-state synchronized --demo-shot .cache/demo.png
+          test -s .cache/demo.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-demo
+          path: .cache/demo.png
+
+  arch:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    steps:
+      - name: Dependências
+        run: pacman -Syu --noconfirm git rustup pkgconf wayland libxkbcommon mesa mpv
+      - uses: actions/checkout@v4
+      - name: Rust fixado
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+      - run: bash scripts/check.sh

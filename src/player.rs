@@ -5,7 +5,7 @@ pub use gl::GlRenderer;
 mod tracks;
 use libloading::Library;
 use std::{
-    ffi::{CString, c_char, c_int, c_void},
+    ffi::{CString, c_char, c_int, c_ulong, c_void},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -120,6 +120,7 @@ impl Param {
 
 struct Api {
     _library: Library,
+    version: unsafe extern "C" fn() -> c_ulong,
     create: unsafe extern "C" fn() -> *mut c_void,
     initialize: unsafe extern "C" fn(*mut c_void) -> c_int,
     destroy: unsafe extern "C" fn(*mut c_void),
@@ -153,6 +154,7 @@ impl Api {
                 };
             }
             Ok(Arc::new(Self {
+                version: symbol!("mpv_client_api_version"),
                 create: symbol!("mpv_create"),
                 initialize: symbol!("mpv_initialize"),
                 destroy: symbol!("mpv_terminate_destroy"),
@@ -367,6 +369,25 @@ fn run(
             if unsafe { (api.option)(handle, name.as_ptr(), value.as_ptr()) } < 0 {
                 return Err("Erro de configuração libmpv".into());
             }
+        }
+        if gl.is_none() {
+            // Os testes por software usam dois players em runners pequenos.
+            // Evita que cada decoder crie threads para todos os CPUs do host.
+            // A janela mantém o paralelismo automático do libmpv.
+            // SAFETY: opção C estática, handle válido e ainda não inicializado.
+            if unsafe { (api.option)(handle, c"vd-lavc-threads".as_ptr(), c"2".as_ptr()) } < 0 {
+                return Err("Erro de configuração do decoder por software".into());
+            }
+        }
+        // libmpv 0.37, API 2.2 do Ubuntu 24.04, produziu vídeo preto com
+        // rgba16f em Mesa/llvmpipe. RGBA16 inteiro passou pelos mesmos testes.
+        // APIs novas continuam usando a escolha automática do mpv.
+        // SAFETY: função sem argumentos e opção C estática; core não inicializado.
+        if gl.is_some()
+            && unsafe { (api.version)() } < ((2 << 16) | 3)
+            && unsafe { (api.option)(handle, c"fbo-format".as_ptr(), c"rgba16".as_ptr()) } < 0
+        {
+            return Err("Erro de configuração do framebuffer compatível".into());
         }
         if unsafe { (api.initialize)(handle) } < 0 {
             return Err("Erro ao inicializar libmpv".into());

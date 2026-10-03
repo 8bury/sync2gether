@@ -146,6 +146,15 @@ Filmes pesados, HDR e desempenho em GPUs físicas precisam de validação
 adicional. A integração segue [render.h](https://github.com/mpv-player/mpv/blob/master/include/mpv/render.h)
 e [render_gl.h](https://github.com/mpv-player/mpv/blob/master/include/mpv/render_gl.h).
 
+Com a API libmpv anterior a 2.3, o renderizador usa `fbo-format=rgba16`.
+No Ubuntu 24.04, libmpv 0.37 com Mesa/llvmpipe exibiu legendas sobre vídeo
+preto ao escolher `rgba16f`; RGBA16 inteiro passou pelos testes de vídeo em
+movimento e faixas. Essa configuração muda a representação intermediária
+de cor nas bibliotecas antigas. HDR e fidelidade de cor nesse caminho ainda
+precisam de validação. Bibliotecas novas mantêm a escolha automática do mpv.
+Os testes com renderizador por software limitam cada decoder a duas threads;
+a janela mantém o paralelismo automático do libmpv.
+
 O modo demo permanece offline, com treze cenários fictícios. Ele não inicia
 player, lê filmes ou abre sockets. Os testes de layout não validam áudio,
 vídeo, GPU ou sincronização entre PCs.

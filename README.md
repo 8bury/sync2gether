@@ -496,6 +496,9 @@ inicia uma instância isolada de PulseAudio e a encerra depois do teste.
 Instale `libpulse` no Arch ou `pulseaudio-utils` no Ubuntu para obter `pactl`.
 Em containers sem desktop, instale também `pulseaudio`. Esse teste verifica
 o processamento e o relógio do áudio, sem comprovar saída física de som.
+O teste usa o perfil `release`, com as mesmas otimizações dos pacotes.
+O proxy retém uma confirmação de preparação para testar a pausa antes de
+liberá-la; a confirmação atrasada não pode reiniciar o vídeo.
 Verifica play solicitado pelo convidado,
 seek, pause, desconexão, retorno à sala, recusa de arquivos diferentes e
 retomada após fim do vídeo. Também verifica entrada com aprovação, preparação

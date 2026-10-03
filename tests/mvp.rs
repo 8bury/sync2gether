@@ -1,6 +1,10 @@
 //! Integração real libmpv/TCP. Execute com scripts/test-mvp.sh.
 use std::{
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use sync2gether::{
@@ -8,6 +12,7 @@ use sync2gether::{
     runtime::{Command, Role, Runtime, View},
 };
 
+#[track_caller]
 fn wait(runtime: &Runtime, predicate: impl Fn(&View) -> bool) -> View {
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut last = String::new();
@@ -15,12 +20,17 @@ fn wait(runtime: &Runtime, predicate: impl Fn(&View) -> bool) -> View {
         if let Ok(view) = runtime.views.recv_timeout(Duration::from_millis(300)) {
             assert!(view.error.is_none(), "runtime error: {:?}", view.error);
             last = format!(
-                "{}: pos={}, paused={}, ready={}, blocked={}",
+                "{}: pos={}, loaded={}, paused={}, ready={}, blocked={}, connected={}, preparing={}, scheduled={}, last_start={:?}",
                 view.status,
                 view.player.position,
+                view.player.loaded,
                 view.player.paused,
                 view.ready,
-                view.player.blocked
+                view.player.blocked,
+                view.connected,
+                view.preparing,
+                view.scheduled,
+                view.last_start_id,
             );
             if predicate(&view) {
                 return view;
@@ -130,7 +140,7 @@ fn two_players_sync_mismatch_disconnect_and_resume() {
 }
 
 /// Um proxy por direção acrescenta atraso e jitter sem precisar de privilégios.
-async fn delayed_forward<R, W>(mut read: R, mut write: W)
+async fn delayed_forward<R, W>(mut read: R, mut write: W, hold_prepared: Arc<AtomicBool>)
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
@@ -138,6 +148,11 @@ where
     use sync2gether::network::{read_message, write_message};
     let mut n = 0;
     while let Ok(message) = read_message(&mut read).await {
+        while matches!(message, sync2gether::protocol::Message::Prepared { .. })
+            && hold_prepared.load(Ordering::SeqCst)
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
         let delay = [40, 65, 45, 55][n % 4];
         n += 1;
         tokio::time::sleep(Duration::from_millis(delay)).await;
@@ -159,12 +174,14 @@ fn schedules_two_real_players_under_network_delay_and_jitter() {
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .unwrap();
     let proxy_address = listener.local_addr().unwrap();
+    let hold_prepared = Arc::new(AtomicBool::new(false));
+    let proxy_hold = hold_prepared.clone();
     let proxy = io.spawn(async move {
         let (client, _) = listener.accept().await.unwrap();
         let server = tokio::net::TcpStream::connect(address).await.unwrap();
         let (cr, cw) = client.into_split();
         let (sr, sw) = server.into_split();
-        tokio::select! { _ = delayed_forward(cr, sw) => {}, _ = delayed_forward(sr, cw) => {} }
+        tokio::select! { _ = delayed_forward(cr, sw, proxy_hold.clone()) => {}, _ = delayed_forward(sr, cw, proxy_hold) => {} }
     });
     let host = Runtime::start();
     let guest = Runtime::start();
@@ -209,11 +226,14 @@ fn schedules_two_real_players_under_network_delay_and_jitter() {
     });
     let g2 = wait(&guest, |v| v.last_start_id == h2.last_start_id);
     assert!((h2.last_start_ms.unwrap() - g2.last_start_ms.unwrap()).abs() < 100.0);
-    // Pause cancela uma preparação em andamento, mesmo com mensagens no proxy.
+    // Retém Prepared para observar a preparação entre views de 200 ms.
+    // Depois da pausa, entrega a confirmação atrasada e verifica que não reinicia.
+    hold_prepared.store(true, Ordering::SeqCst);
     send(&guest, Command::Control(Control::Seek(10.0)));
     wait(&host, |v| v.preparing);
     send(&host, Command::Control(Control::Pause));
     wait(&host, |v| !v.preparing && !v.scheduled && v.player.paused);
+    hold_prepared.store(false, Ordering::SeqCst);
     wait(&guest, |v| !v.preparing && !v.scheduled && v.player.paused);
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {

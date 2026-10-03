@@ -12,4 +12,4 @@ ffmpeg -hide_banner -loglevel error -y \
 cp .cache/mvp-fixture.mkv .cache/mvp-different.mkv
 cp .cache/mvp-fixture.mkv .cache/mvp-renamed.mkv
 printf 'different synthetic fixture\n' >> .cache/mvp-different.mkv
-cargo test --locked --test mvp -- --ignored --nocapture --test-threads=1
+cargo test --release --locked --test mvp -- --ignored --nocapture --test-threads=1

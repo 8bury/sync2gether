@@ -1,0 +1,21 @@
+# Empacota o binário compilado no Arch por scripts/package.sh.
+pkgname=sync2gether
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Assista a filmes locais em sincronia pela rede local ou VPN'
+arch=('x86_64')
+url='https://github.com/8bury/sync2gether'
+license=('LicenseRef-Unknown')
+depends=('glibc' 'gcc-libs' 'mpv' 'libxkbcommon' 'wayland' 'mesa'
+         'libx11' 'libxcursor' 'libxi' 'libxrandr' 'libxcb' 'xdg-desktop-portal')
+optdepends=('xdg-desktop-portal-gtk: seletor de arquivos em ambientes GTK'
+            'xdg-desktop-portal-kde: seletor de arquivos em ambientes KDE')
+options=('!strip' '!debug')
+source=('sync2gether' 'sync2gether.desktop')
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/sync2gether" "$pkgdir/usr/bin/sync2gether"
+  install -Dm644 "$srcdir/sync2gether.desktop" \
+    "$pkgdir/usr/share/applications/sync2gether.desktop"
+}

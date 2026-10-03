@@ -4,11 +4,13 @@
 
 O sync2gether é um aplicativo de desktop para duas pessoas assistirem ao mesmo
 filme, com uma cópia local em cada PC. Arch Linux e Ubuntu são as plataformas
-iniciais. Os PCs se comunicam pelo Tailscale; um deles coordena a sala.
+iniciais. Os PCs se comunicam por TCP na rede local ou VPN; um deles coordena a sala.
+A descoberta usa anúncios UDP por multicast e broadcast nas interfaces IPv4,
+sem depender de um provedor de VPN. Entrada manual por IP:porta é alternativa.
 
-A stack escolhida é Rust, egui/eframe, Tokio, Serde e libmpv. O projeto está na
-fase de estrutura inicial: a interface demo funciona, mas ainda não há player
-nem conexão de rede. Não apresente estados simulados como funcionalidades reais.
+A stack escolhida é Rust, egui/eframe, Tokio, Serde e libmpv. O MVP tem player libmpv, salas TCP e sincronização coordenada pelo anfitrião.
+O modo demo continua fictício e offline. Não apresente estados simulados como
+funcionalidades reais.
 
 ## Organização
 
@@ -18,10 +20,22 @@ nem conexão de rede. Não apresente estados simulados como funcionalidades reai
 - `src/ui.rs`: desenho das telas. Retorna ações, sem realizar I/O.
 - `src/demo.rs`: cenários fictícios e captura de screenshots, apenas com a
   feature `demo`.
+- `src/runtime.rs`: comandos/eventos entre UI e trabalho em segundo plano.
+- `src/player.rs`: FFI libmpv e thread de controle.
+- `src/player/gl.rs`: renderização no contexto OpenGL da janela.
+- `src/player_ui.rs`: controles sobre o vídeo, sem I/O.
+- `src/network.rs` e `src/protocol.rs`: transporte e mensagens versionadas.
+- `src/network/rooms.rs`: descoberta, aprovação de entrada e tokens de reconexão.
+- `src/discovery.rs`: anúncios UDP na rede e confirmação TCP de salas em segundo plano.
+- `src/session.rs` e `src/sync.rs`: preparação confirmada, início agendado,
+  relógio monotônico filtrado e correção de reprodução.
+- `src/media.rs`: identidade dos arquivos locais.
 - `tests/layout.rs`: teste da interface sem janela ou conexão.
+- `tests/network.rs`: comunicação TCP real em localhost.
+- `tests/mvp.rs`: dois players reais com fixture sintética, executado por
+  `bash scripts/test-mvp.sh`, incluindo proxy com atraso e jitter.
 
-Quando implementados, a rede e o player devem ficar em módulos separados da
-interface. A comunicação entre a UI e o trabalho em segundo plano deve usar
+A rede e o player ficam em módulos separados da interface. A comunicação entre a UI e o trabalho em segundo plano deve usar
 comandos e eventos. Não bloqueie a UI com acesso a disco, rede ou decodificação.
 Use libmpv para reprodução e Tokio para rede; não implemente codecs próprios.
 

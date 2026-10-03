@@ -12,7 +12,15 @@ use crate::model::SessionState;
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum Scenario {
     Idle,
+    Browsing,
     Waiting,
+    Approval,
+    Choosing,
+    Verifying,
+    Mismatch,
+    Stabilizing,
+    PlayerError,
+    Ready,
     Synchronized,
     Paused,
     Reconnecting,
@@ -22,6 +30,14 @@ impl From<Scenario> for SessionState {
     fn from(scenario: Scenario) -> Self {
         match scenario {
             Scenario::Idle => Self::Idle,
+            Scenario::Browsing => Self::Browsing,
+            Scenario::Approval => Self::Approval,
+            Scenario::Choosing => Self::Choosing,
+            Scenario::Verifying => Self::Verifying,
+            Scenario::Mismatch => Self::Mismatch,
+            Scenario::Stabilizing => Self::Stabilizing,
+            Scenario::PlayerError => Self::PlayerError,
+            Scenario::Ready => Self::Ready,
             Scenario::Waiting => Self::Waiting,
             Scenario::Synchronized => Self::Synchronized,
             Scenario::Paused => Self::Paused,
@@ -72,7 +88,7 @@ impl Capture {
         } else if self.started.elapsed() > Duration::from_secs(15) {
             eprintln!("A captura não foi recebida em 15 segundos.");
             std::process::exit(1);
-        } else if !self.requested && self.started.elapsed() >= Duration::from_millis(300) {
+        } else if !self.requested && self.started.elapsed() >= Duration::from_millis(900) {
             self.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }

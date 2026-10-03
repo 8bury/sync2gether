@@ -1,0 +1,40 @@
+name: Pacotes Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - format: deb
+            image: ubuntu:24.04
+          - format: arch
+            image: archlinux:base-devel
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 60
+    steps:
+      - name: Dependências do checkout
+        run: |
+          if [ '${{ matrix.format }}' = arch ]; then
+            pacman -Syu --noconfirm git
+          else
+            apt-get update
+            apt-get install -y git ca-certificates
+          fi
+      - uses: actions/checkout@v4
+      - name: Verificar, compilar e instalar o pacote
+        run: bash scripts/release-container.sh '${{ matrix.format }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sync2gether-${{ matrix.format }}
+          path: |
+            target/dist/*.deb
+            target/dist/*.pkg.tar.zst
+          if-no-files-found: error

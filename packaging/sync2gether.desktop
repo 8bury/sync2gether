@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=sync2gether
+Comment=Watch local movies in sync with another person
+Comment[pt_BR]=Assista a filmes locais em sincronia com outra pessoa
+Exec=sync2gether
+Icon=video-x-generic
+Terminal=false
+Categories=AudioVideo;Video;Player;
+StartupWMClass=sync2gether

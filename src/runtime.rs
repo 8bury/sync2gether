@@ -99,6 +99,7 @@ pub struct Runtime {
     pub views: std_mpsc::Receiver<View>,
     pub frames: player::Frames,
     origin: Instant,
+    join: Option<std::thread::JoinHandle<()>>,
 }
 impl Runtime {
     /// Interpola a posição para a barra de progresso entre eventos do player.
@@ -124,7 +125,7 @@ impl Runtime {
         let origin = Instant::now();
         let player = player::Player::start_with_renderer(events, origin, gl);
         let frames = player.frames.clone();
-        std::thread::spawn(move || {
+        let join = std::thread::spawn(move || {
             match tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
                 .enable_all()
@@ -146,6 +147,17 @@ impl Runtime {
             views: output,
             frames,
             origin,
+            join: Some(join),
+        }
+    }
+
+    /// Encerra rede e player e aguarda a liberação das threads nativas.
+    /// Chame fora de um runtime Tokio, após destruir o renderizador OpenGL.
+    /// Esta espera é somente para o encerramento, nunca para ações da UI.
+    pub fn shutdown(&mut self) {
+        if let Some(join) = self.join.take() {
+            let _ = self.commands.blocking_send(Command::Shutdown);
+            let _ = join.join();
         }
     }
 }

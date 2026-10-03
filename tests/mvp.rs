@@ -32,6 +32,16 @@ fn wait(runtime: &Runtime, predicate: impl Fn(&View) -> bool) -> View {
 fn send(runtime: &Runtime, command: Command) {
     runtime.commands.blocking_send(command).unwrap();
 }
+fn shutdown(mut runtime: Runtime) {
+    runtime.shutdown();
+    runtime.shutdown();
+    // O retorno deve ocorrer depois de liberar o player e fechar os eventos.
+    while runtime.views.try_recv().is_ok() {}
+    assert!(matches!(
+        runtime.views.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Disconnected)
+    ));
+}
 
 #[test]
 #[ignore = "requer libmpv e vídeo sintético gerado por scripts/test-mvp.sh"]
@@ -115,8 +125,8 @@ fn two_players_sync_mismatch_disconnect_and_resume() {
     send(&guest, Command::Control(Control::Seek(0.0)));
     wait(&host, |v| v.ready && v.player.position < 0.5);
     wait(&guest, |v| v.ready && v.player.position < 0.5);
-    send(&host, Command::Shutdown);
-    send(&guest, Command::Shutdown);
+    shutdown(host);
+    shutdown(guest);
 }
 
 /// Um proxy por direção acrescenta atraso e jitter sem precisar de privilégios.
@@ -213,8 +223,8 @@ fn schedules_two_real_players_under_network_delay_and_jitter() {
             .unwrap();
         assert!(v.player.paused, "a canceled operation restarted playback");
     }
-    send(&host, Command::Shutdown);
-    send(&guest, Command::Shutdown);
+    shutdown(host);
+    shutdown(guest);
     proxy.abort();
 }
 
@@ -265,8 +275,8 @@ fn approved_room_waits_for_explicit_play_and_returns_to_preparation_on_file_chan
     wait(&host, |v| !v.connected && v.player.paused);
     let guest_view = wait(&guest, |v| v.role == Role::Local);
     assert!(!guest_view.watching);
-    send(&host, Command::Shutdown);
-    send(&guest, Command::Shutdown);
+    shutdown(host);
+    shutdown(guest);
 }
 
 #[test]
@@ -312,6 +322,6 @@ fn automatic_host_and_live_discovery_work_without_a_vpn() {
         !v.rooms.iter().any(|room| room.address.port() == port)
     });
     send(&guest, Command::CancelDiscovery);
-    send(&host, Command::Shutdown);
-    send(&guest, Command::Shutdown);
+    shutdown(host);
+    shutdown(guest);
 }

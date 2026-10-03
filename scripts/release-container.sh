@@ -12,14 +12,14 @@ mkdir -p target
 
 case "$kind" in
   arch)
-    pacman -Syu --noconfirm --needed rustup git pkgconf wayland libxkbcommon mesa mpv ffmpeg xorg-server-xvfb xorg-xauth
+    pacman -Syu --noconfirm --needed rustup git pkgconf wayland libxkbcommon libxkbcommon-x11 mesa mpv ffmpeg pulseaudio xorg-server-xvfb xorg-xauth
     rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
     rustup default 1.98.0
     ;;
   deb)
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y --no-install-recommends build-essential curl ca-certificates git pkg-config libwayland-dev libxkbcommon-dev libgl1-mesa-dev libmpv-dev ffmpeg xvfb xauth
+    apt-get install -y --no-install-recommends build-essential curl ca-certificates git pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev libmpv-dev ffmpeg pulseaudio pulseaudio-utils xvfb xauth
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o target/rustup-init.sh
     bash target/rustup-init.sh -y --profile minimal --default-toolchain 1.98.0
     rustup component add rustfmt clippy

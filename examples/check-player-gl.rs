@@ -275,6 +275,7 @@ impl eframe::App for Check {
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.renderer.destroy();
+        self.runtime.shutdown();
     }
 }
 fn main() -> eframe::Result {

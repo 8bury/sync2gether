@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+if [[ ${SYNC2GETHER_TEST_AUDIO:-0} != 1 ]]; then
+  exec bash scripts/with-test-audio.sh bash scripts/test-mvp.sh "$@"
+fi
 mkdir -p .cache
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i 'testsrc2=size=640x360:rate=24' \

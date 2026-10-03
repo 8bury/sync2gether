@@ -293,6 +293,11 @@ um erro de instalação. Compilar e executar a demo não exige essa biblioteca.
 - `runtime.rs` conecta esses módulos por comandos e eventos. A UI só apresenta
   os dados e devolve ações.
 
+Ao fechar a janela, o aplicativo destrói o renderizador no contexto OpenGL
+e aguarda o encerramento do runtime, do player e das threads nativas do libmpv.
+Essa espera ocorre somente no fechamento. Os testes de integração também
+aguardam esse encerramento antes de iniciar o próximo cenário.
+
 A sincronização usa preparação confirmada e início agendado:
 
 1. O anfitrião ordena cada play ou seek e atribui um identificador à operação.
@@ -393,14 +398,14 @@ executados na pasta do projeto. Mantenha `Cargo.lock` no controle de versão.
 No Arch Linux:
 
 ```sh
-sudo pacman -S --needed base-devel rustup pkgconf wayland libxkbcommon mesa mpv
+sudo pacman -S --needed base-devel rustup pkgconf wayland libxkbcommon libxkbcommon-x11 mesa mpv
 ```
 
 No Ubuntu:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libgl1-mesa-dev libmpv-dev
+sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev libmpv-dev
 ```
 
 Os pacotes mpv/libmpv-dev fornecem libmpv para reprodução. A interface demo
@@ -468,14 +473,21 @@ localhost e verificam autenticação, ordenação, timeout e reconexão.
 
 ## Teste de integração do MVP
 
-Com libmpv e FFmpeg instalados, execute:
+Com libmpv, FFmpeg e `pactl` instalados, execute:
 
 ```sh
 bash scripts/test-mvp.sh
 ```
 
 O script gera um vídeo sintético com áudio em `.cache/` e executa dois players
-reais conectados por localhost. Verifica play solicitado pelo convidado,
+reais conectados por localhost. O áudio usa um sink virtual temporário, sem
+enviar a fixture aos alto-falantes. Em um desktop, ele usa o servidor PulseAudio
+ou PipeWire-Pulse existente e remove somente seu sink ao terminar. Sem servidor,
+inicia uma instância isolada de PulseAudio e a encerra depois do teste.
+Instale `libpulse` no Arch ou `pulseaudio-utils` no Ubuntu para obter `pactl`.
+Em containers sem desktop, instale também `pulseaudio`. Esse teste verifica
+o processamento e o relógio do áudio, sem comprovar saída física de som.
+Verifica play solicitado pelo convidado,
 seek, pause, desconexão, retorno à sala, recusa de arquivos diferentes e
 retomada após fim do vídeo. Também verifica entrada com aprovação, preparação
 sem play automático e retorno à preparação quando alguém troca o arquivo. Um segundo cenário usa um proxy TCP com atraso
@@ -488,7 +500,8 @@ precisam de display.
 O teste fica ignorado no comando Cargo padrão porque depende de libmpv e FFmpeg;
 o CI o executa explicitamente em Arch e Ubuntu.
 
-Para validar o renderizador com uma janela real, libmpv e FFmpeg:
+Para validar o renderizador com uma janela real, libmpv, FFmpeg e o mesmo
+ambiente de áudio virtual:
 
 ```sh
 bash scripts/test-player-gl.sh

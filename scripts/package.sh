@@ -36,7 +36,7 @@ Priority: optional
 Architecture: amd64
 Maintainer: 8bury <8bury@users.noreply.github.com>
 Installed-Size: $size
-Depends: libc6 (>= 2.39), libgcc-s1, libmpv2, libxkbcommon0, libwayland-client0, libwayland-cursor0, libwayland-egl1, libgl1, libegl1, libx11-6, libxcursor1, libxi6, libxrandr2, libxcb1, xdg-desktop-portal
+Depends: libc6 (>= 2.39), libgcc-s1, libmpv2, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1, libgl1, libegl1, libx11-6, libxcursor1, libxi6, libxrandr2, libxcb1, xdg-desktop-portal
 Recommends: xdg-desktop-portal-gtk | xdg-desktop-portal-kde
 Homepage: https://github.com/8bury/sync2gether
 Description: Watch local movies in sync over LAN or VPN

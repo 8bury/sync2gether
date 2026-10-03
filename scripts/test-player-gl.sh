@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+if [[ ${SYNC2GETHER_TEST_AUDIO:-0} != 1 ]]; then
+  exec bash scripts/with-test-audio.sh bash scripts/test-player-gl.sh "$@"
+fi
 mkdir -p .cache
 cat > .cache/player-gl-subtitles.srt <<'SUBTITLES'
 1

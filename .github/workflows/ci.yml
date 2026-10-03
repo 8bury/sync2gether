@@ -21,7 +21,7 @@ jobs:
       - name: Dependências de desenvolvimento e captura
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libgl1-mesa-dev libmpv-dev ffmpeg xvfb xauth
+          sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev libmpv-dev ffmpeg pulseaudio pulseaudio-utils xvfb xauth
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.0
@@ -50,7 +50,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Dependências
-        run: pacman -Syu --noconfirm git rustup pkgconf wayland libxkbcommon mesa mpv ffmpeg
+        run: pacman -Syu --noconfirm git rustup pkgconf wayland libxkbcommon libxkbcommon-x11 mesa mpv ffmpeg pulseaudio
       - uses: actions/checkout@v4
       - name: Rust fixado
         run: |

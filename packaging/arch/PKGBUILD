@@ -6,7 +6,7 @@ pkgdesc='Assista a filmes locais em sincronia pela rede local ou VPN'
 arch=('x86_64')
 url='https://github.com/8bury/sync2gether'
 license=('LicenseRef-Unknown')
-depends=('glibc' 'gcc-libs' 'mpv' 'libxkbcommon' 'wayland' 'mesa'
+depends=('glibc' 'gcc-libs' 'mpv' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'mesa'
          'libx11' 'libxcursor' 'libxi' 'libxrandr' 'libxcb' 'xdg-desktop-portal')
 optdepends=('xdg-desktop-portal-gtk: seletor de arquivos em ambientes GTK'
             'xdg-desktop-portal-kde: seletor de arquivos em ambientes KDE')

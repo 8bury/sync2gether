@@ -96,7 +96,9 @@ impl eframe::App for App {
         if let Some(renderer) = &self.renderer {
             renderer.destroy();
         }
-        self.runtime.take();
+        if let Some(mut runtime) = self.runtime.take() {
+            runtime.shutdown();
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

@@ -42,6 +42,19 @@ fn wait(runtime: &Runtime, predicate: impl Fn(&View) -> bool) -> View {
 fn send(runtime: &Runtime, command: Command) {
     runtime.commands.blocking_send(command).unwrap();
 }
+/// Abre um arquivo em cada player, um de cada vez.
+///
+/// Os testes rodam dois libmpv no mesmo processo; o app tem um só. Nos
+/// containers Arch, onde o mpv tenta o PipeWire antes do PulseAudio, os dois
+/// iniciando o áudio no mesmo instante às vezes deixavam um deles sem terminar
+/// de carregar. Carregar em sequência evita essa disputa sem mudar o que é
+/// testado depois.
+fn open_both(host: &Runtime, host_file: PathBuf, guest: &Runtime, guest_file: PathBuf) {
+    send(host, Command::OpenPath(host_file));
+    wait(host, |v| v.player.loaded);
+    send(guest, Command::OpenPath(guest_file));
+    wait(guest, |v| v.player.loaded);
+}
 fn shutdown(mut runtime: Runtime) {
     runtime.shutdown();
     runtime.shutdown();
@@ -63,13 +76,12 @@ fn two_players_sync_mismatch_disconnect_and_resume() {
     drop(listener);
     let host = Runtime::start();
     let guest = Runtime::start();
-    send(&host, Command::OpenPath(fixture.clone()));
-    send(
+    open_both(
+        &host,
+        fixture.clone(),
         &guest,
-        Command::OpenPath(fixture.with_file_name("mvp-renamed.mkv")),
+        fixture.with_file_name("mvp-renamed.mkv"),
     );
-    wait(&host, |v| v.player.loaded);
-    wait(&guest, |v| v.player.loaded);
     send(&host, Command::Host(address.clone()));
     let host_view = wait(&host, |v| v.role == Role::Host);
     let key = host_view.room_key;
@@ -243,10 +255,7 @@ fn schedules_two_real_players_under_network_delay_and_jitter() {
     let (proxy_address, proxy) = proxy(&io, address, link);
     let host = Runtime::start();
     let guest = Runtime::start();
-    send(&host, Command::OpenPath(fixture.clone()));
-    send(&guest, Command::OpenPath(fixture));
-    wait(&host, |v| v.player.loaded);
-    wait(&guest, |v| v.player.loaded);
+    open_both(&host, fixture.clone(), &guest, fixture);
     send(&host, Command::Host(address.to_string()));
     let key = wait(&host, |v| v.role == Role::Host).room_key;
     send(&guest, Command::Join(proxy_address.to_string(), key));
@@ -346,10 +355,7 @@ fn intercontinental_delay_survives_stalls_and_pauses_when_the_link_is_lost() {
     let (proxy_address, proxy) = proxy(&io, address, link);
     let host = Runtime::start();
     let guest = Runtime::start();
-    send(&host, Command::OpenPath(fixture.clone()));
-    send(&guest, Command::OpenPath(fixture));
-    wait(&host, |v| v.player.loaded);
-    wait(&guest, |v| v.player.loaded);
+    open_both(&host, fixture.clone(), &guest, fixture);
     send(&host, Command::Host(address.to_string()));
     let key = wait(&host, |v| v.role == Role::Host).room_key;
     send(&guest, Command::Join(proxy_address.to_string(), key));
@@ -435,8 +441,7 @@ fn approved_room_waits_for_explicit_play_and_returns_to_preparation_on_file_chan
         },
     );
     wait(&guest, |v| v.connected);
-    send(&host, Command::OpenPath(fixture.clone()));
-    send(&guest, Command::OpenPath(fixture.clone()));
+    open_both(&host, fixture.clone(), &guest, fixture.clone());
     let h = wait(&host, |v| v.ready);
     let g = wait(&guest, |v| v.ready);
     assert!(h.player.paused && g.player.paused && !h.watching && !g.watching);
@@ -585,10 +590,7 @@ fn internet_room_syncs_two_real_players_through_the_relay_with_intercontinental_
     });
     let host = Runtime::start();
     let guest = Runtime::start();
-    send(&host, Command::OpenPath(fixture.clone()));
-    send(&guest, Command::OpenPath(fixture));
-    wait(&host, |v| v.player.loaded);
-    wait(&guest, |v| v.player.loaded);
+    open_both(&host, fixture.clone(), &guest, fixture);
     send(&host, Command::HostInternet(relay.to_string()));
     let code = wait(&host, |v| v.room_code.is_some()).room_code.unwrap();
     send(

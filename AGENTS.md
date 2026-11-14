@@ -4,9 +4,10 @@
 
 O sync2gether é um aplicativo de desktop para duas pessoas assistirem ao mesmo
 filme, com uma cópia local em cada PC. Arch Linux e Ubuntu são as plataformas
-iniciais. Os PCs se comunicam por TCP na rede local ou VPN; um deles coordena a sala.
-A descoberta usa anúncios UDP por multicast e broadcast nas interfaces IPv4,
-sem depender de um provedor de VPN. Entrada manual por IP:porta é alternativa.
+iniciais. Um dos PCs coordena a sala. O fluxo principal é pela internet: os
+dois apps se encontram no relay (`relay/`) com um código e cifram as mensagens
+de ponta a ponta. Nas opções avançadas, a sala pode usar TCP direto na rede
+local ou VPN, com descoberta UDP por multicast e broadcast e entrada por IP:porta.
 
 A stack escolhida é Rust, egui/eframe, Tokio, Serde e libmpv. O MVP tem player libmpv, salas TCP e sincronização coordenada pelo anfitrião.
 O modo demo continua fictício e offline. Não apresente estados simulados como
@@ -26,12 +27,17 @@ funcionalidades reais.
 - `src/player_ui.rs`: controles sobre o vídeo, sem I/O.
 - `src/network.rs` e `src/protocol.rs`: transporte e mensagens versionadas.
 - `src/network/rooms.rs`: descoberta, aprovação de entrada e tokens de reconexão.
+- `src/network/relay.rs`: salas pela internet, código da sala e reconexão pelo relay.
+- `src/network/secure.rs`: SPAKE2 com o código e canal Noise cifrado.
+- `relay/`: servidor intermediário, sem dependências da interface; publicado
+  com `relay/Dockerfile`.
 - `src/discovery.rs`: anúncios UDP na rede e confirmação TCP de salas em segundo plano.
 - `src/session.rs` e `src/sync.rs`: preparação confirmada, início agendado,
   relógio monotônico filtrado e correção de reprodução.
 - `src/media.rs`: identidade dos arquivos locais.
 - `tests/layout.rs`: teste da interface sem janela ou conexão.
 - `tests/network.rs`: comunicação TCP real em localhost.
+- `tests/relay.rs`: salas pela internet com relay real em localhost.
 - `tests/mvp.rs`: dois players reais com fixture sintética, executado por
   `bash scripts/test-mvp.sh`, incluindo proxy com atraso e jitter.
 
@@ -76,7 +82,9 @@ ou arquivos grandes em `/tmp`.
 
 O modo demo deve funcionar sem Tailscale, abrir sockets ou ler arquivos pessoais.
 Logs de diagnóstico não devem incluir caminhos completos dos filmes, tokens
-ou outros dados pessoais.
+ou outros dados pessoais. O relay registra apenas contadores agregados, sem
+códigos, números de sala ou endereços. Ele nunca deve receber as palavras do
+código nem conteúdo da sala em texto claro.
 
 ## Referências
 

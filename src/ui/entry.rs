@@ -1,4 +1,4 @@
-//! Início, descoberta e solicitação de entrada. Apenas retorna comandos.
+//! Início, entrada por código, descoberta e solicitação de entrada. Apenas retorna comandos.
 use super::{
     Inputs, Palette, Screen, card, feedback, kit, quiet, secondary, strong, title, visuals,
 };
@@ -44,7 +44,7 @@ pub(super) fn home(
             .fill_width(ui)
             .show(ui, colors);
             if create.clicked() {
-                actions.push(Command::HostAuto(inputs.port));
+                actions.push(Command::HostInternet(inputs.relay.clone()));
             }
             let join = kit::Button::new(kit::Kind::Secondary, "Entrar em uma sala")
                 .glyph(kit::Glyph::ArrowRight)
@@ -52,8 +52,34 @@ pub(super) fn home(
                 .fill_width(ui)
                 .show(ui, colors);
             if join.clicked() {
-                inputs.screen = Screen::Browse;
-                actions.push(Command::Discover);
+                inputs.screen = Screen::Join;
+            }
+            if inputs.lan {
+                ui.add_space(if compact { 0.0 } else { 4.0 });
+                ui.label(
+                    RichText::new("Rede local ou VPN")
+                        .small()
+                        .color(colors.muted),
+                );
+                if kit::Button::new(kit::Kind::Ghost, "Criar sala na rede local")
+                    .size(kit::Size::Medium)
+                    .enabled(!view.hosting)
+                    .fill_width(ui)
+                    .show(ui, colors)
+                    .clicked()
+                {
+                    actions.push(Command::HostAuto(inputs.port));
+                }
+                if kit::Button::new(kit::Kind::Ghost, "Procurar na rede local")
+                    .size(kit::Size::Medium)
+                    .enabled(!view.hosting)
+                    .fill_width(ui)
+                    .show(ui, colors)
+                    .clicked()
+                {
+                    inputs.screen = Screen::Browse;
+                    actions.push(Command::Discover);
+                }
             }
             ui.add_space(if compact { 0.0 } else { 4.0 });
             if kit::Button::new(kit::Kind::Link, "Abrir filme sozinho")
@@ -84,6 +110,118 @@ pub(super) fn home(
     });
 }
 
+/// Campo do código da sala pela internet.
+pub(super) fn join(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    view: &View,
+    inputs: &mut Inputs,
+    actions: &mut Vec<Command>,
+) {
+    if kit::Button::new(kit::Kind::Ghost, "Voltar")
+        .glyph(kit::Glyph::ArrowLeft)
+        .size(kit::Size::Small)
+        .show(ui, colors)
+        .clicked()
+    {
+        inputs.screen = Screen::Home;
+    }
+    ui.add_space(6.0);
+    ui.label(title(ui, "Entrar em uma sala", 26.0));
+    ui.label(RichText::new("Peça o código para quem criou a sala.").color(colors.muted));
+    ui.add_space(10.0);
+    card(colors)
+        .fill(colors.surface)
+        .inner_margin(20)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let code_label = ui.label(RichText::new("Código da sala").small().color(colors.muted));
+            ui.add_space(2.0);
+            let wide = ui.available_width() >= 460.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), if wide { 48.0 } else { 106.0 }),
+                if wide {
+                    egui::Layout::left_to_right(egui::Align::Center)
+                } else {
+                    egui::Layout::top_down(egui::Align::Min)
+                },
+                |ui| {
+                    let valid = crate::network::relay::Code::parse(&inputs.code).is_some();
+                    let button = kit::Button::new(
+                        if valid {
+                            kit::Kind::Primary
+                        } else {
+                            kit::Kind::Secondary
+                        },
+                        "Entrar",
+                    )
+                    .glyph(kit::Glyph::ArrowRight);
+                    let field_width = if wide {
+                        ui.available_width()
+                            - button.natural_width(ui)
+                            - ui.spacing().item_spacing.x
+                    } else {
+                        ui.available_width()
+                    };
+                    let field = ui
+                        .add_sized(
+                            [field_width, 48.0],
+                            egui::TextEdit::singleline(&mut inputs.code)
+                                .id(egui::Id::new("room_code"))
+                                .hint_text(RichText::new("4821-gato-lua").color(colors.faint))
+                                .margin(egui::vec2(14.0, 14.0)),
+                        )
+                        .labelled_by(code_label.id)
+                        .on_hover_text("Número e duas palavras, como 4821-gato-lua");
+                    // Valide após desenhar o campo para aceitar a edição e Enter no mesmo frame.
+                    let valid = crate::network::relay::Code::parse(&inputs.code).is_some();
+                    let button = if wide { button } else { button.fill_width(ui) };
+                    if button.enabled(valid).show(ui, colors).clicked()
+                        || valid
+                            && field.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    {
+                        inputs.code_entry = true;
+                        actions.push(Command::JoinCode {
+                            relay: inputs.relay.clone(),
+                            code: inputs.code.clone(),
+                        });
+                    }
+                },
+            );
+            // O aviso só aparece quando já há número e palavras suficientes para conferir.
+            let parts = inputs
+                .code
+                .split(|c: char| c == '-' || c == '.' || c.is_whitespace())
+                .filter(|part| !part.is_empty())
+                .count();
+            if parts >= 3 && crate::network::relay::Code::parse(&inputs.code).is_none() {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(crate::runtime::CODE_HINT)
+                            .small()
+                            .color(colors.warning),
+                    )
+                    .wrap(),
+                );
+            }
+        });
+    ui.add_space(8.0);
+    feedback(ui, view);
+    if inputs.lan {
+        ui.add_space(4.0);
+        if kit::Button::new(kit::Kind::Link, "Procurar salas na rede local")
+            .size(kit::Size::Medium)
+            .show(ui, colors)
+            .clicked()
+        {
+            inputs.screen = Screen::Browse;
+            actions.push(Command::Discover);
+        }
+    }
+}
+
 pub(super) fn browse(
     ui: &mut egui::Ui,
     colors: Palette,
@@ -100,6 +238,7 @@ pub(super) fn browse(
         inputs.screen = Screen::Home;
         actions.push(Command::CancelDiscovery);
     }
+    ui.add_space(2.0);
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label(title(ui, "Salas disponíveis", 26.0));
@@ -405,6 +544,8 @@ pub(super) fn connecting(
                     if view.waiting_approval {
                         step(ui, colors, true, "Anfitrião encontrado");
                         step(ui, colors, false, "Aguardando aprovação");
+                    } else if view.internet {
+                        step(ui, colors, false, "Conectando pela internet…");
                     } else {
                         step(ui, colors, false, "Conectando ao anfitrião…");
                     }

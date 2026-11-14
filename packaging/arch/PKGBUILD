@@ -1,8 +1,8 @@
 # Empacota o binário compilado no Arch por scripts/package.sh.
 pkgname=sync2gether
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
-pkgdesc='Assista a filmes locais em sincronia pela rede local ou VPN'
+pkgdesc='Assista a filmes locais em sincronia pela internet ou rede local'
 arch=('x86_64')
 url='https://github.com/8bury/sync2gether'
 license=('LicenseRef-Unknown')

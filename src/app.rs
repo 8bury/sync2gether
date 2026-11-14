@@ -48,16 +48,33 @@ impl App {
     pub fn with_commands(commands: Vec<crate::runtime::Command>) -> Self {
         Self::default().queue_commands(commands)
     }
+    /// Relay das salas pela internet, de `--relay` ou `SYNC2GETHER_RELAY`.
+    pub fn with_relay(mut self, relay: String) -> Self {
+        self.inputs.relay = relay;
+        self
+    }
     fn queue_commands(mut self, commands: Vec<crate::runtime::Command>) -> Self {
         for command in &commands {
             match command {
-                crate::runtime::Command::Host(address) => self.inputs.address = address.clone(),
+                crate::runtime::Command::Host(address) => {
+                    self.inputs.address = address.clone();
+                    self.inputs.lan = true;
+                }
                 crate::runtime::Command::HostRoom(address)
                 | crate::runtime::Command::RequestJoin(address) => {
-                    self.inputs.address = address.clone()
+                    self.inputs.address = address.clone();
+                    self.inputs.lan = true;
                 }
                 crate::runtime::Command::Join(address, _) => {
                     self.inputs.address = address.clone();
+                    self.inputs.lan = true;
+                }
+                crate::runtime::Command::HostAuto(_) => self.inputs.lan = true,
+                crate::runtime::Command::HostInternet(relay) => self.inputs.relay = relay.clone(),
+                crate::runtime::Command::JoinCode { relay, code } => {
+                    self.inputs.relay = relay.clone();
+                    self.inputs.code = code.clone();
+                    self.inputs.code_entry = true;
                 }
                 _ => {}
             }

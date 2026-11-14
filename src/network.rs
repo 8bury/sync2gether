@@ -1,4 +1,5 @@
-//! TCP enquadrado e limitado. Criptografia depende da rede ou VPN utilizada.
+//! TCP enquadrado e limitado. Pela internet, o relay e o canal de `secure`
+//! cifram as mensagens; na rede local, a proteção depende da rede ou VPN.
 use crate::protocol::{MAX_MESSAGE, Message, VERSION};
 use std::{
     io,
@@ -12,7 +13,9 @@ use tokio::{
     time::{sleep, timeout},
 };
 
+pub mod relay;
 pub mod rooms;
+pub mod secure;
 
 /// Silêncio tolerado numa conexão estabelecida. Cada lado envia algo a cada
 /// 200 ms; numa rota longa, retransmissões seguidas seguram o TCP por alguns
@@ -33,6 +36,15 @@ pub enum Event {
     },
     WaitingApproval,
     Rejected(String),
+
+    /// Código da sala pela internet, emitido de novo quando o relay volta.
+    RoomCode(String),
+    /// Sem contato com o relay; a sala tenta reconectar sozinha.
+    RelayOffline,
+    /// Alguém tentou entrar com um código errado.
+    WrongCode,
+    /// Nome do outro computador, recebido pelo canal cifrado.
+    PeerName(String),
 
     Connected(mpsc::Sender<Message>),
     Message(Box<Message>, Instant),
@@ -71,16 +83,45 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Me
     reader.read_exact(&mut bytes).await?;
     serde_json::from_slice(&bytes).map_err(io::Error::other)
 }
+/// Origem das mensagens de uma conexão estabelecida, aberta ou cifrada.
+pub(crate) trait Inbound: Send {
+    fn recv(&mut self) -> impl Future<Output = io::Result<Message>> + Send;
+}
+/// Destino das mensagens de uma conexão estabelecida, aberta ou cifrada.
+pub(crate) trait Outbound: Send {
+    fn send(&mut self, message: &Message) -> impl Future<Output = io::Result<()>> + Send;
+}
+struct Plain<T>(T);
+impl<R: AsyncRead + Unpin + Send> Inbound for Plain<R> {
+    async fn recv(&mut self) -> io::Result<Message> {
+        read_message(&mut self.0).await
+    }
+}
+impl<W: AsyncWrite + Unpin + Send> Outbound for Plain<W> {
+    async fn send(&mut self, message: &Message) -> io::Result<()> {
+        write_message(&mut self.0, message).await
+    }
+}
+
 async fn connection(stream: TcpStream, events: &mpsc::Sender<Event>, origin: Instant) {
     let _ = stream.set_nodelay(true);
-    let (mut reader, mut writer) = stream.into_split();
+    let (reader, writer) = stream.into_split();
+    exchange(Plain(reader), Plain(writer), events, origin).await
+}
+/// Troca mensagens da sala até silêncio, erro ou despedida do outro lado.
+async fn exchange(
+    mut reader: impl Inbound,
+    mut writer: impl Outbound,
+    events: &mpsc::Sender<Event>,
+    origin: Instant,
+) {
     let (tx, mut rx) = mpsc::channel(OUTGOING);
     if events.send(Event::Connected(tx)).await.is_err() {
         return;
     }
     let incoming = async {
         loop {
-            match timeout(SILENCE_TIMEOUT, read_message(&mut reader)).await {
+            match timeout(SILENCE_TIMEOUT, reader.recv()).await {
                 Ok(Ok(Message::Bye)) => break,
                 Ok(Ok(message)) => {
                     if events
@@ -101,7 +142,7 @@ async fn connection(stream: TcpStream, events: &mpsc::Sender<Event>, origin: Ins
                 *sent_host_ms = origin.elapsed().as_secs_f64() * 1000.0;
             }
             if !matches!(
-                timeout(SILENCE_TIMEOUT, write_message(&mut writer, &message)).await,
+                timeout(SILENCE_TIMEOUT, writer.send(&message)).await,
                 Ok(Ok(()))
             ) {
                 break;

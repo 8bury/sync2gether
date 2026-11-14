@@ -1,0 +1,387 @@
+//! Salas pela internet com um relay real em localhost, sem servidor externo.
+use std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
+use sync2gether::{
+    network::{
+        self, Event,
+        relay::{Code, MAX_WRONG_CODES},
+    },
+    protocol::{Control, Message},
+};
+use sync2gether_relay::{Limits, Reply, Request, VERSION};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::mpsc,
+    task::JoinSet,
+    time::timeout,
+};
+
+/// O relay roda num runtime próprio para que o teste possa derrubá-lo inteiro.
+struct Relay(Option<tokio::runtime::Runtime>);
+impl Relay {
+    fn stop(mut self) {
+        if let Some(runtime) = self.0.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+impl Drop for Relay {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.0.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+fn start_relay(address: SocketAddr) -> Relay {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let listener = std::net::TcpListener::bind(address).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    runtime.spawn(async move {
+        let listener = TcpListener::from_std(listener).unwrap();
+        sync2gether_relay::serve(listener, Limits::default()).await
+    });
+    Relay(Some(runtime))
+}
+fn free_address() -> SocketAddr {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+}
+
+async fn next(rx: &mut mpsc::Receiver<Event>) -> Event {
+    timeout(Duration::from_secs(20), rx.recv())
+        .await
+        .expect("evento não chegou a tempo")
+        .expect("tarefa de rede encerrada")
+}
+async fn room_code(rx: &mut mpsc::Receiver<Event>) -> String {
+    loop {
+        if let Event::RoomCode(code) = next(rx).await {
+            return code;
+        }
+    }
+}
+async fn connected(rx: &mut mpsc::Receiver<Event>) -> (mpsc::Sender<Message>, Option<String>) {
+    let mut name = None;
+    loop {
+        match next(rx).await {
+            Event::PeerName(peer) => name = Some(peer),
+            Event::Connected(tx) => return (tx, name),
+            Event::Rejected(error) => panic!("recusado: {error}"),
+            _ => {}
+        }
+    }
+}
+async fn rejected(rx: &mut mpsc::Receiver<Event>) -> String {
+    loop {
+        match next(rx).await {
+            Event::Rejected(error) => return error,
+            Event::Connected(_) => panic!("conectou sem o código certo"),
+            _ => {}
+        }
+    }
+}
+async fn exchanged(from: &mpsc::Sender<Message>, to: &mut mpsc::Receiver<Event>, position: f64) {
+    from.send(Message::Request(Control::Seek(position)))
+        .await
+        .unwrap();
+    loop {
+        if let Event::Message(message, _) = next(to).await {
+            assert!(matches!(*message, Message::Request(Control::Seek(p)) if p == position));
+            return;
+        }
+    }
+}
+fn wrong_words(code: &str) -> String {
+    let (room, words) = code.split_once('-').unwrap();
+    let replacement = if words.starts_with("gato-") {
+        "lua-lua"
+    } else {
+        "gato-gato"
+    };
+    format!("{room}-{replacement}")
+}
+
+/// Proxy TCP que o teste corta para simular a queda da internet de um lado.
+struct Link {
+    address: SocketAddr,
+    connections: std::sync::Arc<tokio::sync::Mutex<JoinSet<()>>>,
+    _task: tokio::task::JoinHandle<()>,
+}
+impl Link {
+    async fn new(target: SocketAddr) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let connections = std::sync::Arc::new(tokio::sync::Mutex::new(JoinSet::new()));
+        let tracked = connections.clone();
+        let task = tokio::spawn(async move {
+            while let Ok((mut inbound, _)) = listener.accept().await {
+                tracked.lock().await.spawn(async move {
+                    if let Ok(mut outbound) = TcpStream::connect(target).await {
+                        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                    }
+                });
+            }
+        });
+        Self {
+            address,
+            connections,
+            _task: task,
+        }
+    }
+    async fn cut(&self) {
+        self.connections.lock().await.abort_all();
+    }
+}
+
+#[tokio::test]
+async fn code_opens_an_encrypted_room_that_survives_a_dropped_link() {
+    let relay = free_address();
+    let _relay = start_relay(relay);
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host(
+        relay.to_string(),
+        host_tx,
+        Instant::now(),
+    ));
+    let code = room_code(&mut host_rx).await;
+    let parsed = Code::parse(&code).expect("código no formato documentado");
+    assert_eq!(parsed.to_string(), code);
+
+    let link = Link::new(relay).await;
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest(
+        link.address.to_string(),
+        parsed,
+        guest_tx,
+        Instant::now(),
+    ));
+    let (host_out, guest_name) = connected(&mut host_rx).await;
+    let (guest_out, host_name) = connected(&mut guest_rx).await;
+    let local = sync2gether::discovery::local_name();
+    assert_eq!(guest_name.as_deref(), Some(local.as_str()));
+    assert_eq!(host_name.as_deref(), Some(local.as_str()));
+    for n in 0..10 {
+        exchanged(&guest_out, &mut host_rx, n as f64).await;
+        exchanged(&host_out, &mut guest_rx, n as f64 + 0.5).await;
+    }
+
+    // A queda do lado do convidado derruba a conexão; ele volta sem o código.
+    link.cut().await;
+    let (host_out, _) = connected(&mut host_rx).await;
+    let (guest_out, _) = connected(&mut guest_rx).await;
+    exchanged(&guest_out, &mut host_rx, 42.0).await;
+    exchanged(&host_out, &mut guest_rx, 43.0).await;
+    host.abort();
+    guest.abort();
+}
+
+#[tokio::test]
+async fn wrong_codes_are_refused_and_the_third_closes_the_room() {
+    let relay = free_address();
+    let _relay = start_relay(relay);
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host(
+        relay.to_string(),
+        host_tx,
+        Instant::now(),
+    ));
+    let code = room_code(&mut host_rx).await;
+    for attempt in 1..=MAX_WRONG_CODES {
+        let (guest_tx, mut guest_rx) = mpsc::channel(64);
+        let guest = tokio::spawn(network::relay::guest(
+            relay.to_string(),
+            Code::parse(&wrong_words(&code)).unwrap(),
+            guest_tx,
+            Instant::now(),
+        ));
+        assert!(rejected(&mut guest_rx).await.contains("Código incorreto"));
+        if attempt < MAX_WRONG_CODES {
+            loop {
+                match next(&mut host_rx).await {
+                    Event::WrongCode => break,
+                    Event::Connected(_) => panic!("anfitrião aceitou código errado"),
+                    _ => {}
+                }
+            }
+        }
+        guest.abort();
+    }
+    assert!(rejected(&mut host_rx).await.contains("três tentativas"));
+    host.abort();
+}
+
+#[tokio::test]
+async fn unknown_rooms_and_incompatible_versions_are_reported() {
+    let relay = free_address();
+    let _relay = start_relay(relay);
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest(
+        relay.to_string(),
+        Code::parse("9876-gato-lua").unwrap(),
+        guest_tx,
+        Instant::now(),
+    ));
+    assert!(rejected(&mut guest_rx).await.contains("Não há sala"));
+    guest.abort();
+
+    let mut stream = TcpStream::connect(relay).await.unwrap();
+    sync2gether_relay::write_frame(
+        &mut stream,
+        &Request::Join {
+            version: VERSION + 1,
+            room: "9876".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let reply: Reply = sync2gether_relay::read_frame(&mut stream).await.unwrap();
+    assert_eq!(reply, Reply::Outdated { version: VERSION });
+
+    // Sem o segredo do anfitrião, ninguém aceita entradas nem assume o número.
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host(
+        relay.to_string(),
+        host_tx,
+        Instant::now(),
+    ));
+    let code = room_code(&mut host_rx).await;
+    let room = Code::parse(&code).unwrap().room().to_owned();
+    let mut intruder = TcpStream::connect(relay).await.unwrap();
+    sync2gether_relay::write_frame(
+        &mut intruder,
+        &Request::Host {
+            version: VERSION,
+            room: Some(room.clone()),
+            secret: "0".repeat(32),
+        },
+    )
+    .await
+    .unwrap();
+    let reply: Reply = sync2gether_relay::read_frame(&mut intruder).await.unwrap();
+    assert_eq!(reply, Reply::Taken);
+    let mut intruder = TcpStream::connect(relay).await.unwrap();
+    sync2gether_relay::write_frame(
+        &mut intruder,
+        &Request::Accept {
+            version: VERSION,
+            room,
+            secret: "0".repeat(32),
+            ticket: 1,
+        },
+    )
+    .await
+    .unwrap();
+    let reply: Reply = sync2gether_relay::read_frame(&mut intruder).await.unwrap();
+    assert_eq!(reply, Reply::Unknown);
+    host.abort();
+}
+
+#[tokio::test]
+async fn relay_restart_keeps_the_code_and_the_guest_resumes() {
+    let relay = free_address();
+    let first = start_relay(relay);
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host(
+        relay.to_string(),
+        host_tx,
+        Instant::now(),
+    ));
+    let code = room_code(&mut host_rx).await;
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest(
+        relay.to_string(),
+        Code::parse(&code).unwrap(),
+        guest_tx,
+        Instant::now(),
+    ));
+    connected(&mut host_rx).await;
+    connected(&mut guest_rx).await;
+
+    first.stop();
+    let _second = start_relay(relay);
+    let mut offline = false;
+    loop {
+        match next(&mut host_rx).await {
+            Event::RelayOffline => offline = true,
+            Event::RoomCode(again) => {
+                assert_eq!(again, code, "o número da sala mudou após o reinício");
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(offline);
+    let (host_out, _) = connected(&mut host_rx).await;
+    let (guest_out, _) = connected(&mut guest_rx).await;
+    exchanged(&guest_out, &mut host_rx, 7.0).await;
+    exchanged(&host_out, &mut guest_rx, 8.0).await;
+    host.abort();
+    guest.abort();
+}
+
+#[tokio::test]
+async fn leaving_host_closes_the_room_for_new_entries() {
+    let relay = free_address();
+    let _relay = start_relay(relay);
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host(
+        relay.to_string(),
+        host_tx,
+        Instant::now(),
+    ));
+    let code = room_code(&mut host_rx).await;
+    host.abort();
+    let _ = host.await;
+    // O fechamento chega ao relay como fim da conexão de controle.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest(
+        relay.to_string(),
+        Code::parse(&code).unwrap(),
+        guest_tx,
+        Instant::now(),
+    ));
+    assert!(rejected(&mut guest_rx).await.contains("Não há sala"));
+    guest.abort();
+}
+
+/// Contra um relay publicado: `SYNC2GETHER_RELAY_E2E=nome:porta`.
+#[tokio::test]
+#[ignore = "usa a internet e um relay publicado"]
+async fn published_relay_pairs_two_apps() {
+    let relay = std::env::var("SYNC2GETHER_RELAY_E2E").expect("defina SYNC2GETHER_RELAY_E2E");
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host(relay.clone(), host_tx, Instant::now()));
+    let code = room_code(&mut host_rx).await;
+    let started = Instant::now();
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest(
+        relay,
+        Code::parse(&code).unwrap(),
+        guest_tx,
+        Instant::now(),
+    ));
+    let (host_out, _) = connected(&mut host_rx).await;
+    let (guest_out, _) = connected(&mut guest_rx).await;
+    let joined = started.elapsed();
+    let exchange = Instant::now();
+    for n in 0..20 {
+        exchanged(&guest_out, &mut host_rx, n as f64).await;
+        exchanged(&host_out, &mut guest_rx, n as f64).await;
+    }
+    eprintln!(
+        "entrada em {} ms; ida e volta média {} ms",
+        joined.as_millis(),
+        exchange.elapsed().as_millis() / 20
+    );
+    host.abort();
+    guest.abort();
+}

@@ -1,7 +1,8 @@
 # sync2gether
 
 Assista ao mesmo filme com outra pessoa, à distância. Uma cópia local em cada
-PC, com play, pause e posição de reprodução sincronizados pela rede local ou VPN.
+PC, com play, pause e posição de reprodução sincronizados pela internet, sem
+VPN, ou pela rede local.
 
 [Baixar](https://github.com/8bury/sync2gether/releases) ·
 [Instalar](#instalação) · [Como funciona](#como-funciona) ·
@@ -15,37 +16,42 @@ mostram a interface; não demonstram reprodução ou sincronização real.*
 ## Como funciona
 
 O sync2gether é um aplicativo de desktop para duas pessoas. Cada PC reproduz
-seu próprio arquivo com libmpv. A conexão envia comandos e informações de
-sincronização, sem transmitir o vídeo e sem precisar de um servidor externo
-do aplicativo.
+seu próprio arquivo com libmpv. A conexão envia apenas comandos e informações
+de sincronização, nunca o vídeo.
 
-1. Uma pessoa cria a sala e a outra solicita entrada pela lista da rede ou por `IP:porta`.
-2. O anfitrião aprova a entrada. Cada pessoa escolhe sua cópia do filme.
-3. O app verifica o conteúdo dos dois arquivos. Quando ambos estão prontos,
-   qualquer participante pode clicar em **Começar a assistir**.
+1. Uma pessoa clica em **Criar sala** e recebe um código como `4821-gato-lua`.
+2. Ela envia o código para a outra pessoa, que o digita em **Entrar em uma sala**.
+3. Cada pessoa escolhe sua cópia do filme. O app verifica o conteúdo dos dois
+   arquivos; quando ambos estão prontos, qualquer participante pode clicar em
+   **Começar a assistir**.
 4. Play, pause e mudanças de posição acompanham os dois players. Volume,
    áudio e legendas são ajustados separadamente em cada PC.
 
-O MVP inclui descoberta de salas, aprovação de entrada, verificação dos
-arquivos, início agendado, correção de desvio e reconexão automática do convidado.
-Também é possível abrir um filme sozinho.
+Pela internet, os dois apps se encontram num [relay](docs/relay.md) que só
+repassa mensagens cifradas de ponta a ponta com uma chave derivada do código.
+Salas na rede local ou VPN, com descoberta e aprovação de entrada, continuam
+disponíveis em **Configurações → Opções avançadas de rede**.
+
+O app também verifica os arquivos, agenda o início, corrige desvios e reconecta
+o convidado sozinho. É possível abrir um filme sozinho.
 
 ## Instalação
 
 Baixe o pacote para sua distribuição e o arquivo `SHA256SUMS` em
-[Releases](https://github.com/8bury/sync2gether/releases). A versão 0.1.0 tem
+[Releases](https://github.com/8bury/sync2gether/releases). A versão 0.2.0 tem
 pacotes para **Arch Linux atualizado** e **Ubuntu 24.04**, ambos em x86_64.
+As salas pela internet exigem a 0.2.0 nos dois PCs.
 
 ### Arch Linux
 
 ```sh
-sudo pacman -U ./sync2gether-0.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./sync2gether-0.2.0-1-x86_64.pkg.tar.zst
 ```
 
 ### Ubuntu 24.04
 
 ```sh
-sudo apt install ./sync2gether_0.1.0_amd64.deb
+sudo apt install ./sync2gether_0.2.0_amd64.deb
 ```
 
 Os gerenciadores instalam as dependências, incluindo libmpv. Abra
@@ -95,10 +101,10 @@ O tema claro fica disponível em **Configurações**, no ícone de engrenagem do
   hash BLAKE3; nomes diferentes são aceitos, mas remuxes e alterações de
   metadados podem tornar os arquivos incompatíveis. A verificação ocorre em
   segundo plano e pode levar algum tempo em arquivos grandes.
-- Os PCs precisam conseguir se comunicar por TCP. A porta padrão da sala é
-  `7842`; a descoberta usa UDP `7841`, com multicast e broadcast IPv4.
-  Configure o firewall para permitir esse tráfego.
-- A descoberta depende da rede ou VPN. Se a sala não aparecer, use
+- Pela internet, os dois PCs precisam de conexão TCP de saída para
+  `relay.pedrosales.dev:7843`. Não é preciso abrir portas no roteador.
+- Na rede local, a porta padrão da sala é TCP `7842` e a descoberta usa UDP
+  `7841`, com multicast e broadcast IPv4. Se a sala não aparecer, use
   **Conectar por endereço**. O app não instala nem configura uma VPN.
 - Uma desconexão, falha do player ou fim do filme pausa a sessão. Após a
   reconexão, os players recuperam a posição do anfitrião e aguardam um novo play.
@@ -135,17 +141,22 @@ bash scripts/check.sh
 | [Uso](docs/uso.md) | Salas, rede, arquivos, controles e atalhos |
 | [Desenvolvimento e testes](docs/desenvolvimento.md) | Dependências, demo, capturas e testes com vídeo sintético |
 | [Arquitetura e sincronização](docs/arquitetura.md) | Módulos, libmpv, protocolo e correção de desvio |
+| [Salas pela internet e relay](docs/relay.md) | Código da sala, criptografia, reconexão e publicação do servidor |
 | [Diagnóstico](docs/diagnostico.md) | Logs, GDB e travamentos em Wayland |
 | [Pacotes Linux](docs/empacotamento.md) | Builds com Docker e GitHub Actions |
 | [Histórico de validação](docs/validacao.md) | Ambientes e cenários testados nas revisões anteriores |
+| [Notas da versão 0.2.0](docs/releases/v0.2.0.md) | Salas pela internet, validação e limites |
 | [Notas da versão 0.1.0](docs/releases/v0.1.0.md) | Pacotes, validação e limites da release |
 
 As instruções para agentes estão em [AGENTS.md](AGENTS.md).
 
 ## Validação e limites
 
-Os pacotes 0.1.0 foram compilados, instalados e exercitados em containers Arch
-e Ubuntu 24.04. Os testes usaram TCP em localhost, dois players libmpv com vídeo
+As salas pela internet foram testadas com o relay em localhost, incluindo
+código errado, queda do enlace, reinício do relay e dois players libmpv reais
+com ~250 ms de ida e volta simulados, e com o relay publicado; veja as
+[notas da 0.2.0](docs/releases/v0.2.0.md). Os pacotes 0.1.0 foram compilados,
+instalados e exercitados em containers Arch e Ubuntu 24.04. Os testes usaram TCP em localhost, dois players libmpv com vídeo
 sintético, atraso e jitter de rede, áudio virtual e OpenGL com Xvfb/Mesa por
 software. A interface também foi revisada em CachyOS com Wayland/Hyprland.
 

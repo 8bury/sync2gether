@@ -6,7 +6,8 @@ A implementação do MVP, a integração com libmpv e os limites da sincronizaç
 
 ## Estado atual
 
-O MVP implementa reprodução local com libmpv, salas de duas pessoas por TCP,
+O MVP implementa reprodução local com libmpv, salas de duas pessoas pela
+internet (via relay, com código e criptografia de ponta a ponta) ou por TCP direto na rede local,
 verificação do conteúdo dos arquivos, play/pause/seek coordenados pelo anfitrião,
 correção de desvio e reconexão automática do convidado. Volume e seleção de
 faixas de áudio e legendas são locais.
@@ -62,7 +63,7 @@ precisam de validação. Bibliotecas novas mantêm a escolha automática do mpv.
 Os testes com renderizador por software limitam cada decoder a duas threads;
 a janela mantém o paralelismo automático do libmpv.
 
-O modo demo permanece offline, com quinze cenários fictícios. Ele não inicia
+O modo demo permanece offline, com dezesseis cenários fictícios. Ele não inicia
 player, lê filmes ou abre sockets. Os testes de layout não validam áudio,
 vídeo, GPU ou sincronização entre PCs.
 
@@ -83,6 +84,13 @@ vídeo, GPU ou sincronização entre PCs.
   os candidatos por TCP, em segundo plano.
 - `network/rooms.rs` implementa descoberta, aprovação limitada a uma vaga e
   tokens internos para reconexão. As tarefas de conexão terminam ao fechar a sala.
+- `network/relay.rs` implementa as salas pela internet: código da sala, conexão
+  de controle do anfitrião, entradas por conexões de dados e reconexão.
+- `network/secure.rs` deriva a chave do código com SPAKE2 e abre o canal Noise
+  cifrado. As mensagens da sala passam pelos mesmos traços `Inbound`/`Outbound`
+  usados pelo TCP aberto, então sessão e sincronização não mudam.
+- `relay/` é um crate separado no workspace, com o servidor e o protocolo de
+  controle. Depende só de Tokio e Serde e não conhece as mensagens da sala.
 - `network.rs` implementa TCP com mensagens enquadradas, limite de tamanho,
   autenticação da sala, timeout de heartbeat e reconexão.
 - `protocol.rs` define as mensagens Serde e a versão do protocolo.
@@ -90,6 +98,21 @@ vídeo, GPU ou sincronização entre PCs.
 - `sync.rs` estima a diferença entre relógios por ping e calcula correções.
 - `runtime.rs` conecta esses módulos por comandos e eventos. A UI só apresenta
   os dados e devolve ações.
+
+### Salas pela internet
+
+O anfitrião mantém uma conexão de controle com o relay. Cada entrada chega
+como um aviso nessa conexão; o anfitrião abre uma conexão de dados própria e
+o relay junta as duas, passando a repassar bytes. Assim o lado do anfitrião se
+comporta como um `accept` de TCP, e cada reconexão do convidado é uma nova
+conexão de dados. Na conexão pareada, o convidado envia SPAKE2 (primeira
+entrada) ou pedido de retomada, e os dois fazem o handshake Noise antes de
+qualquer mensagem da sala. Formato, limites e garantias estão em
+[Salas pela internet e relay](relay.md).
+
+O relógio filtrado mede o RTT através do relay, então a margem do início
+agendado já inclui o desvio geográfico. O teste MVP pelo relay usa
+~110 ms por sentido entre convidado e relay, com jitter de até 30 ms.
 
 Ao fechar a janela, o aplicativo destrói o renderizador no contexto OpenGL
 e aguarda o encerramento do runtime, do player e das threads nativas do libmpv.

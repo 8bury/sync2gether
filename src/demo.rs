@@ -12,6 +12,7 @@ use crate::model::SessionState;
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum Scenario {
     Idle,
+    JoinCode,
     Browsing,
     Connecting,
     PendingApproval,
@@ -32,6 +33,7 @@ impl From<Scenario> for SessionState {
     fn from(scenario: Scenario) -> Self {
         match scenario {
             Scenario::Idle => Self::Idle,
+            Scenario::JoinCode => Self::JoinCode,
             Scenario::Browsing => Self::Browsing,
             Scenario::Connecting => Self::Connecting,
             Scenario::PendingApproval => Self::PendingApproval,

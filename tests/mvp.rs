@@ -510,3 +510,121 @@ fn automatic_host_and_live_discovery_work_without_a_vpn() {
     shutdown(host);
     shutdown(guest);
 }
+
+/// Atrasa bytes opacos, como o tráfego cifrado pelo relay, preservando a ordem.
+async fn delayed_bytes<R, W>(mut read: R, mut write: W, min_ms: u64, jitter_ms: u64, mut seed: u64)
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::time::{Instant, sleep_until};
+    let (queue, mut queued) = tokio::sync::mpsc::unbounded_channel();
+    let receive = async move {
+        let mut release = Instant::now();
+        let mut buffer = vec![0; 16 * 1024];
+        while let Ok(read) = read.read(&mut buffer).await {
+            if read == 0 {
+                break;
+            }
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let delay = min_ms + (seed >> 33) % (jitter_ms + 1);
+            release = release.max(Instant::now() + Duration::from_millis(delay));
+            if queue.send((release, buffer[..read].to_vec())).is_err() {
+                break;
+            }
+        }
+    };
+    let deliver = async move {
+        while let Some((release, bytes)) = queued.recv().await {
+            sleep_until(release).await;
+            if write.write_all(&bytes).await.is_err() {
+                break;
+            }
+        }
+    };
+    tokio::select! { _ = receive => {}, _ = deliver => {} }
+}
+
+#[test]
+#[ignore = "requer libmpv e vídeo sintético gerado por scripts/test-mvp.sh"]
+fn internet_room_syncs_two_real_players_through_the_relay_with_intercontinental_delay() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".cache/mvp-fixture.mkv");
+    let io = tokio::runtime::Runtime::new().unwrap();
+    let listener = io
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let relay = listener.local_addr().unwrap();
+    let server = io.spawn(sync2gether_relay::serve(
+        listener,
+        sync2gether_relay::Limits::default(),
+    ));
+    // Convidado a ~110 ms do relay em cada sentido, como Brasil–Alemanha.
+    let entry = io
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let delayed = entry.local_addr().unwrap();
+    let proxy = io.spawn(async move {
+        let mut seed = 7;
+        while let Ok((client, _)) = entry.accept().await {
+            let Ok(server) = tokio::net::TcpStream::connect(relay).await else {
+                continue;
+            };
+            seed += 2;
+            tokio::spawn(async move {
+                let (cr, cw) = client.into_split();
+                let (sr, sw) = server.into_split();
+                tokio::select! {
+                    _ = delayed_bytes(cr, sw, 110, 30, seed) => {},
+                    _ = delayed_bytes(sr, cw, 110, 30, seed + 1) => {},
+                }
+            });
+        }
+    });
+    let host = Runtime::start();
+    let guest = Runtime::start();
+    send(&host, Command::OpenPath(fixture.clone()));
+    send(&guest, Command::OpenPath(fixture));
+    wait(&host, |v| v.player.loaded);
+    wait(&guest, |v| v.player.loaded);
+    send(&host, Command::HostInternet(relay.to_string()));
+    let code = wait(&host, |v| v.room_code.is_some()).room_code.unwrap();
+    send(
+        &guest,
+        Command::JoinCode {
+            relay: delayed.to_string(),
+            code,
+        },
+    );
+    let h = wait(&host, |v| v.ready);
+    let g = wait(&guest, |v| v.ready && v.rtt_ms > 200.0);
+    assert!(h.internet && g.internet);
+    assert!(h.peer_name.is_some() && g.peer_name.is_some());
+    send(&guest, Command::Control(Control::Play));
+    let h = wait(&host, |v| v.last_start_id.is_some());
+    let g = wait(&guest, |v| v.last_start_id == h.last_start_id);
+    assert!(
+        (h.last_start_ms.unwrap() - g.last_start_ms.unwrap()).abs() < 100.0,
+        "starts apart: {} ms",
+        h.last_start_ms.unwrap() - g.last_start_ms.unwrap()
+    );
+    let v = wait(&guest, |v| {
+        v.player.position > 2.0 && v.peer_drift.is_some()
+    });
+    assert!(
+        v.peer_drift.unwrap().abs() < 0.15,
+        "peer drift {}",
+        v.peer_drift.unwrap()
+    );
+    send(&host, Command::Control(Control::Pause));
+    let h = wait(&host, |v| v.player.paused);
+    wait(&guest, |v| {
+        v.player.paused && (v.player.position - h.player.position).abs() < 0.4
+    });
+    shutdown(host);
+    shutdown(guest);
+    proxy.abort();
+    server.abort();
+}

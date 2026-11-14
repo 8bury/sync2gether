@@ -11,17 +11,26 @@ struct Args {
     #[arg(long, value_name = "ARQUIVO")]
     /// Abre uma cópia local, inicialmente pausada.
     file: Option<std::path::PathBuf>,
+    #[arg(long, conflicts_with_all = ["host", "join", "code"])]
+    /// Cria uma sala pela internet e mostra o código para convidar.
+    internet: bool,
+    #[arg(long, value_name = "CÓDIGO", conflicts_with_all = ["host", "join"])]
+    /// Entra numa sala pela internet com o código, como 4821-gato-lua.
+    code: Option<String>,
+    #[arg(long, value_name = "NOME[:PORTA]", env = "SYNC2GETHER_RELAY", default_value = sync2gether::network::relay::DEFAULT_RELAY)]
+    /// Servidor das salas pela internet.
+    relay: String,
     #[arg(long, value_name = "IP[:PORTA]", conflicts_with = "join", num_args = 0..=1, default_missing_value = "auto")]
-    /// Hospeda automaticamente na rede, ou no endereço informado.
+    /// Hospeda na rede local automaticamente, ou no endereço informado.
     host: Option<String>,
     #[arg(long, requires = "host", default_value_t = sync2gether::protocol::PORT)]
     /// Porta para hospedagem automática.
     port: u16,
     #[arg(long, value_name = "IP[:PORTA]")]
-    /// Entra na sala do anfitrião.
+    /// Entra na sala do anfitrião na rede local.
     join: Option<String>,
     #[cfg(feature = "demo")]
-    #[arg(long, conflicts_with_all = ["file", "host", "join"])]
+    #[arg(long, conflicts_with_all = ["file", "host", "join", "internet", "code"])]
     /// Abre cenários fictícios sem player ou conexão.
     demo: bool,
     #[cfg(feature = "demo")]
@@ -83,7 +92,20 @@ fn main() -> eframe::Result {
             if let Some(address) = _args.join {
                 commands.push(sync2gether::runtime::Command::RequestJoin(address));
             }
-            Ok(Box::new(App::with_commands_gl(cc, commands)?))
+            if _args.internet {
+                commands.push(sync2gether::runtime::Command::HostInternet(
+                    _args.relay.clone(),
+                ));
+            }
+            if let Some(code) = _args.code {
+                commands.push(sync2gether::runtime::Command::JoinCode {
+                    relay: _args.relay.clone(),
+                    code,
+                });
+            }
+            Ok(Box::new(
+                App::with_commands_gl(cc, commands)?.with_relay(_args.relay),
+            ))
         }),
     );
     diagnostics::mark(if result.is_ok() {

@@ -1,20 +1,26 @@
 [package]
 name = "sync2gether"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
-description = "Assista a filmes locais em sincronia com outra pessoa pela rede local ou VPN"
+description = "Assista a filmes locais em sincronia com outra pessoa pela internet ou rede local"
 publish = false
+
+[workspace]
+members = ["relay"]
 
 [dependencies]
 blake3 = "1.8.7"
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 if-addrs = "0.15"
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 libloading = "0.9.0"
 rand = "0.10.3"
 rfd = "0.17.2"
+snow = "0.10.0"
+spake2 = "0.4.0"
+sync2gether-relay = { path = "relay" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 socket2 = { version = "0.6", features = ["all"] }

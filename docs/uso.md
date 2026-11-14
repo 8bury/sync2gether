@@ -1,39 +1,36 @@
 # Guia de uso
 
-Salas, escolha dos arquivos, controles e conexão por rede local ou VPN.
+Salas pela internet com código, escolha dos arquivos, controles e salas na rede local ou VPN.
 
 [Voltar ao README](../README.md)
 
 ## Usar o aplicativo
 
-A interface separa início, busca de salas, conexão, preparação e reprodução.
-Na tela inicial, as ações **Criar sala** e **Entrar em uma sala** ficam
-empilhadas no centro, com **Abrir filme sozinho** abaixo. A lista de salas
-mostra a ação de solicitar entrada junto a cada anfitrião e mantém o campo
-**Conectar por endereço** visível, inclusive quando a descoberta falha.
+A interface separa início, entrada com código, preparação e reprodução. Na tela
+inicial, as ações **Criar sala** e **Entrar em uma sala** ficam empilhadas no
+centro, com **Abrir filme sozinho** abaixo. As salas na rede local ficam nas
+opções avançadas, descritas em [Rede local ou VPN](#rede-local-ou-vpn).
 
-1. Instale as dependências abaixo e conecte os PCs à mesma rede local ou VPN.
-   O firewall precisa permitir a porta TCP da sala e UDP 7841 para descoberta.
-2. O anfitrião clica em **Criar sala**. O app abre a porta TCP nas interfaces
-   IPv4 do PC. Não pede IP nem código. A porta padrão é 7842 e pode ser alterada
-   em **Configurações** (ícone de engrenagem no cabeçalho) antes de criar.
-3. O convidado escolhe **Entrar em uma sala**. A lista acompanha anúncios UDP
-   por multicast `239.255.78.42:7841` e broadcast de cada interface IPv4, inclusive
-   interfaces de VPN. O anfitrião anuncia a cada 500 ms; a lista é atualizada
-   aproximadamente a cada dois segundos. Portas TCP personalizadas também são
-   anunciadas. Cada candidato é confirmado por TCP antes de aparecer. Salas
-   ocupadas são removidas e anúncios expiram após cinco segundos. Até 128
-   endereços são verificados, com 16 consultas simultâneas e prazo de 800 ms.
-4. O convidado clica em **Solicitar entrada**. O anfitrião aceita ou recusa na
-   preparação. A solicitação expira após 60 segundos e pode ser cancelada pelo
-   convidado. A tela de conexão distingue **Conectando à sala…** de
-   **Aguardando aprovação**; só confirma **Anfitrião encontrado** depois que
-   o anfitrião recebe a solicitação. **Cancelar solicitação** sai desse fluxo.
-   Após a aprovação, o convidado passa à preparação dos arquivos.
-   Há uma vaga de convidado, inclusive durante a aprovação.
-5. Cada pessoa escolhe sua cópia do filme e aguarda a verificação. O botão
+1. O anfitrião clica em **Criar sala**. O app abre a sala no relay e mostra o
+   cartão **Convidar com código**, com um código como `4821-gato-lua` e o botão
+   **Copiar código**. Enquanto o código não chega, o cartão mostra
+   **Gerando o código…**; sem contato com o servidor, avisa e tenta de novo.
+2. O anfitrião envia o código por qualquer mensageiro. O convidado clica em
+   **Entrar em uma sala**, digita o código e clica em **Entrar** (ou Enter).
+   Maiúsculas, acentos e espaços no lugar dos hífens são aceitos. O botão só
+   fica disponível com o número e duas palavras da lista.
+3. Quem acerta o código entra direto na preparação, sem aprovação. Um código
+   errado mostra **Código incorreto** ao convidado, mantém o texto para correção
+   e avisa o anfitrião; na terceira tentativa errada a sala fecha por segurança.
+   Há uma vaga de convidado por vez.
+4. Cada pessoa escolhe sua cópia do filme e aguarda a verificação. O botão
    **Começar a assistir** só fica disponível quando a sessão estiver pronta;
    qualquer participante pode iniciar. O app não dá play automaticamente.
+
+Os dois PCs só precisam de TCP de saída para `relay.pedrosales.dev:7843`.
+As mensagens são cifradas de ponta a ponta; o relay não vê o código completo,
+os nomes dos arquivos nem os comandos. Se a conexão cair, o convidado volta
+sozinho, sem digitar o código de novo. Detalhes em [Salas pela internet e relay](relay.md).
 
 A preparação reúne os dois arquivos numa lista, com **Você** na primeira linha
 e o nome da outra pessoa na segunda. Cada linha mostra o arquivo com extensão,
@@ -75,9 +72,38 @@ conexão; em janelas estreitas, abre uma janela sobre o vídeo. Trocar o arquivo
 pausa a sessão e retorna à preparação. Sair da sala retorna ao início e deixa
 o arquivo carregado e pausado. Estatísticas não ficam permanentemente no player.
 
+## Rede local ou VPN
+
+Em **Configurações** (ícone de engrenagem no cabeçalho), **Opções avançadas de
+rede** mostra na tela inicial **Criar sala na rede local** e **Procurar na rede
+local**, além da porta dessas salas e do servidor das salas pela internet. A
+escolha vale até fechar o app; os argumentos `--host` e `--join` a ativam.
+
+1. Conecte os PCs à mesma rede local ou VPN. O firewall precisa permitir a
+   porta TCP da sala e UDP 7841 para descoberta.
+2. O anfitrião clica em **Criar sala na rede local**. O app abre a porta TCP nas
+   interfaces IPv4 do PC. A porta padrão é 7842 e pode ser alterada nas opções
+   avançadas antes de criar.
+3. O convidado escolhe **Procurar na rede local**. A lista acompanha anúncios UDP
+   por multicast `239.255.78.42:7841` e broadcast de cada interface IPv4, inclusive
+   interfaces de VPN. O anfitrião anuncia a cada 500 ms; a lista é atualizada
+   aproximadamente a cada dois segundos. Portas TCP personalizadas também são
+   anunciadas. Cada candidato é confirmado por TCP antes de aparecer. Salas
+   ocupadas são removidas e anúncios expiram após cinco segundos. Até 128
+   endereços são verificados, com 16 consultas simultâneas e prazo de 800 ms.
+4. O convidado clica em **Solicitar entrada**. O anfitrião aceita ou recusa na
+   preparação. A solicitação expira após 60 segundos e pode ser cancelada pelo
+   convidado. A tela de conexão distingue **Conectando à sala…** de
+   **Aguardando aprovação**; só confirma **Anfitrião encontrado** depois que
+   o anfitrião recebe a solicitação. **Cancelar solicitação** sai desse fluxo.
+   Após a aprovação, o convidado passa à preparação dos arquivos.
+   Há uma vaga de convidado, inclusive durante a aprovação.
+5. A preparação segue como nas salas pela internet.
+
+
 **Conectar por endereço** permite informar `IP:porta` quando a sala não aparece.
 O campo valida o IP antes de enviar e aceita Enter para solicitar entrada.
-Na preparação do anfitrião, o cartão **Convidar por endereço** mostra os endereços
+Na preparação do anfitrião de uma sala local, o cartão **Convidar por endereço** mostra os endereços
 com **Copiar endereço**, que confirma a cópia.
 IP sem porta usa 7842; IPv6 com porta usa `[IP]:porta`. A conexão manual aceita
 IPs numéricos de destino IPv4 e IPv6, sem resolver nomes. Os detalhes da sala
@@ -96,8 +122,11 @@ versão, nome do computador, porta e disponibilidade. Não incluem filmes, hashe
 nem tokens. A aprovação emite um token aleatório mantido em memória, associado
 ao IP do convidado, para reconexão sem nova aprovação. Uma nova aprovação
 substitui o token anterior. O token não aparece na interface nem é persistido.
-O TCP do aplicativo não tem criptografia própria; ela depende da VPN utilizada.
+Na rede local, o TCP do aplicativo não tem criptografia própria; ela depende da
+VPN utilizada. As salas pela internet são sempre cifradas.
 Falhas de descoberta mantêm a conexão manual disponível. A demo continua offline.
+
+## Controles
 
 Os controles ficam sobre o vídeo e aparecem ao mover o mouse. Durante a
 reprodução, somem após três segundos sem atividade. Permanecem visíveis na
@@ -111,7 +140,7 @@ O tema padrão usa superfícies quase pretas, detalhes em azul e ações princip
 com gradiente azul. O tema claro usa superfícies brancas e cinza-claras, com a
 mesma organização. A tipografia é Inter, incorporada ao executável. Os dois temas
 ficam no menu **Configurações**, aberto pelo ícone de engrenagem no cabeçalho,
-inclusive durante a conexão; o menu também mostra a porta da sala e os atalhos.
+inclusive durante a conexão; o menu também reúne as opções avançadas de rede e os atalhos.
 O cabeçalho permanece visível ao rolar o conteúdo. Os controles
 do player usam ícones com dicas e nomes acessíveis para play/pause, saltos de
 10 segundos, volume, áudio/legendas e tela cheia. Os menus de volume e faixas
@@ -139,12 +168,15 @@ Também é possível abrir um arquivo ou conectar por argumentos:
 
 ```sh
 cargo run --locked -- --file /caminho/filme.mkv
+cargo run --locked -- --internet --file /caminho/filme.mkv
+cargo run --locked -- --code 4821-gato-lua --file /caminho/filme.mkv
 cargo run --locked -- --host --file /caminho/filme.mkv
 cargo run --locked -- --host --port 7843
 cargo run --locked -- --join 192.168.1.10:7842 --file /caminho/filme.mkv
 ```
 
-Para testes locais, `--host 127.0.0.1:7842` abre uma sala com aprovação nesse
+`--relay nome:porta`, ou a variável `SYNC2GETHER_RELAY`, troca o servidor das
+salas pela internet. Para testes locais, `--host 127.0.0.1:7842` abre uma sala com aprovação nesse
 endereço, sem consultar qualquer VPN. `--join` solicita aprovação, sem código.
 Os dois apps precisam usar o protocolo 4.
 

@@ -522,12 +522,25 @@ fn room_buttons_return_commands_and_play_is_disabled_until_both_are_ready() {
     let ctx = egui::Context::default();
     let mut inputs = ui::Inputs::default();
     let mut view = View::default();
+    let text = preparation_text_of(&ctx, &view, &mut inputs);
+    assert!(
+        !text.contains("rede local"),
+        "a rede local fica nas opções avançadas"
+    );
     assert!(matches!(
         click_label(&ctx, &view, &mut inputs, "Criar sala").as_slice(),
+        [Command::HostInternet(relay)] if relay == sync2gether::network::relay::DEFAULT_RELAY
+    ));
+    assert!(click_label(&ctx, &view, &mut inputs, "Entrar em uma sala").is_empty());
+    assert_eq!(inputs.screen, ui::Screen::Join);
+    inputs.screen = ui::Screen::Home;
+    inputs.lan = true;
+    assert!(matches!(
+        click_label(&ctx, &view, &mut inputs, "Criar sala na rede local").as_slice(),
         [Command::HostAuto(PORT)]
     ));
     assert!(matches!(
-        click_label(&ctx, &view, &mut inputs, "Entrar em uma sala").as_slice(),
+        click_label(&ctx, &view, &mut inputs, "Procurar na rede local").as_slice(),
         [Command::Discover]
     ));
     assert_eq!(inputs.screen, ui::Screen::Browse);
@@ -1124,8 +1137,9 @@ fn room_browser_selects_the_room_and_preserves_manual_entry_after_discovery_fail
         let ctx = egui::Context::default();
         ui::configure_theme(&ctx, light);
         let mut inputs = ui::Inputs::default();
+        inputs.lan = true;
         let mut view = View::default();
-        click_label(&ctx, &view, &mut inputs, "Entrar em uma sala");
+        click_label(&ctx, &view, &mut inputs, "Procurar na rede local");
         for address in ["192.168.1.10:7842", "192.168.1.20:7843"] {
             view.rooms = vec![Room {
                 name: "Ana".into(),
@@ -1371,4 +1385,138 @@ fn settings_icon_keeps_its_accessible_name_and_switches_the_theme() {
         );
         assert_eq!(ctx.global_style().visuals.dark_mode, light);
     }
+}
+
+fn preparation_text_of(
+    ctx: &egui::Context,
+    view: &sync2gether::runtime::View,
+    inputs: &mut ui::Inputs,
+) -> String {
+    let mut text = String::new();
+    for _ in 0..3 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(960.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |root| {
+                let _ = ui::draw_live(root, view, inputs, None);
+            },
+        );
+        text = visible_text(&output.shapes);
+        output.textures_delta.clear();
+    }
+    text
+}
+
+#[test]
+fn code_entry_validates_joins_and_returns_to_the_code_after_a_refusal() {
+    use sync2gether::runtime::{Command, Role, View};
+    for light in [false, true] {
+        let ctx = egui::Context::default();
+        ui::configure_theme(&ctx, light);
+        let mut view = View::default();
+        let mut inputs = ui::Inputs::default();
+        click_label(&ctx, &view, &mut inputs, "Entrar em uma sala");
+        inputs.code = "4821-gato-limao".into();
+        assert!(click_label(&ctx, &view, &mut inputs, "Entrar").is_empty());
+        assert!(preparation_text_of(&ctx, &view, &mut inputs).contains("Digite o código completo"));
+        inputs.code = " 4821 Gato LUA ".into();
+        assert!(matches!(
+            click_label(&ctx, &view, &mut inputs, "Entrar").as_slice(),
+            [Command::JoinCode { relay, code }]
+                if relay == sync2gether::network::relay::DEFAULT_RELAY && code == " 4821 Gato LUA "
+        ));
+        // A recusa leva de volta ao código digitado, com o erro visível.
+        view.role = Role::Guest;
+        view.internet = true;
+        let text = preparation_text_of(&ctx, &view, &mut inputs);
+        assert!(text.contains("Conectando pela internet"));
+        view = View {
+            error: Some("Código incorreto. Confira as palavras ou peça um código novo.".into()),
+            ..Default::default()
+        };
+        let text = preparation_text_of(&ctx, &view, &mut inputs);
+        assert_eq!(inputs.screen, ui::Screen::Join);
+        assert!(text.contains("Código incorreto"));
+        assert_eq!(inputs.code, " 4821 Gato LUA ");
+        assert!(click_label(&ctx, &view, &mut inputs, "Voltar").is_empty());
+        assert_eq!(inputs.screen, ui::Screen::Home);
+    }
+}
+
+#[test]
+fn code_field_accepts_enter_after_typing_in_the_same_frame() {
+    use sync2gether::runtime::{Command, View};
+    let ctx = egui::Context::default();
+    let view = View::default();
+    let mut inputs = ui::Inputs::default();
+    inputs.screen = ui::Screen::Join;
+    preparation_text_of(&ctx, &view, &mut inputs);
+    ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("room_code")));
+    let mut actions = Vec::new();
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(960.0, 800.0),
+            )),
+            events: vec![
+                egui::Event::Text("4821-gato-lua".into()),
+                key(egui::Key::Enter),
+            ],
+            ..Default::default()
+        },
+        |root| {
+            actions = ui::draw_live(root, &view, &mut inputs, None);
+        },
+    );
+    output.textures_delta.clear();
+    assert!(
+        matches!(actions.as_slice(), [Command::JoinCode { code, .. }] if code == "4821-gato-lua")
+    );
+}
+
+#[test]
+fn internet_room_invites_with_the_code_and_never_with_addresses() {
+    use sync2gether::runtime::{Role, View};
+    for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
+        for light in [false, true] {
+            let mut view = View {
+                role: Role::Host,
+                internet: true,
+                room_address: Some("192.168.1.10:7842".parse().unwrap()),
+                ..Default::default()
+            };
+            let text = preparation_frame(&view, size, light);
+            assert!(text.contains("Gerando o código"));
+            view.room_code = Some("4821-gato-lua".into());
+            view.relay_offline = true;
+            let text = preparation_frame(&view, size, light);
+            assert!(text.contains("Convidar com código"));
+            assert!(text.contains("4821-gato-lua"));
+            assert!(text.contains("Copiar código"));
+            assert!(text.contains("Sem contato com o servidor"));
+            assert!(!text.contains("192.168.1.10"));
+        }
+    }
+}
+
+#[test]
+fn advanced_network_settings_reveal_the_relay_and_validate_it() {
+    let ctx = egui::Context::default();
+    let view = sync2gether::runtime::View::default();
+    let mut inputs = ui::Inputs::default();
+    let _ = click_preparation_widget(&ctx, &view, &mut inputs, "Configurações");
+    let text = preparation_text_of(&ctx, &view, &mut inputs);
+    assert!(text.contains("Opções avançadas de rede"));
+    assert!(!text.contains("Servidor das salas"));
+    inputs.lan = true;
+    inputs.relay = "relay inválido".into();
+    let text = preparation_text_of(&ctx, &view, &mut inputs);
+    assert!(text.contains("Servidor das salas pela internet"));
+    assert!(text.contains("Informe o servidor"));
 }

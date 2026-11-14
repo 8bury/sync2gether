@@ -111,6 +111,22 @@ inspirados no [zapfast](https://github.com/crmne/zapfast), adaptados para este
 projeto. A lógica de sessão e relógio tem testes sem player. Os testes TCP usam
 localhost e verificam autenticação, ordenação, timeout e reconexão.
 
+O repositório é um workspace Cargo com o app e o crate `relay/`; o
+`check.sh` verifica os dois. `tests/relay.rs` sobe o relay real em localhost,
+num runtime próprio, e verifica código certo e errado, fechamento após três
+erros, sala inexistente, versão incompatível, segredo do anfitrião, queda do
+enlace do convidado e reinício do relay com retomada do mesmo número. Os testes
+do canal cifrado também rejeitam quadros alterados e repetidos.
+
+Para testar contra um relay publicado, sem players:
+
+```sh
+SYNC2GETHER_RELAY_E2E=relay.pedrosales.dev:7843 cargo test --locked --test relay -- --ignored
+```
+
+A imagem do relay é construída com `docker build -f relay/Dockerfile .`;
+veja [Salas pela internet e relay](relay.md#publicar-com-docker-e-coolify).
+
 ## Teste de integração do MVP
 
 Com libmpv, FFmpeg e `pactl` instalados, execute:
@@ -140,6 +156,10 @@ Um terceiro cenário simula uma rota intercontinental, com 90 a 150 ms por
 direção: retém todo o tráfego por 2 s durante a reprodução, que deve continuar
 sem pausa, e depois além do limite de silêncio, quando os dois lados pausam,
 reconectam e voltam a iniciar juntos.
+Um quarto cenário cria a sala pela internet com o relay em localhost e coloca
+o convidado atrás de um proxy de bytes com 110 a 140 ms por sentido: entrada
+pelo código, início agendado, desvio entre players e pausa passam pelo canal
+cifrado.
 Para executar um cenário, passe parte do nome dele:
 `bash scripts/test-mvp.sh intercontinental`.
 Os testes verificam a execução dos comandos de play com diferença estimada

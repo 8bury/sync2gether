@@ -209,6 +209,9 @@ pub fn configure_theme(ctx: &egui::Context, light: bool) {
 pub enum Screen {
     #[default]
     Home,
+    /// Entrada com o código de uma sala pela internet.
+    Join,
+    /// Salas da rede local, nas opções avançadas.
     Browse,
     Preparation,
     Watching,
@@ -216,6 +219,14 @@ pub enum Screen {
 pub struct Inputs {
     pub address: String,
     pub port: u16,
+    /// Código digitado para entrar numa sala pela internet.
+    pub code: String,
+    /// Relay das salas pela internet, `nome:porta`.
+    pub relay: String,
+    /// Mostra salas na rede local e entrada por endereço.
+    pub lan: bool,
+    /// A última entrada foi por código: uma recusa volta para a tela do código.
+    pub code_entry: bool,
     pub screen: Screen,
     pub room_panel: bool,
     pub volume: f64,
@@ -229,6 +240,10 @@ impl Default for Inputs {
         Self {
             address: String::new(),
             port: crate::protocol::PORT,
+            code: String::new(),
+            relay: crate::network::relay::DEFAULT_RELAY.into(),
+            lan: false,
+            code_entry: false,
             screen: Screen::Home,
             room_panel: false,
             volume: 100.0,
@@ -301,6 +316,11 @@ pub fn draw_with_inputs(
     let view = demo_view(state);
     if state == SessionState::Browsing {
         inputs.screen = Screen::Browse;
+        inputs.lan = true;
+    }
+    if state == SessionState::JoinCode {
+        inputs.screen = Screen::Join;
+        inputs.code = "4821-gato-lua".into();
     }
     let _ = draw_flow(ui, &view, inputs, None, demo);
     actions
@@ -308,17 +328,20 @@ pub fn draw_with_inputs(
 fn demo_view(state: SessionState) -> crate::runtime::View {
     use crate::runtime::{JoinRequest, Role, View};
     let mut view = View::default();
-    if state == SessionState::Idle {
+    if matches!(state, SessionState::Idle | SessionState::JoinCode) {
         return view;
     }
-    if matches!(
-        state,
-        SessionState::Connecting | SessionState::PendingApproval
-    ) {
+    if state == SessionState::Connecting {
+        view.role = Role::Guest;
+        view.internet = true;
+        view.room_code = Some("4821-gato-lua".into());
+        return view;
+    }
+    if state == SessionState::PendingApproval {
         view.role = Role::Guest;
         view.peer_name = Some("Ana".into());
         view.room_address = Some("192.168.1.10:7842".parse().unwrap());
-        view.waiting_approval = state == SessionState::PendingApproval;
+        view.waiting_approval = true;
         return view;
     }
     if state == SessionState::Browsing {
@@ -345,7 +368,13 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
     view.peer_file = view
         .connected
         .then(|| "Filme.de.demonstração.1080p.mkv".into());
-    view.room_address = Some("192.168.1.10:7842".parse().unwrap());
+    // A aprovação de entrada só existe nas salas da rede local.
+    if state == SessionState::Approval {
+        view.room_address = Some("192.168.1.10:7842".parse().unwrap());
+    } else {
+        view.internet = true;
+        view.room_code = Some("4821-gato-lua".into());
+    }
     view.matched = view.connected;
     view.ready = view.connected;
     view.watching = matches!(
@@ -507,7 +536,13 @@ fn draw_flow(
     let colors = Palette::new(ui.visuals().dark_mode);
     let sticky_preparation = ui.ctx().content_rect().height() < 600.0;
     if inputs.last_role != Role::Local && view.role == Role::Local {
-        inputs.screen = Screen::Home;
+        // Um código recusado volta para a correção, com o erro e o texto digitado.
+        inputs.screen =
+            if inputs.last_role == Role::Guest && inputs.code_entry && view.error.is_some() {
+                Screen::Join
+            } else {
+                Screen::Home
+            };
         inputs.room_panel = false;
         inputs.player.fullscreen = false;
     }
@@ -652,6 +687,9 @@ fn draw_flow(
                                         Screen::Browse => {
                                             entry::browse(ui, colors, view, inputs, &mut actions)
                                         }
+                                        Screen::Join => {
+                                            entry::join(ui, colors, view, inputs, &mut actions)
+                                        }
                                         Screen::Preparation if connecting => {
                                             entry::connecting(ui, colors, view, &mut actions)
                                         }
@@ -766,14 +804,42 @@ fn settings_menu(
             });
         });
     ui.add_space(4.0);
-    section_label(ui, colors, "Porta da sala");
+    section_label(ui, colors, "Rede");
+    let local = role == crate::runtime::Role::Local;
     ui.add_enabled(
-        role == crate::runtime::Role::Local,
-        egui::DragValue::new(&mut inputs.port).range(1..=65535),
-    );
-    if role != crate::runtime::Role::Local {
+        local,
+        egui::Checkbox::new(&mut inputs.lan, "Opções avançadas de rede"),
+    )
+    .on_hover_text("Salas na rede local ou VPN, entrada por endereço e servidor próprio");
+    if inputs.lan {
         ui.label(
-            RichText::new("Altere antes de criar uma nova sala.")
+            RichText::new("Porta das salas na rede local")
+                .small()
+                .color(colors.muted),
+        );
+        ui.add_enabled(
+            local,
+            egui::DragValue::new(&mut inputs.port).range(1..=65535),
+        );
+        let label = ui.label(
+            RichText::new("Servidor das salas pela internet")
+                .small()
+                .color(colors.muted),
+        );
+        ui.add_enabled(
+            local,
+            egui::TextEdit::singleline(&mut inputs.relay)
+                .id(egui::Id::new("relay_address"))
+                .desired_width(f32::INFINITY),
+        )
+        .labelled_by(label.id);
+        if let Err(error) = crate::network::relay::relay_address(&inputs.relay) {
+            ui.add(egui::Label::new(RichText::new(error).small().color(colors.warning)).wrap());
+        }
+    }
+    if !local {
+        ui.label(
+            RichText::new("Altere antes de criar ou entrar em outra sala.")
                 .small()
                 .color(colors.muted),
         );
@@ -910,7 +976,23 @@ fn connection_details(
     actions: &mut Vec<crate::runtime::Command>,
 ) {
     egui::CollapsingHeader::new("Detalhes da conexão").show(ui, |ui| {
-        let addresses = room_addresses(view);
+        if view.internet {
+            ui.label("Sala pela internet, cifrada de ponta a ponta");
+            if let Some(code) = &view.room_code {
+                ui.label(format!("Código: {code}"));
+                if view.role == crate::runtime::Role::Host {
+                    preparation::copy_button(ui, "Copiar código", code);
+                }
+            }
+            if view.relay_offline {
+                ui.label("Sem contato com o servidor. Tentando de novo…");
+            }
+        }
+        let addresses = if view.internet {
+            Vec::new()
+        } else {
+            room_addresses(view)
+        };
         if let Some(address) = view.room_address.filter(|addr| addr.ip().is_unspecified()) {
             ui.label(format!("Porta: {}", address.port()));
         }

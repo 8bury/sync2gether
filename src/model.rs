@@ -4,6 +4,7 @@
 pub enum SessionState {
     #[default]
     Idle,
+    JoinCode,
     Browsing,
     Connecting,
     PendingApproval,
@@ -21,8 +22,9 @@ pub enum SessionState {
 }
 
 impl SessionState {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Idle,
+        Self::JoinCode,
         Self::Browsing,
         Self::Connecting,
         Self::PendingApproval,
@@ -42,6 +44,7 @@ impl SessionState {
     pub fn label(self) -> &'static str {
         match self {
             Self::Idle => "Sem sessão",
+            Self::JoinCode => "Entrar com código",
             Self::Browsing => "Lista de salas",
             Self::Connecting => "Conectando à sala",
             Self::PendingApproval => "Aguardando aprovação",

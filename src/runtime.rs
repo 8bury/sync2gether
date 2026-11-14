@@ -67,6 +67,11 @@ pub struct View {
     pub drift: f64,
     pub peer_drift: Option<f64>,
     pub room_key: String,
+    /// Sala pela internet, com código em vez de endereço.
+    pub internet: bool,
+    pub room_code: Option<String>,
+    /// O anfitrião está sem contato com o relay e tenta reconectar.
+    pub relay_offline: bool,
     pub preparing: bool,
     pub scheduled: bool,
     pub last_start_ms: Option<f64>,
@@ -83,8 +88,18 @@ pub enum Command {
     Discover,
     CancelDiscovery,
     RequestJoin(String),
-    Approve { id: u64, accept: bool },
+    Approve {
+        id: u64,
+        accept: bool,
+    },
     Join(String, String),
+    /// Cria uma sala pela internet no relay informado.
+    HostInternet(String),
+    /// Entra numa sala pela internet com o código.
+    JoinCode {
+        relay: String,
+        code: String,
+    },
     Leave,
     Control(Control),
     Volume(f64),
@@ -369,6 +384,9 @@ impl Worker {
         self.session = Session::default();
         self.view.role = Role::Local;
         self.view.room_key.clear();
+        self.view.internet = false;
+        self.view.room_code = None;
+        self.view.relay_offline = false;
         self.view.error = None;
         self.view.notice = None;
     }
@@ -559,6 +577,35 @@ impl Worker {
                                 }
                                 Ok(_) => self.view.error = Some("O código da sala deve ter 32 caracteres hexadecimais.".into()),
                                 Err(error) => self.view.error = Some(error),
+                            }
+                        }
+                        Command::HostInternet(relay) => {
+                            self.leave(); let (_tx, rx) = mpsc::channel(64); net_rx = rx;
+                            match network::relay::relay_address(&relay) {
+                                Ok(relay) => {
+                                    self.view.role = Role::Host;
+                                    self.view.internet = true;
+                                    self.clock = Clock::host();
+                                    self.session.state.position = self.view.player.position;
+                                    self.session.state.host_ms = self.now();
+                                    let (tx, rx) = mpsc::channel(64); net_rx = rx;
+                                    self.network = Some(tokio::spawn(network::relay::host(relay, tx, self.origin)));
+                                }
+                                Err(error) => self.view.error = Some(error),
+                            }
+                        }
+                        Command::JoinCode { relay, code } => {
+                            self.leave(); let (_tx, rx) = mpsc::channel(64); net_rx = rx;
+                            match (network::relay::relay_address(&relay), network::relay::Code::parse(&code)) {
+                                (Ok(relay), Some(code)) => {
+                                    self.view.role = Role::Guest;
+                                    self.view.internet = true;
+                                    self.view.room_code = Some(code.to_string());
+                                    let (tx, rx) = mpsc::channel(64); net_rx = rx;
+                                    self.network = Some(tokio::spawn(network::relay::guest(relay, code, tx, self.origin)));
+                                }
+                                (Err(error), _) => self.view.error = Some(error),
+                                (_, None) => self.view.error = Some(CODE_HINT.into()),
                             }
                         }
                         Command::Leave => { self.leave(); let (_tx, rx) = mpsc::channel(64); net_rx = rx; }
@@ -774,6 +821,17 @@ impl Worker {
                 }
             }
             network::Event::WaitingApproval => self.view.waiting_approval = true,
+            network::Event::RoomCode(code) => {
+                self.view.room_code = Some(code);
+                self.view.relay_offline = false;
+            }
+            network::Event::RelayOffline => self.view.relay_offline = true,
+            network::Event::WrongCode => {
+                self.view.notice = Some(
+                    "Alguém tentou entrar com um código errado. Confira o código enviado.".into(),
+                )
+            }
+            network::Event::PeerName(name) => self.view.peer_name = Some(name),
             network::Event::Rejected(error) => {
                 self.leave();
                 self.view.error = Some(error);
@@ -1087,6 +1145,10 @@ impl Worker {
         };
     }
 }
+/// Orientação mostrada quando o código digitado não tem o formato esperado.
+pub const CODE_HINT: &str =
+    "Digite o código completo, com o número e as duas palavras, como 4821-gato-lua.";
+
 pub fn parse_address(input: &str) -> Result<SocketAddr, String> {
     let input = input.trim();
     let addr = input

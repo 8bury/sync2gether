@@ -440,6 +440,11 @@ pub(super) fn draw(
         approval(ui, colors, request, actions);
         ui.add_space(8.0);
     }
+    // Enquanto ninguém entrou, o convite é o que o anfitrião precisa ver primeiro.
+    if view.role == Role::Host && !view.connected {
+        invite(ui, colors, view);
+        ui.add_space(if compact { 6.0 } else { 12.0 });
+    }
     card(colors)
         .inner_margin(egui::Margin::symmetric(
             if compact { 14 } else { 18 },
@@ -463,10 +468,6 @@ pub(super) fn draw(
     }
     if view.error.is_none() {
         feedback(ui, view);
-    }
-    if view.role == Role::Host && !view.connected {
-        ui.add_space(if compact { 10.0 } else { 18.0 });
-        invite(ui, colors, view);
     }
     ui.add_space(if compact { 6.0 } else { 18.0 });
     let leave = leave_label(view.role);
@@ -589,6 +590,9 @@ fn approval(
 }
 
 fn invite(ui: &mut egui::Ui, colors: Palette, view: &View) {
+    if view.internet {
+        return invite_code(ui, colors, view);
+    }
     card(colors)
         .inner_margin(egui::Margin::symmetric(18, 14))
         .show(ui, |ui| {
@@ -625,6 +629,86 @@ fn invite(ui: &mut egui::Ui, colors: Palette, view: &View) {
                         });
                     copy_button(ui, "Copiar endereço", &address.to_string());
                 });
+            }
+        });
+}
+
+/// Convite pela internet: o código é tudo que a outra pessoa precisa.
+fn invite_code(ui: &mut egui::Ui, colors: Palette, view: &View) {
+    card(colors)
+        .inner_margin(egui::Margin::symmetric(18, 14))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                kit::draw(
+                    ui.painter(),
+                    kit::Glyph::People,
+                    rect.center(),
+                    16.0,
+                    colors.accent,
+                    0.0,
+                );
+                ui.label(strong(ui, "Convidar com código"));
+            });
+            match &view.room_code {
+                Some(code) => {
+                    ui.horizontal_wrapped(|ui| {
+                        egui::Frame::new()
+                            .fill(colors.inset)
+                            .stroke(Stroke::new(1.0, colors.border))
+                            .corner_radius(8)
+                            .inner_margin(egui::Margin::symmetric(12, 8))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(code.as_str())
+                                        .monospace()
+                                        .size(18.0)
+                                        .color(colors.text),
+                                );
+                            });
+                        copy_button(ui, "Copiar código", code);
+                    });
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(
+                                "Envie o código para a outra pessoa. Ela entra com ele em \"Entrar em uma sala\".",
+                            )
+                            .small()
+                            .color(colors.muted),
+                        )
+                        .wrap(),
+                    );
+                }
+                None => {
+                    ui.horizontal(|ui| {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                        kit::draw(
+                            ui.painter(),
+                            kit::Glyph::Spinner,
+                            rect.center(),
+                            16.0,
+                            colors.accent,
+                            ui.input(|i| i.time),
+                        );
+                        ui.ctx().request_repaint();
+                        ui.label(RichText::new("Gerando o código…").color(colors.muted));
+                    });
+                }
+            }
+            if view.relay_offline {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("Sem contato com o servidor. Tentando de novo…")
+                            .small()
+                            .color(colors.warning),
+                    )
+                    .wrap(),
+                );
             }
         });
 }

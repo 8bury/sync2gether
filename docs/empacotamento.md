@@ -8,7 +8,16 @@ Builds para Arch Linux e Ubuntu 24.04, localmente ou pelo GitHub Actions. Execut
 
 O workflow **Pacotes Linux**, acionado manualmente no GitHub Actions, verifica
 o código, executa testes com libmpv e vídeo sintético, compila e instala cada
-pacote em sua distribuição. Os pacotes ficam disponíveis como artifacts.
+pacote em sua distribuição. Commits comuns não disparam builds de release.
+
+Para lançar uma versão, atualize `version` no `Cargo.toml` e `pkgver` no
+`packaging/arch/PKGBUILD`, envie o commit e abra **Actions → Pacotes Linux →
+Run workflow**. A opção **rascunho** (padrão) cria a release `vX.Y.Z` como
+rascunho, com os dois pacotes, `SHA256SUMS`, instruções de instalação e as
+mudanças desde a release anterior. Revise o texto e publique pela página de
+releases. **publicada** publica direto, e **nenhuma** só deixa os pacotes como
+artifacts da execução. O workflow para antes de compilar se a versão já tiver
+release ou tag.
 
 Para repetir localmente com Docker, use checkouts separados para que os
 testes não compartilhem fixtures. Todos os builds ficam sob `target/`:

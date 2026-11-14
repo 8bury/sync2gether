@@ -1,15 +1,57 @@
 name: Pacotes Linux
 
+# Só roda manualmente: Actions → Pacotes Linux → Run workflow.
+# Para uma release, atualize antes `version` no Cargo.toml e `pkgver` no
+# packaging/arch/PKGBUILD. "nenhuma" só gera os pacotes como artefatos.
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Release no GitHub
+        type: choice
+        options:
+          - rascunho
+          - publicada
+          - nenhuma
+        default: rascunho
 
 permissions:
   contents: read
 
+concurrency:
+  group: packages
+  cancel-in-progress: false
+
 jobs:
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Conferir versão antes de compilar
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.release }}
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          pkgver=$(sed -n 's/^pkgver=//p' packaging/arch/PKGBUILD)
+          if [ "$version" != "$pkgver" ]; then
+            echo "::error::Cargo.toml ($version) e PKGBUILD ($pkgver) têm versões diferentes."
+            exit 1
+          fi
+          if [ "$MODE" != nenhuma ] && { gh release view "v$version" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; }; then
+            echo "::error::A versão $version já existe. Atualize Cargo.toml e PKGBUILD."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   package:
+    needs: version
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - format: deb
@@ -38,3 +80,62 @@ jobs:
             target/dist/*.deb
             target/dist/*.pkg.tar.zst
           if-no-files-found: error
+
+  release:
+    needs: [version, package]
+    if: inputs.release != 'nenhuma'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+      MODE: ${{ inputs.release }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Criar release
+        run: |
+          cd dist
+          deb="sync2gether_${VERSION}_amd64.deb"
+          pkg=$(ls sync2gether-"$VERSION"-*-x86_64.pkg.tar.zst)
+          test -f "$deb"
+          sha256sum "$pkg" "$deb" > SHA256SUMS
+          cat > notes.md <<EOF
+          ## Downloads e instalação
+
+          Os dois pacotes são para x86_64 e não incluem o modo demo.
+
+          Arch Linux atualizado:
+
+          \`\`\`sh
+          sudo pacman -U ./$pkg
+          \`\`\`
+
+          Ubuntu 24.04:
+
+          \`\`\`sh
+          sudo apt install ./$deb
+          \`\`\`
+
+          Os gerenciadores instalam as dependências, incluindo libmpv. Abra \`sync2gether\` pelo menu ou terminal. O seletor de arquivos precisa do portal do desktop e de um backend como \`xdg-desktop-portal-gtk\` ou \`xdg-desktop-portal-kde\`.
+
+          Confira a integridade dos downloads:
+
+          \`\`\`sh
+          sha256sum --check SHA256SUMS
+          \`\`\`
+
+          Pacotes compilados e testados pelo GitHub Actions em containers Arch Linux e Ubuntu 24.04.
+
+          ## Mudanças
+          EOF
+          draft=()
+          if [ "$MODE" = rascunho ]; then draft=(--draft); fi
+          gh release create "v$VERSION" "$pkg" "$deb" SHA256SUMS \
+            -R "$GITHUB_REPOSITORY" "${draft[@]}" --target "$GITHUB_SHA" \
+            --title "sync2gether $VERSION" --notes-file notes.md --generate-notes
+          echo "Release v$VERSION criada ($MODE)." >> "$GITHUB_STEP_SUMMARY"

@@ -1,22 +1,41 @@
 #!/usr/bin/env python3
-"""Regressão EGL na sessão Hyprland real, sem mídia ou alterações de configuração."""
+"""Regressão do aviso "não está respondendo" com a janela oculta no Wayland.
+
+Abre uma instância sem vídeo pelo GDB numa sessão sway headless (scripts/headless.sh), move
+a janela para o scratchpad, onde o compositor deixa de enviar callbacks de
+frame, e captura as threads após 12 segundos. Falha se a thread principal
+estiver presa em eglSwapBuffers em vez de esperar eventos. Nada aparece na
+área de trabalho e a configuração do compositor do usuário não é alterada.
+"""
 import json
 import os
 from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import time
+
+ROOT = Path(__file__).resolve().parent.parent
+BINARY = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "debug/sync2gether"
+
+
+def tree_nodes(node):
+    yield node
+    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+        yield from tree_nodes(child)
+
+
+def find_window(pids):
+    tree = json.loads(subprocess.check_output(["swaymsg", "-t", "get_tree"]))
+    return next((n for n in tree_nodes(tree) if str(n.get("pid")) in pids), None)
 
 
 def check():
-    root = Path(__file__).resolve().parent.parent
-    os.chdir(root)
-    for tool in ("cargo", "gdb", "hyprctl"):
+    os.chdir(ROOT)
+    for tool in ("cargo", "gdb", "sway", "swaymsg"):
         if not shutil.which(tool):
             raise RuntimeError(f"Dependência ausente: {tool}")
-    if not os.environ.get("WAYLAND_DISPLAY"):
-        raise RuntimeError("Execute na sessão Wayland/Hyprland")
     subprocess.run(["cargo", "build", "--locked"], check=True)
     Path(".cache").mkdir(exist_ok=True)
     path = Path(".cache/wayland-focus-backtrace.log")
@@ -32,33 +51,38 @@ def check():
              "-ex", "thread apply all bt 25",
              "-ex", "set confirm off",
              "-ex", "quit",
-             "--args", "target/debug/sync2gether"],
+             "--args", str(BINARY)],
             stdout=output, stderr=subprocess.STDOUT,
         )
         try:
             deadline = time.monotonic() + 20
-            client = None
+            window = None
             while time.monotonic() < deadline and debugger.poll() is None:
                 children = Path(
                     f"/proc/{debugger.pid}/task/{debugger.pid}/children"
                 ).read_text().split()
-                clients = json.loads(subprocess.check_output(["hyprctl", "-j", "clients"]))
-                client = next((c for c in clients if str(c["pid"]) in children), None)
-                if client:
+                window = find_window(children)
+                if window:
                     break
                 time.sleep(0.2)
-            if not client:
+            if not window:
                 raise RuntimeError(f"A janela não abriu; consulte {path}")
-            # Só move a janela criada por este teste. Não modifica regras do compositor.
             time.sleep(2)
             subprocess.run(
-                ["hyprctl", "dispatch",
-                 'hl.dsp.window.move({workspace="special:sync2gether-check", '
-                 f'window={json.dumps("address:" + client["address"])}, follow=false}})'],
-                check=True,
+                ["swaymsg", f"[con_id={window['id']}] move scratchpad"],
+                check=True, stdout=subprocess.DEVNULL,
             )
             print("Janela de teste oculta por 12 segundos...", flush=True)
-            time.sleep(12)
+            # Uma janela oculta parada não pinta. Redimensionar envia
+            # configures, como o Hyprland faz ao ocultar, e força novos frames
+            # sem callbacks do compositor.
+            for width in (900, 1000, 950, 1050):
+                time.sleep(1)
+                subprocess.run(
+                    ["swaymsg", f"[con_id={window['id']}] resize set {width} 700"],
+                    check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            time.sleep(8)
             debugger.send_signal(signal.SIGINT)
             debugger.wait(timeout=15)
         finally:
@@ -77,8 +101,11 @@ def check():
         raise RuntimeError(f"Thread da janela bloqueada em EGL; consulte {path}")
     if "poll" not in main:
         raise RuntimeError(f"Thread fora da espera normal de eventos; consulte {path}")
-    print(f"Wayland/Hyprland: janela oculta sem bloqueio em EGL. Backtrace: {path}")
+    print(f"Janela oculta sem bloqueio em EGL. Backtrace: {path}")
 
 
 if __name__ == "__main__":
+    if os.environ.get("HEADLESS_SESSION") != "1":
+        script = ROOT / "scripts/headless.sh"
+        os.execvp("bash", ["bash", str(script), sys.executable, *sys.argv])
     check()

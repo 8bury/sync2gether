@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+# Na área de trabalho, a janela de teste abre numa sessão sway oculta.
+# Em Xvfb (container/CI) não há WAYLAND_DISPLAY e o display atual é usado.
+if [[ ${HEADLESS_SESSION:-0} != 1 && -n ${WAYLAND_DISPLAY:-} ]]; then
+  exec bash scripts/headless.sh bash scripts/test-player-gl.sh "$@"
+fi
 if [[ ${SYNC2GETHER_TEST_AUDIO:-0} != 1 ]]; then
   exec bash scripts/with-test-audio.sh bash scripts/test-player-gl.sh "$@"
 fi
@@ -20,5 +25,5 @@ ffmpeg -hide_banner -loglevel error -y \
   -metadata:s:a:0 language=por -metadata:s:a:1 language=eng \
   -metadata:s:s:0 language=por .cache/player-gl-fixture.mkv
 cargo build --locked --features demo --example check-player-gl
-# Um display real ou Xvfb deve estar disponível. Não usa arquivos pessoais.
+# Usa a sessão headless ou o Xvfb. Não usa arquivos pessoais.
 timeout 35s "${CARGO_TARGET_DIR:-target}/debug/examples/check-player-gl"

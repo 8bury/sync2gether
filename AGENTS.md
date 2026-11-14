@@ -45,6 +45,12 @@ Leia o README para dependências e comandos. Use o Rust fixado em
 `rust-toolchain.toml` e mantenha `Cargo.lock` versionado. Não copie versões,
 forks ou patches do zapfast sem uma necessidade verificada neste projeto.
 
+Nunca abra janelas na sessão gráfica do usuário: elas aparecem e roubam o
+foco enquanto ele usa o computador. Rode capturas, testes com janela e
+qualquer outro comando com janela por `bash scripts/headless.sh COMANDO`, uma
+sessão sway oculta. `test-player-gl.sh` e `test-wayland-focus.py` já fazem
+isso sozinhos. `cargo run` com janela fica para quando o usuário pedir.
+
 Para revisar a interface, use os cenários do modo demo. Nunca use filmes ou
 arquivos pessoais como fixtures. Capturas vão em `.cache/`, fora do Git.
 O teste de layout não verifica áudio, vídeo, GPU ou sincronização real.

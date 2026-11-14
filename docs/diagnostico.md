@@ -36,16 +36,18 @@ O arquivo de backtrace é sobrescrito a cada execução do script. O diagnóstic
 por PID tem um arquivo próprio para cada processo. Iniciar o processo pelo
 GDB evita depender da permissão de anexar o depurador a uma instância já aberta.
 
-Na sessão Wayland com Hyprland 0.55 ou posterior, Python 3 e GDB instalados,
-o teste do travamento em EGL pode ser executado com:
+Com Python 3, GDB e sway instalados, o teste do travamento em EGL pode ser
+executado com:
 
 ```sh
 python3 scripts/test-wayland-focus.py
 ```
 
-Ele compila e abre uma instância sem vídeo pelo GDB, move somente essa janela
-para um workspace especial oculto por 12 segundos e captura as threads.
-Falha se a thread principal estiver esperando em `SwapBuffers`, em vez de
-esperar eventos. O teste encerra sua própria instância. Não modifica regras
-do compositor e não faz parte do CI sem sessão gráfica. O backtrace fica em
-`.cache/wayland-focus-backtrace.log`.
+Ele compila e abre uma instância sem vídeo pelo GDB numa sessão sway
+headless (`scripts/headless.sh`), sem mostrar nada na área de trabalho. Move a
+janela para o scratchpad, onde o compositor deixa de enviar callbacks de frame,
+redimensiona a janela oculta para forçar novos frames e captura as threads após
+12 segundos. Falha se a thread principal estiver esperando em `SwapBuffers`, em
+vez de esperar eventos. Com a espera de VSync ativada, o teste reproduz o
+travamento. Não altera a configuração do compositor da sessão e não faz parte
+do CI. O backtrace fica em `.cache/wayland-focus-backtrace.log`.

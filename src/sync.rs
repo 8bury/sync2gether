@@ -2,6 +2,11 @@
 use crate::protocol::Snapshot;
 use std::collections::VecDeque;
 
+/// Validade de uma medição. Dois relógios monotônicos divergem menos de
+/// 0,1 ms por segundo, então a estimativa segue útil durante uma retenção da
+/// rede. Quem decide que o parceiro sumiu é o tempo limite da conexão.
+pub const MAX_SAMPLE_AGE_MS: f64 = 10_000.0;
+
 #[derive(Default, Debug)]
 pub struct Clock {
     pub offset_ms: Option<f64>,
@@ -34,7 +39,12 @@ impl Clock {
         }
         let offset = ((t2 - t1) + (t3 - t4)) / 2.0;
         self.samples.push_back((rtt, offset, t4));
-        while self.samples.len() > 16 || self.samples.front().is_some_and(|s| t4 - s.2 > 10_000.0) {
+        while self.samples.len() > 16
+            || self
+                .samples
+                .front()
+                .is_some_and(|s| t4 - s.2 > MAX_SAMPLE_AGE_MS)
+        {
             self.samples.pop_front();
         }
         let mut best: Vec<_> = self.samples.iter().copied().collect();
@@ -56,7 +66,8 @@ impl Clock {
         self.last_sample = t4;
     }
     pub fn ready(&self, local_ms: f64) -> bool {
-        self.identity || (self.samples.len() >= 3 && local_ms - self.last_sample <= 1500.0)
+        self.identity
+            || (self.samples.len() >= 3 && local_ms - self.last_sample <= MAX_SAMPLE_AGE_MS)
     }
     pub fn host_now(&self, local_ms: f64) -> Option<f64> {
         self.ready(local_ms)
@@ -148,7 +159,9 @@ mod tests {
         assert_eq!(c.offset_ms, Some(4000.0));
         assert_eq!(c.rtt_ms, 100.0);
         assert!(c.ready(1300.0));
-        assert!(!c.ready(3000.0));
+        // Uma retenção curta da rede não invalida o relógio; o silêncio longo, sim.
+        assert!(c.ready(1300.0 + MAX_SAMPLE_AGE_MS));
+        assert!(!c.ready(1301.0 + MAX_SAMPLE_AGE_MS));
         c.sample(2000.0, 0.0, -1.0, 2100.0);
         assert_eq!(c.offset_ms, Some(4000.0));
     }

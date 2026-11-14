@@ -139,27 +139,95 @@ fn two_players_sync_mismatch_disconnect_and_resume() {
     shutdown(guest);
 }
 
-/// Um proxy por direção acrescenta atraso e jitter sem precisar de privilégios.
-async fn delayed_forward<R, W>(mut read: R, mut write: W, hold_prepared: Arc<AtomicBool>)
+/// Enlace simulado entre os dois apps. A ordem é preservada, como no TCP.
+#[derive(Clone)]
+struct Link {
+    /// Atraso por direção: `min_ms` mais um jitter de até `jitter_ms`.
+    min_ms: u64,
+    jitter_ms: u64,
+    hold_prepared: Arc<AtomicBool>,
+    /// Retém tudo nas duas direções, como uma retransmissão após perda.
+    stalled: Arc<AtomicBool>,
+}
+impl Link {
+    fn new(min_ms: u64, jitter_ms: u64) -> Self {
+        Self {
+            min_ms,
+            jitter_ms,
+            hold_prepared: Arc::default(),
+            stalled: Arc::default(),
+        }
+    }
+}
+
+/// Cada mensagem sai `atraso` depois de chegar, nunca antes da anterior. O
+/// atraso não se acumula entre mensagens, então o enlace suporta qualquer taxa.
+async fn delayed_forward<R, W>(mut read: R, mut write: W, link: Link, mut seed: u64)
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
     use sync2gether::network::{read_message, write_message};
-    let mut n = 0;
-    while let Ok(message) = read_message(&mut read).await {
-        while matches!(message, sync2gether::protocol::Message::Prepared { .. })
-            && hold_prepared.load(Ordering::SeqCst)
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
+    use tokio::time::{Instant, sleep, sleep_until};
+    let (queue, mut queued) = tokio::sync::mpsc::unbounded_channel();
+    let (min_ms, jitter_ms) = (link.min_ms, link.jitter_ms);
+    let receive = async move {
+        let mut release = Instant::now();
+        while let Ok(message) = read_message(&mut read).await {
+            // Gerador congruente: jitter determinístico e sem viés por direção.
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let delay = min_ms + (seed >> 33) % (jitter_ms + 1);
+            release = release.max(Instant::now() + Duration::from_millis(delay));
+            if queue.send((release, message)).is_err() {
+                break;
+            }
         }
-        let delay = [40, 65, 45, 55][n % 4];
-        n += 1;
-        tokio::time::sleep(Duration::from_millis(delay)).await;
-        if write_message(&mut write, &message).await.is_err() {
-            break;
+    };
+    let deliver = async move {
+        while let Some((release, message)) = queued.recv().await {
+            sleep_until(release).await;
+            while link.stalled.load(Ordering::SeqCst)
+                || (matches!(message, sync2gether::protocol::Message::Prepared { .. })
+                    && link.hold_prepared.load(Ordering::SeqCst))
+            {
+                sleep(Duration::from_millis(5)).await;
+            }
+            if write_message(&mut write, &message).await.is_err() {
+                break;
+            }
         }
-    }
+    };
+    tokio::select! { _ = receive => {}, _ = deliver => {} }
+}
+
+/// Proxy TCP sem privilégios na frente do anfitrião. Aceita reconexões.
+fn proxy(
+    io: &tokio::runtime::Runtime,
+    host: std::net::SocketAddr,
+    link: Link,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    let listener = io
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = io.spawn(async move {
+        let mut seed = 1;
+        while let Ok((client, _)) = listener.accept().await {
+            let Ok(server) = tokio::net::TcpStream::connect(host).await else {
+                continue;
+            };
+            let (cr, cw) = client.into_split();
+            let (sr, sw) = server.into_split();
+            tokio::select! {
+                _ = delayed_forward(cr, sw, link.clone(), seed) => {},
+                _ = delayed_forward(sr, cw, link.clone(), seed + 1) => {},
+            }
+            seed += 2;
+        }
+    });
+    (address, task)
 }
 
 #[test]
@@ -170,19 +238,9 @@ fn schedules_two_real_players_under_network_delay_and_jitter() {
     let address = reserve.local_addr().unwrap();
     drop(reserve);
     let io = tokio::runtime::Runtime::new().unwrap();
-    let listener = io
-        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
-        .unwrap();
-    let proxy_address = listener.local_addr().unwrap();
-    let hold_prepared = Arc::new(AtomicBool::new(false));
-    let proxy_hold = hold_prepared.clone();
-    let proxy = io.spawn(async move {
-        let (client, _) = listener.accept().await.unwrap();
-        let server = tokio::net::TcpStream::connect(address).await.unwrap();
-        let (cr, cw) = client.into_split();
-        let (sr, sw) = server.into_split();
-        tokio::select! { _ = delayed_forward(cr, sw, proxy_hold.clone()) => {}, _ = delayed_forward(sr, cw, proxy_hold) => {} }
-    });
+    let link = Link::new(40, 25);
+    let hold_prepared = link.hold_prepared.clone();
+    let (proxy_address, proxy) = proxy(&io, address, link);
     let host = Runtime::start();
     let guest = Runtime::start();
     send(&host, Command::OpenPath(fixture.clone()));
@@ -243,6 +301,113 @@ fn schedules_two_real_players_under_network_delay_and_jitter() {
             .unwrap();
         assert!(v.player.paused, "a canceled operation restarted playback");
     }
+    shutdown(host);
+    shutdown(guest);
+    proxy.abort();
+}
+
+/// Consome as views até `until`, exigindo `holds` em cada uma delas.
+#[track_caller]
+fn hold(runtime: &Runtime, holds: impl Fn(&View) -> bool, until: impl Fn(&View) -> bool) -> View {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if let Ok(view) = runtime.views.recv_timeout(Duration::from_millis(300)) {
+            assert!(view.error.is_none(), "runtime error: {:?}", view.error);
+            assert!(
+                holds(&view),
+                "condition broken: {}, pos={}, paused={}, connected={}, notice={:?}",
+                view.status,
+                view.player.position,
+                view.player.paused,
+                view.connected,
+                view.notice,
+            );
+            if until(&view) {
+                return view;
+            }
+        }
+    }
+    panic!("condition timed out");
+}
+
+/// Inglaterra e Brasil por um relay na Alemanha: cerca de 120 ms por direção.
+/// Uma retenção curta não pode interromper o filme; a perda do enlace pausa os
+/// dois lados e a sala volta a ficar pronta depois da reconexão.
+#[test]
+#[ignore = "requer libmpv e vídeo sintético gerado por scripts/test-mvp.sh"]
+fn intercontinental_delay_survives_stalls_and_pauses_when_the_link_is_lost() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".cache/mvp-fixture.mkv");
+    let reserve = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = reserve.local_addr().unwrap();
+    drop(reserve);
+    let io = tokio::runtime::Runtime::new().unwrap();
+    let link = Link::new(90, 60);
+    let stalled = link.stalled.clone();
+    let (proxy_address, proxy) = proxy(&io, address, link);
+    let host = Runtime::start();
+    let guest = Runtime::start();
+    send(&host, Command::OpenPath(fixture.clone()));
+    send(&guest, Command::OpenPath(fixture));
+    wait(&host, |v| v.player.loaded);
+    wait(&guest, |v| v.player.loaded);
+    send(&host, Command::Host(address.to_string()));
+    let key = wait(&host, |v| v.role == Role::Host).room_key;
+    send(&guest, Command::Join(proxy_address.to_string(), key));
+    wait(&host, |v| v.ready);
+    let g = wait(&guest, |v| v.ready);
+    assert!(
+        (180.0..300.0).contains(&g.rtt_ms),
+        "measured round trip {}",
+        g.rtt_ms
+    );
+    send(&guest, Command::Control(Control::Play));
+    let h = wait(&host, |v| v.last_start_id.is_some());
+    let g = wait(&guest, |v| v.last_start_id == h.last_start_id);
+    let start_gap = h.last_start_ms.unwrap() - g.last_start_ms.unwrap();
+    assert!(start_gap.abs() < 100.0, "start gap {start_gap}");
+    wait(&host, |v| !v.player.paused && v.player.position > 1.0);
+    wait(&guest, |v| !v.player.paused && v.player.position > 1.0);
+
+    // Dois segundos sem tráfego, como retransmissões seguidas numa rota longa.
+    stalled.store(true, Ordering::SeqCst);
+    std::thread::sleep(Duration::from_secs(2));
+    stalled.store(false, Ordering::SeqCst);
+    let started = h.last_start_id;
+    let playing = |v: &View| !v.player.paused && v.connected && v.last_start_id == started;
+    hold(&host, playing, |v| v.player.position > 5.0);
+    let g = hold(&guest, playing, |v| {
+        v.player.position > 5.0 && v.peer_drift.is_some()
+    });
+    assert!(g.drift.abs() < 0.15, "drift after stall {}", g.drift);
+    assert!(
+        g.peer_drift.unwrap().abs() < 0.15,
+        "peer drift after stall {}",
+        g.peer_drift.unwrap()
+    );
+    println!(
+        "intercontinental: rtt={:.0} ms, start gap={start_gap:.1} ms, drift={:.0} ms, peer drift={:.0} ms",
+        g.rtt_ms,
+        g.drift * 1000.0,
+        g.peer_drift.unwrap() * 1000.0
+    );
+
+    // Sem tráfego além do limite do heartbeat, os dois lados pausam.
+    stalled.store(true, Ordering::SeqCst);
+    wait(&guest, |v| !v.connected && v.player.paused);
+    stalled.store(false, Ordering::SeqCst);
+    wait(&host, |v| !v.connected && v.player.paused);
+    wait(&host, |v| v.ready && v.player.paused);
+    wait(&guest, |v| v.ready && v.player.paused);
+    send(&host, Command::Control(Control::Play));
+    let h = wait(&host, |v| {
+        v.last_start_id.is_some() && v.last_start_id != started
+    });
+    let g = wait(&guest, |v| v.last_start_id == h.last_start_id);
+    let start_gap = h.last_start_ms.unwrap() - g.last_start_ms.unwrap();
+    assert!(
+        start_gap.abs() < 100.0,
+        "start gap after reconnect {start_gap}"
+    );
     shutdown(host);
     shutdown(guest);
     proxy.abort();

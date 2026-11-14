@@ -14,6 +14,13 @@ use tokio::{
 
 pub mod rooms;
 
+/// Silêncio tolerado numa conexão estabelecida. Cada lado envia algo a cada
+/// 200 ms; numa rota longa, retransmissões seguidas seguram o TCP por alguns
+/// segundos sem que o parceiro tenha saído.
+pub const SILENCE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Fila de saída: comporta as mensagens de um silêncio inteiro, a 10 por segundo.
+const OUTGOING: usize = 64;
+
 pub enum Event {
     ApprovalRequested {
         id: u64,
@@ -67,13 +74,13 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Me
 async fn connection(stream: TcpStream, events: &mpsc::Sender<Event>, origin: Instant) {
     let _ = stream.set_nodelay(true);
     let (mut reader, mut writer) = stream.into_split();
-    let (tx, mut rx) = mpsc::channel(32);
+    let (tx, mut rx) = mpsc::channel(OUTGOING);
     if events.send(Event::Connected(tx)).await.is_err() {
         return;
     }
     let incoming = async {
         loop {
-            match timeout(Duration::from_secs(3), read_message(&mut reader)).await {
+            match timeout(SILENCE_TIMEOUT, read_message(&mut reader)).await {
                 Ok(Ok(Message::Bye)) => break,
                 Ok(Ok(message)) => {
                     if events
@@ -94,7 +101,7 @@ async fn connection(stream: TcpStream, events: &mpsc::Sender<Event>, origin: Ins
                 *sent_host_ms = origin.elapsed().as_secs_f64() * 1000.0;
             }
             if !matches!(
-                timeout(Duration::from_secs(2), write_message(&mut writer, &message)).await,
+                timeout(SILENCE_TIMEOUT, write_message(&mut writer, &message)).await,
                 Ok(Ok(()))
             ) {
                 break;

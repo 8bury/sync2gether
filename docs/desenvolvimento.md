@@ -115,6 +115,12 @@ retomada após fim do vídeo. Também verifica entrada com aprovação, prepara�
 sem play automático e retorno à preparação quando alguém troca o arquivo. Um segundo cenário usa um proxy TCP com atraso
 variável de 40 a 65 ms por mensagem em cada direção, verificando início
 agendado, seek durante reprodução e cancelamento com mensagens em trânsito.
+Um terceiro cenário simula uma rota intercontinental, com 90 a 150 ms por
+direção: retém todo o tráfego por 2 s durante a reprodução, que deve continuar
+sem pausa, e depois além do limite de silêncio, quando os dois lados pausam,
+reconectam e voltam a iniciar juntos.
+Para executar um cenário, passe parte do nome dele:
+`bash scripts/test-mvp.sh intercontinental`.
 Os testes verificam a execução dos comandos de play com diferença estimada
 abaixo de 100 ms nesse ambiente; não garantem essa precisão em qualquer rede
 ou na apresentação física do áudio/vídeo. Não usam arquivos pessoais nem

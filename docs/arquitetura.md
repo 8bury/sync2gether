@@ -112,9 +112,12 @@ recebido tarde, não confirmado ou executado com atraso local superior a 80 ms
 Os relógios são monotônicos. Ping/pong usa quatro timestamps, medidos na
 recepção e no envio da rede, para descontar o processamento remoto. O filtro
 usa uma janela de até 16 amostras, priorizando as de menor atraso; três amostras
-válidas são necessárias antes de iniciar. Medições de relógio sem atualização
-por 1,5 s deixam de permitir play agendado. Assimetria de rede continua sendo
-uma fonte de incerteza, não eliminada por esse cálculo.
+válidas são necessárias antes de iniciar. Uma medição vale por 10 s: relógios
+monotônicos divergem menos de 0,1 ms por segundo, então uma retenção curta da
+rede não invalida a estimativa nem pausa o filme. A conexão é considerada
+perdida após 5 s sem receber nada do parceiro, que envia algo a cada 200 ms;
+só então os dois lados pausam e o convidado tenta reconectar. Assimetria de
+rede continua sendo uma fonte de incerteza, não eliminada por esse cálculo.
 
 O player informa posição, instante da medição e velocidade efetiva a cada
 50 ms. O controlador extrapola a posição para o instante atual e monitora a

@@ -182,7 +182,11 @@ async fn heartbeat_timeout_detects_a_silent_peer() {
         Message::Welcome { .. }
     ));
     let _keep_outgoing_alive = connected(&mut rx).await;
-    assert!(matches!(next(&mut rx).await, Event::Disconnected));
+    let silence = Instant::now();
+    let event = timeout(network::SILENCE_TIMEOUT + Duration::from_secs(2), rx.recv()).await;
+    assert!(matches!(event, Ok(Some(Event::Disconnected))));
+    // Uma retenção curta da rede não derruba a sala.
+    assert!(silence.elapsed() >= network::SILENCE_TIMEOUT);
     host.abort();
 }
 

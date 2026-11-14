@@ -30,6 +30,22 @@ fn layout_fits_supported_window_sizes_in_both_themes() {
                         },
                     );
                     assert!(!output.shapes.is_empty(), "empty screen: {state:?}");
+                    let text = visible_text(&output.shapes);
+                    for removed in [
+                        "O mesmo momento",
+                        "Um play para vocês dois",
+                        "Pela rede local ou VPN",
+                        "A outra pessoa pode encontrar sua sala",
+                        "Encerrar a sala desconecta",
+                        "Cada pessoa abre a cópia",
+                        "Uma vaga para você",
+                        "Aceite para escolherem o filme juntos",
+                    ] {
+                        assert!(
+                            !text.contains(removed),
+                            "redundant copy {removed:?} in {state:?}, light={light}"
+                        );
+                    }
                     // Sem renderer neste teste: descarte explicitamente os uploads de texturas.
                     output.textures_delta.clear();
                 }
@@ -840,6 +856,350 @@ fn preparation_frame(view: &sync2gether::runtime::View, size: [f32; 2], light: b
     text
 }
 
+fn preparation_output(
+    ctx: &egui::Context,
+    view: &sync2gether::runtime::View,
+    inputs: &mut ui::Inputs,
+    events: Vec<egui::Event>,
+) -> (egui::FullOutput, Vec<sync2gether::runtime::Command>) {
+    let mut actions = Vec::new();
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(960.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        },
+        |root| {
+            actions = ui::draw_live(root, view, inputs, None);
+        },
+    );
+    output.textures_delta.clear();
+    (output, actions)
+}
+
+fn click_preparation_widget(
+    ctx: &egui::Context,
+    view: &sync2gether::runtime::View,
+    inputs: &mut ui::Inputs,
+    label: &str,
+) -> egui::FullOutput {
+    ctx.enable_accesskit();
+    let mut position = None;
+    for _ in 0..3 {
+        let (output, actions) = preparation_output(ctx, view, inputs, vec![]);
+        assert!(actions.is_empty());
+        for (_, node) in output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+        {
+            if node.label() == Some(label) {
+                let bounds = node.bounds().expect("accessible control must have bounds");
+                position = Some(egui::pos2(
+                    ((bounds.x0 + bounds.x1) * 0.5) as f32,
+                    ((bounds.y0 + bounds.y1) * 0.5) as f32,
+                ));
+            }
+        }
+    }
+    let position = position.unwrap_or_else(|| panic!("accessible control not found: {label}"));
+    let event = |pressed| egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let (_, actions) = preparation_output(
+        ctx,
+        view,
+        inputs,
+        vec![egui::Event::PointerMoved(position), event(true)],
+    );
+    assert!(actions.is_empty());
+    let (output, actions) = preparation_output(ctx, view, inputs, vec![event(false)]);
+    assert!(actions.is_empty());
+    output
+}
+
+#[test]
+fn each_file_menu_copies_the_full_name_without_changing_playback() {
+    use sync2gether::runtime::{Role, View};
+    for light in [false, true] {
+        for local in [false, true] {
+            let ctx = egui::Context::default();
+            ui::configure_theme(&ctx, light);
+            let mut inputs = ui::Inputs::default();
+            let view = View {
+                role: Role::Guest,
+                connected: true,
+                file: Some(format!("{}.mkv", "Minha cópia com nome longo ".repeat(8))),
+                peer_file: Some(format!("{}.mp4", "Cópia da outra pessoa ".repeat(8))),
+                peer_name: Some("Ana".into()),
+                ..Default::default()
+            };
+            let _ = click_preparation_widget(
+                &ctx,
+                &view,
+                &mut inputs,
+                if local {
+                    "Opções do seu arquivo"
+                } else {
+                    "Opções do arquivo da outra pessoa"
+                },
+            );
+            assert!(egui::Popup::is_any_open(&ctx));
+            let (output, actions) = preparation_output(&ctx, &view, &mut inputs, vec![]);
+            assert!(actions.is_empty());
+            assert!(
+                visible_text(&output.shapes).contains("Nome completo"),
+                "menu not shown: local={local}, light={light}, popup={}, text={}",
+                egui::Popup::is_any_open(&ctx),
+                visible_text(&output.shapes)
+            );
+            let output = click_preparation_widget(&ctx, &view, &mut inputs, "Copiar nome");
+            let expected = if local {
+                view.file.as_ref().unwrap()
+            } else {
+                view.peer_file.as_ref().unwrap()
+            };
+            assert!(output.platform_output.commands.iter().any(
+                |command| matches!(command, egui::OutputCommand::CopyText(name) if name == expected)
+            ));
+            let (output, actions) = preparation_output(&ctx, &view, &mut inputs, vec![]);
+            assert!(actions.is_empty());
+            assert!(visible_text(&output.shapes).contains("Copiado!"));
+            assert!(!inputs.player.fullscreen);
+        }
+    }
+}
+
+#[test]
+fn preparation_changes_only_the_local_file_and_cancels_scheduled_start() {
+    use sync2gether::{
+        protocol::Control,
+        runtime::{Command, Role, View},
+    };
+    for light in [false, true] {
+        let ctx = egui::Context::default();
+        ui::configure_theme(&ctx, light);
+        let mut inputs = ui::Inputs::default();
+        let mut view = View {
+            role: Role::Guest,
+            connected: true,
+            peer_file: Some("Companhia.mkv".into()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            click_label(&ctx, &view, &mut inputs, "Escolher arquivo").as_slice(),
+            [Command::Open]
+        ));
+        assert!(click_label(&ctx, &view, &mut inputs, "Começar a assistir").is_empty());
+        view.file = Some("Meu.mkv".into());
+        assert!(matches!(
+            click_label(&ctx, &view, &mut inputs, "Trocar arquivo").as_slice(),
+            [Command::Open]
+        ));
+        let (output, _) = preparation_output(&ctx, &view, &mut inputs, vec![]);
+        let text = visible_text(&output.shapes);
+        assert_eq!(text.matches("Trocar arquivo").count(), 1);
+        assert!(!text.contains("Nome completo") && !text.contains("Copiar nome"));
+        view.preparing = true;
+        view.scheduled = true;
+        assert!(matches!(
+            click_label(&ctx, &view, &mut inputs, "Cancelar início").as_slice(),
+            [Command::Control(Control::Pause)]
+        ));
+        view.preparing = false;
+        view.scheduled = false;
+        view.player.blocked = true;
+        let text = preparation_frame(&view, [960.0, 800.0], light);
+        assert!(text.contains("Player indisponível"));
+        assert!(click_label(&ctx, &view, &mut inputs, "Começar a assistir").is_empty());
+    }
+}
+
+#[test]
+fn connection_screen_reports_only_confirmed_stages_and_keeps_cancellation_visible() {
+    use sync2gether::runtime::{Command, Role, View};
+    for light in [false, true] {
+        for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            ui::configure_theme(&ctx, light);
+            let mut inputs = ui::Inputs::default();
+            let mut view = View {
+                role: Role::Guest,
+                peer_name: Some("Anfitrião de teste com um nome muito comprido ".repeat(8)),
+                room_key: "private-token-never-visible".into(),
+                ..Default::default()
+            };
+            for waiting in [false, true] {
+                view.waiting_approval = waiting;
+                for _ in 0..3 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                size.into(),
+                            )),
+                            ..Default::default()
+                        },
+                        |root| {
+                            assert!(ui::draw_live(root, &view, &mut inputs, None).is_empty());
+                            assert!(root.min_rect().width() <= size[0] + 1.0);
+                        },
+                    );
+                    output.textures_delta.clear();
+                    let text = visible_text(&output.shapes);
+                    assert_eq!(text.contains("Anfitrião encontrado"), waiting);
+                    assert_eq!(text.contains("Solicitação enviada"), waiting);
+                    assert_eq!(text.contains("Aguardando aprovação"), waiting);
+                    assert!(!text.contains("Começar a assistir"));
+                    assert!(!text.contains("Selecionar filme"));
+                    assert!(!text.contains("private-token"));
+                    let clip = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| {
+                            find_label(&shape.shape, "Cancelar solicitação")
+                                .map(|_| shape.clip_rect)
+                        })
+                        .expect("cancellation missing");
+                    let bounds = output
+                        .platform_output
+                        .accesskit_update
+                        .as_ref()
+                        .unwrap()
+                        .nodes
+                        .iter()
+                        .find_map(|(_, node)| {
+                            (node.label() == Some("Cancelar solicitação"))
+                                .then(|| node.bounds())
+                                .flatten()
+                        })
+                        .expect("cancellation accessibility bounds missing");
+                    assert!(
+                        clip.contains_rect(egui::Rect::from_min_max(
+                            egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+                            egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+                        )),
+                        "cancellation clipped at {size:?}, light={light}, waiting={waiting}"
+                    );
+                    output.textures_delta.clear();
+                }
+                assert!(matches!(
+                    click_label_at_size(&ctx, &view, &mut inputs, "Cancelar solicitação", size)
+                        .as_slice(),
+                    [Command::Leave]
+                ));
+            }
+            view.error = Some("Não foi possível alcançar o anfitrião.".into());
+            let text = preparation_frame(&view, size, light);
+            assert!(text.contains("Não foi possível conectar"));
+            assert!(text.contains("Não foi possível alcançar o anfitrião."));
+            assert!(!text.contains("Anfitrião encontrado"));
+            assert!(!text.contains("Aguardando aprovação"));
+            view.error = None;
+            view.connected = true;
+            let text = preparation_frame(&view, size, light);
+            assert!(text.contains("Selecionar filme"));
+            assert!(!text.contains("Cancelar solicitação"));
+        }
+    }
+}
+
+#[test]
+fn room_browser_selects_the_room_and_preserves_manual_entry_after_discovery_failure() {
+    use sync2gether::{
+        discovery::Room,
+        runtime::{Command, View},
+    };
+    for light in [false, true] {
+        let ctx = egui::Context::default();
+        ui::configure_theme(&ctx, light);
+        let mut inputs = ui::Inputs::default();
+        let mut view = View::default();
+        click_label(&ctx, &view, &mut inputs, "Entrar em uma sala");
+        for address in ["192.168.1.10:7842", "192.168.1.20:7843"] {
+            view.rooms = vec![Room {
+                name: "Ana".into(),
+                address: address.parse().unwrap(),
+            }];
+            assert!(
+                matches!(click_label(&ctx, &view, &mut inputs, "Solicitar entrada").as_slice(),
+                [Command::RequestJoin(selected)] if selected == address)
+            );
+        }
+        view.rooms.clear();
+        view.discovery_error = Some("Descoberta indisponível na rede de teste.".into());
+        inputs.address = "endereço inválido".into();
+        assert!(click_label(&ctx, &view, &mut inputs, "Solicitar entrada").is_empty());
+        inputs.address = "192.168.1.30:7844".into();
+        assert!(
+            matches!(click_label(&ctx, &view, &mut inputs, "Solicitar entrada").as_slice(),
+            [Command::RequestJoin(selected)] if selected == "192.168.1.30:7844")
+        );
+        assert!(matches!(
+            click_label(&ctx, &view, &mut inputs, "Voltar").as_slice(),
+            [Command::CancelDiscovery]
+        ));
+        assert_eq!(inputs.screen, ui::Screen::Home);
+    }
+}
+
+#[test]
+fn manual_address_accepts_enter_after_editing_in_the_same_frame() {
+    use sync2gether::runtime::{Command, View};
+    let ctx = egui::Context::default();
+    ui::configure_theme(&ctx, true);
+    let view = View::default();
+    let mut inputs = ui::Inputs::default();
+    inputs.screen = ui::Screen::Browse;
+    for _ in 0..3 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(960.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |root| {
+                assert!(ui::draw_live(root, &view, &mut inputs, None).is_empty());
+            },
+        );
+        output.textures_delta.clear();
+    }
+    ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("host_address")));
+    let mut actions = Vec::new();
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(960.0, 800.0),
+            )),
+            events: vec![
+                egui::Event::Text("192.168.1.10:7842".into()),
+                key(egui::Key::Enter),
+            ],
+            ..Default::default()
+        },
+        |root| {
+            actions = ui::draw_live(root, &view, &mut inputs, None);
+        },
+    );
+    output.textures_delta.clear();
+    assert!(
+        matches!(actions.as_slice(), [Command::RequestJoin(address)] if address == "192.168.1.10:7842")
+    );
+}
+
 #[test]
 fn preparation_shows_both_files_and_explains_content_comparison_for_both_roles() {
     use sync2gether::runtime::{Role, View};
@@ -865,11 +1225,10 @@ fn preparation_shows_both_files_and_explains_content_comparison_for_both_roles()
                 "Você",
                 "Outra pessoa",
                 "Os arquivos são iguais",
-                "Nome completo",
-                "Copiar nome",
             ] {
                 assert!(text.contains(label), "missing {label}: {text}");
             }
+            assert!(!text.contains("Nome completo") && !text.contains("Copiar nome"));
             view.ready = false;
             let text = preparation_frame(&view, [960.0, 1000.0], light);
             assert!(text.contains("conexão estabilizar"));
@@ -878,7 +1237,7 @@ fn preparation_shows_both_files_and_explains_content_comparison_for_both_roles()
             let text = preparation_frame(&view, [960.0, 1000.0], light);
             assert!(text.contains("Os arquivos são diferentes"));
             assert!(!text.contains("Os arquivos são iguais"));
-            assert!(text.contains("O nome igual não garante conteúdo igual"));
+            assert!(text.contains("Escolham arquivos com o mesmo conteúdo"));
             assert!(text.contains(if role == Role::Host {
                 "Encerrar sala"
             } else {
@@ -985,5 +1344,31 @@ fn approval_actions_remain_visible_in_the_smallest_window() {
             );
             output.textures_delta.clear();
         }
+    }
+}
+
+#[test]
+fn settings_icon_keeps_its_accessible_name_and_switches_the_theme() {
+    let view = sync2gether::runtime::View::default();
+    for light in [false, true] {
+        let ctx = egui::Context::default();
+        ui::configure_theme(&ctx, light);
+        let mut inputs = ui::Inputs::default();
+        let _ = click_preparation_widget(&ctx, &view, &mut inputs, "Configurações");
+        assert!(egui::Popup::is_any_open(&ctx));
+        let (output, actions) = preparation_output(&ctx, &view, &mut inputs, vec![]);
+        assert!(actions.is_empty());
+        let text = visible_text(&output.shapes);
+        assert!(
+            text.contains("Escuro") && text.contains("Claro"),
+            "settings menu did not open: {text}"
+        );
+        click_preparation_widget(
+            &ctx,
+            &view,
+            &mut inputs,
+            if light { "Escuro" } else { "Claro" },
+        );
+        assert_eq!(ctx.global_style().visuals.dark_mode, light);
     }
 }

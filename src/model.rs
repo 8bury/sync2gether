@@ -5,6 +5,8 @@ pub enum SessionState {
     #[default]
     Idle,
     Browsing,
+    Connecting,
+    PendingApproval,
     Waiting,
     Approval,
     Choosing,
@@ -19,9 +21,11 @@ pub enum SessionState {
 }
 
 impl SessionState {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 15] = [
         Self::Idle,
         Self::Browsing,
+        Self::Connecting,
+        Self::PendingApproval,
         Self::Waiting,
         Self::Approval,
         Self::Choosing,
@@ -39,6 +43,8 @@ impl SessionState {
         match self {
             Self::Idle => "Sem sessão",
             Self::Browsing => "Lista de salas",
+            Self::Connecting => "Conectando à sala",
+            Self::PendingApproval => "Aguardando aprovação",
             Self::Approval => "Solicitação de entrada",
             Self::Choosing => "Escolhendo arquivos",
             Self::Verifying => "Verificando arquivos",

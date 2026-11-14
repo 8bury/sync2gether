@@ -62,7 +62,7 @@ precisam de validação. Bibliotecas novas mantêm a escolha automática do mpv.
 Os testes com renderizador por software limitam cada decoder a duas threads;
 a janela mantém o paralelismo automático do libmpv.
 
-O modo demo permanece offline, com treze cenários fictícios. Ele não inicia
+O modo demo permanece offline, com quinze cenários fictícios. Ele não inicia
 player, lê filmes ou abre sockets. Os testes de layout não validam áudio,
 vídeo, GPU ou sincronização entre PCs.
 
@@ -72,6 +72,12 @@ vídeo, GPU ou sincronização entre PCs.
   `player/gl.rs` renderiza no contexto OpenGL do eframe, sem executar comandos
   síncronos de reprodução. `player/tracks.rs` copia a lista de faixas do mpv.
 - `player_ui.rs` desenha os controles sobre o vídeo e devolve comandos à aplicação.
+- `ui/entry.rs` desenha início, lista de salas e espera de conexão ou aprovação,
+  sem I/O. `ui.rs` escolhe a etapa usando os estados confirmados pelo runtime;
+  a aprovação leva o convidado à preparação dos arquivos.
+- `ui/preparation.rs` reúne os arquivos locais e remotos numa lista, com menus
+  de nome completo e cópia. Seleção, cancelamento da verificação, aprovação e
+  início continuam retornando comandos ao runtime; a UI não lê mídia.
 - `media.rs` identifica arquivos sem compartilhar caminhos locais.
 - `discovery.rs` anuncia e encontra salas por UDP nas interfaces IPv4 e confirma
   os candidatos por TCP, em segundo plano.

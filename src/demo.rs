@@ -13,6 +13,8 @@ use crate::model::SessionState;
 pub enum Scenario {
     Idle,
     Browsing,
+    Connecting,
+    PendingApproval,
     Waiting,
     Approval,
     Choosing,
@@ -31,6 +33,8 @@ impl From<Scenario> for SessionState {
         match scenario {
             Scenario::Idle => Self::Idle,
             Scenario::Browsing => Self::Browsing,
+            Scenario::Connecting => Self::Connecting,
+            Scenario::PendingApproval => Self::PendingApproval,
             Scenario::Approval => Self::Approval,
             Scenario::Choosing => Self::Choosing,
             Scenario::Verifying => Self::Verifying,

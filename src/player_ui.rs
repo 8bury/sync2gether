@@ -1,10 +1,14 @@
 //! Controles do player: apenas estado egui e comandos devolvidos à aplicação.
+use crate::ui::kit::{self, Glyph};
 use crate::{
     player::TrackKind,
     protocol::Control,
     runtime::{Command, Role, View},
 };
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, RichText, Stroke};
+
+/// Destaque do player, igual nos dois temas porque fica sobre o vídeo.
+const ACCENT: Color32 = Color32::from_rgb(122, 156, 255);
 
 pub enum Video<'a> {
     Texture(&'a egui::TextureHandle),
@@ -210,7 +214,7 @@ pub(crate) fn draw(
     ui.scope_builder(egui::UiBuilder::new().max_rect(top), |ui| {
         ui.visuals_mut().override_text_color = Some(Color32::WHITE);
         ui.horizontal(|ui| {
-            let title_width = (ui.available_width() - 78.0).max(20.0);
+            let title_width = (ui.available_width() - 96.0).max(20.0);
             ui.allocate_ui_with_layout(
                 egui::vec2(title_width, 32.0),
                 egui::Layout::left_to_right(egui::Align::Center),
@@ -218,30 +222,25 @@ pub(crate) fn draw(
                     ui.set_min_width(title_width);
                     ui.add(
                         egui::Label::new(
-                            RichText::new(
+                            crate::ui::strong(
+                                ui,
                                 view.file
                                     .as_deref()
                                     .map(crate::ui::media_title)
                                     .unwrap_or("Seu filme, juntos"),
                             )
-                            .size(18.0)
-                            .strong()
+                            .size(16.5)
                             .color(Color32::WHITE),
                         )
                         .truncate(),
                     );
                 },
             );
-            if ui
-                .add(
-                    egui::Button::new("Sala")
-                        .frame(false)
-                        .min_size(egui::vec2(64.0, 32.0)),
-                )
-                .clicked()
-            {
-                inputs.room_panel = !inputs.room_panel;
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if glass_button(ui, "Sala", Glyph::People, inputs.room_panel).clicked() {
+                    inputs.room_panel = !inputs.room_panel;
+                }
+            });
         });
         if has_notice {
             let status = if view.role != Role::Local && !view.connected {
@@ -257,21 +256,65 @@ pub(crate) fn draw(
             } else {
                 &view.status
             };
-            ui.add(
-                egui::Label::new(
-                    view.error
-                        .as_deref()
-                        .or(view.notice.as_deref())
-                        .unwrap_or(status),
-                )
-                .wrap(),
-            );
-            if view.role != Role::Local
-                && !view.connected
-                && ui.small_button("Opções da sala").clicked()
-            {
-                inputs.room_panel = true;
-            }
+            let disconnected = view.role != Role::Local && !view.connected;
+            let glyph = if view.error.is_some() || view.player.blocked {
+                Glyph::Alert
+            } else if disconnected || view.preparing || view.scheduled {
+                Glyph::Spinner
+            } else {
+                Glyph::Info
+            };
+            ui.add_space(4.0);
+            egui::Frame::new()
+                .fill(Color32::from_black_alpha(165))
+                .stroke(Stroke::new(1.0, Color32::from_white_alpha(26)))
+                .corner_radius(12)
+                .inner_margin(egui::Margin::symmetric(12, 10))
+                .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width().min(520.0));
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        let (icon, _) =
+                            ui.allocate_exact_size(egui::vec2(16.0, 18.0), egui::Sense::hover());
+                        kit::draw(
+                            ui.painter(),
+                            glyph,
+                            icon.center(),
+                            15.0,
+                            if glyph == Glyph::Alert {
+                                Color32::from_rgb(255, 170, 150)
+                            } else {
+                                ACCENT
+                            },
+                            ui.input(|i| i.time),
+                        );
+                        if glyph == Glyph::Spinner {
+                            ui.ctx().request_repaint();
+                        }
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(
+                                    view.error
+                                        .as_deref()
+                                        .or(view.notice.as_deref())
+                                        .unwrap_or(status),
+                                )
+                                .color(Color32::WHITE),
+                            )
+                            .wrap(),
+                        );
+                    });
+                    if disconnected {
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(26.0);
+                            if glass_button(ui, "Opções da sala", Glyph::People, false).clicked()
+                            {
+                                inputs.room_panel = true;
+                            }
+                        });
+                    }
+                });
         }
     });
     ui.scope_builder(
@@ -280,7 +323,7 @@ pub(crate) fn draw(
             // Controles claros sobre o vídeo, também no tema claro da janela.
             *ui.visuals_mut() = egui::Visuals::dark();
             ui.visuals_mut().override_text_color = Some(Color32::WHITE);
-            ui.visuals_mut().selection.bg_fill = Color32::from_rgb(104, 145, 255);
+            ui.visuals_mut().selection.bg_fill = ACCENT;
             ui.visuals_mut().widgets.inactive.bg_fill = Color32::WHITE;
             ui.visuals_mut().widgets.hovered.bg_fill = Color32::WHITE;
             ui.visuals_mut().widgets.active.bg_fill = Color32::WHITE;
@@ -290,14 +333,29 @@ pub(crate) fn draw(
             ui.spacing_mut().interact_size.y = 18.0;
             ui.visuals_mut().handle_shape = egui::style::HandleShape::Circle;
             let mut seek = inputs.seek.unwrap_or(view.player.position);
+            // O slider do egui cuida da interação e da acessibilidade; a aparência é desenhada abaixo.
             let response = ui
-                .add_enabled(
-                    can_seek,
-                    egui::Slider::new(&mut seek, 0.0..=view.player.duration.max(0.1))
-                        .show_value(false)
-                        .trailing_fill(true),
-                )
-                .on_hover_text("Posição no filme");
+                .scope(|ui| {
+                    let visuals = ui.visuals_mut();
+                    visuals.selection.bg_fill = Color32::TRANSPARENT;
+                    for widget in [
+                        &mut visuals.widgets.inactive,
+                        &mut visuals.widgets.hovered,
+                        &mut visuals.widgets.active,
+                    ] {
+                        widget.bg_fill = Color32::TRANSPARENT;
+                        widget.fg_stroke = Stroke::NONE;
+                        widget.expansion = 0.0;
+                    }
+                    ui.add_enabled(
+                        can_seek,
+                        egui::Slider::new(&mut seek, 0.0..=view.player.duration.max(0.1))
+                            .show_value(false)
+                            .trailing_fill(true),
+                    )
+                })
+                .inner;
+            seek_bar(ui, &response, seek, view.player.duration, can_seek);
             if response.dragged() {
                 inputs.seek = Some(seek);
             }
@@ -332,14 +390,15 @@ pub(crate) fn draw(
                         (view.player.position + 10.0).min(view.player.duration),
                     )));
                 }
+                ui.add_space(4.0);
                 ui.label(
                     RichText::new(format!(
                         "{} / {}",
                         timestamp(seek),
                         timestamp(view.player.duration)
                     ))
-                    .size(12.0)
-                    .color(Color32::from_gray(205)),
+                    .size(12.5)
+                    .color(Color32::from_gray(215)),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icon_button(
@@ -480,6 +539,120 @@ fn gradient(painter: &egui::Painter, rect: egui::Rect, top: bool) {
     mesh.add_triangle(0, 2, 3);
     painter.add(egui::Shape::mesh(mesh));
 }
+/// Barra de progresso desenhada sobre o slider transparente.
+fn seek_bar(ui: &egui::Ui, response: &egui::Response, seek: f64, duration: f64, enabled: bool) {
+    let rect = response.rect;
+    let active = enabled && (response.hovered() || response.dragged());
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(response.id.with("seek_hover"), active, 0.12);
+    let radius = rect.height() / 2.5;
+    let range = rect.x_range().shrink(radius);
+    let fraction = if duration > 0.0 {
+        (seek / duration).clamp(0.0, 1.0) as f32
+    } else {
+        0.0
+    };
+    let x = range.min + range.span() * fraction;
+    let height = 4.0 + 2.0 * hover;
+    let track = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), height));
+    let painter = ui.painter();
+    painter.rect_filled(track, height * 0.5, Color32::from_white_alpha(56));
+    let mut filled = track;
+    filled.max.x = x.max(track.left() + height);
+    painter.rect_filled(
+        filled,
+        height * 0.5,
+        if enabled {
+            ACCENT
+        } else {
+            ACCENT.gamma_multiply(0.6)
+        },
+    );
+    if enabled {
+        let center = egui::pos2(x, rect.center().y);
+        painter.circle_filled(
+            center + egui::vec2(0.0, 1.0),
+            5.0 + 2.5 * hover,
+            Color32::from_black_alpha(90),
+        );
+        painter.circle_filled(center, 4.5 + 2.5 * hover, Color32::WHITE);
+    }
+    if enabled && let Some(pointer) = response.hover_pos() {
+        let at = ((pointer.x - range.min) / range.span().max(1.0)).clamp(0.0, 1.0) as f64;
+        let text = timestamp(if response.dragged() {
+            seek
+        } else {
+            at * duration
+        });
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), Color32::WHITE);
+        let size = galley.size() + egui::vec2(14.0, 8.0);
+        let anchor = if response.dragged() { x } else { pointer.x };
+        let left = (anchor - size.x * 0.5).clamp(rect.left(), rect.right() - size.x);
+        let bubble = egui::Rect::from_min_size(egui::pos2(left, rect.top() - size.y - 6.0), size);
+        painter.rect_filled(bubble, 6, Color32::from_black_alpha(200));
+        painter.galley(bubble.min + egui::vec2(7.0, 4.0), galley, Color32::WHITE);
+    }
+}
+
+/// Botão translúcido sobre o vídeo, legível sobre imagens claras ou escuras.
+fn glass_button(ui: &mut egui::Ui, label: &str, glyph: Glyph, selected: bool) -> egui::Response {
+    let text = crate::ui::strong(ui, label)
+        .size(13.5)
+        .color(Color32::WHITE);
+    let galley = egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    let size = egui::vec2(galley.size().x + 16.0 + 8.0 + 24.0, 32.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hover =
+        ui.ctx()
+            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        16,
+        if selected {
+            Color32::from_white_alpha(60)
+        } else {
+            kit::lerp(
+                Color32::from_black_alpha(110),
+                Color32::from_white_alpha(40),
+                hover,
+            )
+        },
+        Stroke::new(1.0, Color32::from_white_alpha(40)),
+        egui::StrokeKind::Inside,
+    );
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect.expand(2.0),
+            18,
+            Stroke::new(2.0, ACCENT),
+            egui::StrokeKind::Outside,
+        );
+    }
+    kit::draw(
+        painter,
+        glyph,
+        egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
+        15.0,
+        Color32::WHITE,
+        0.0,
+    );
+    painter.galley(
+        egui::pos2(rect.left() + 36.0, rect.center().y - galley.size().y * 0.5),
+        galley,
+        Color32::WHITE,
+    );
+    response
+}
+
 enum Icon {
     Play,
     Pause,
@@ -499,10 +672,20 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, enabled: bool, tooltip: &str) -> e
         )
         .on_hover_text(tooltip);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tooltip));
+    let response = if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    };
     let c = response.rect.center();
-    if response.hovered() && enabled || response.has_focus() {
+    let hover = ui.ctx().animate_bool_with_time(
+        response.id.with("hover"),
+        response.hovered() && enabled || response.has_focus(),
+        0.12,
+    );
+    if hover > 0.0 {
         ui.painter()
-            .circle_filled(c, 18.0, Color32::from_white_alpha(28));
+            .circle_filled(c, 18.0, Color32::from_white_alpha((30.0 * hover) as u8));
     }
     let color = if enabled {
         Color32::WHITE
@@ -513,19 +696,20 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, enabled: bool, tooltip: &str) -> e
         Icon::Play => {
             ui.painter().add(egui::Shape::convex_polygon(
                 vec![
-                    c + egui::vec2(-4.0, -7.0),
-                    c + egui::vec2(7.0, 0.0),
-                    c + egui::vec2(-4.0, 7.0),
+                    c + egui::vec2(-5.0, -8.5),
+                    c + egui::vec2(9.0, 0.0),
+                    c + egui::vec2(-5.0, 8.5),
                 ],
                 color,
                 egui::Stroke::NONE,
             ));
         }
         Icon::Pause => {
-            for x in [-4.0, 4.0] {
-                ui.painter().line_segment(
-                    [c + egui::vec2(x, -7.0), c + egui::vec2(x, 7.0)],
-                    egui::Stroke::new(3.0, color),
+            for x in [-4.5, 4.5] {
+                ui.painter().rect_filled(
+                    egui::Rect::from_center_size(c + egui::vec2(x, 0.0), egui::vec2(3.5, 16.0)),
+                    1.5,
+                    color,
                 );
             }
         }

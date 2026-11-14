@@ -4,17 +4,29 @@ use eframe::egui::{self, Color32, RichText, Stroke};
 
 use crate::model::{Action, SessionState};
 pub use crate::player_ui::{PlayerUi, Video};
+mod entry;
+pub(crate) mod kit;
 mod preparation;
 mod visuals;
 
 #[derive(Clone, Copy)]
 struct Palette {
+    dark: bool,
     background: Color32,
     surface: Color32,
+    inset: Color32,
+    raised: Color32,
+    hover: Color32,
+    disabled: Color32,
+    action: Color32,
+    action_top: Color32,
     border: Color32,
+    border_strong: Color32,
     text: Color32,
     muted: Color32,
+    faint: Color32,
     accent: Color32,
+    accent_strong: Color32,
     success: Color32,
     warning: Color32,
     error: Color32,
@@ -24,27 +36,47 @@ impl Palette {
     fn new(dark: bool) -> Self {
         if dark {
             Self {
-                background: Color32::from_rgb(9, 11, 18),
-                surface: Color32::from_rgb(19, 23, 34),
-                border: Color32::from_rgb(39, 45, 61),
-                text: Color32::from_rgb(245, 246, 250),
-                muted: Color32::from_rgb(151, 159, 178),
-                accent: Color32::from_rgb(104, 145, 255),
-                success: Color32::from_rgb(110, 214, 178),
-                warning: Color32::from_rgb(241, 191, 110),
-                error: Color32::from_rgb(255, 149, 149),
+                dark,
+                background: Color32::from_rgb(13, 14, 18),
+                surface: Color32::from_rgb(21, 22, 28),
+                inset: Color32::from_rgb(17, 18, 23),
+                raised: Color32::from_rgb(29, 31, 38),
+                hover: Color32::from_rgb(37, 39, 48),
+                disabled: Color32::from_rgb(25, 27, 33),
+                action: Color32::from_rgb(70, 104, 240),
+                action_top: Color32::from_rgb(101, 133, 255),
+                border: Color32::from_rgb(38, 40, 49),
+                border_strong: Color32::from_rgb(60, 63, 76),
+                text: Color32::from_rgb(240, 242, 247),
+                muted: Color32::from_rgb(150, 155, 170),
+                faint: Color32::from_rgb(98, 103, 118),
+                accent: Color32::from_rgb(122, 156, 255),
+                accent_strong: Color32::from_rgb(160, 184, 255),
+                success: Color32::from_rgb(92, 214, 164),
+                warning: Color32::from_rgb(244, 192, 104),
+                error: Color32::from_rgb(255, 134, 134),
             }
         } else {
             Self {
-                background: Color32::from_rgb(245, 246, 250),
+                dark,
+                background: Color32::from_rgb(246, 247, 250),
                 surface: Color32::WHITE,
-                border: Color32::from_rgb(221, 224, 234),
-                text: Color32::from_rgb(23, 29, 47),
-                muted: Color32::from_rgb(101, 110, 132),
-                accent: Color32::from_rgb(49, 91, 215),
-                success: Color32::from_rgb(21, 112, 81),
-                warning: Color32::from_rgb(139, 84, 11),
-                error: Color32::from_rgb(174, 44, 55),
+                inset: Color32::from_rgb(243, 244, 248),
+                raised: Color32::WHITE,
+                hover: Color32::from_rgb(236, 238, 244),
+                disabled: Color32::from_rgb(240, 241, 245),
+                action: Color32::from_rgb(60, 92, 228),
+                action_top: Color32::from_rgb(88, 120, 248),
+                border: Color32::from_rgb(226, 229, 236),
+                border_strong: Color32::from_rgb(200, 205, 216),
+                text: Color32::from_rgb(17, 19, 27),
+                muted: Color32::from_rgb(96, 102, 118),
+                faint: Color32::from_rgb(150, 155, 168),
+                accent: Color32::from_rgb(58, 90, 226),
+                accent_strong: Color32::from_rgb(36, 64, 190),
+                success: Color32::from_rgb(16, 128, 88),
+                warning: Color32::from_rgb(164, 100, 8),
+                error: Color32::from_rgb(200, 48, 62),
             }
         }
     }
@@ -52,6 +84,32 @@ impl Palette {
 
 /// Aplica o tema também usado pelos testes de layout.
 pub fn configure_theme(ctx: &egui::Context, light: bool) {
+    let mut fonts = egui::FontDefinitions::default();
+    for (name, data) in [
+        (
+            "sans",
+            include_bytes!("../assets/fonts/Inter-Regular.ttf").as_slice(),
+        ),
+        (
+            "sans-semibold",
+            include_bytes!("../assets/fonts/Inter-SemiBold.ttf").as_slice(),
+        ),
+    ] {
+        fonts
+            .font_data
+            .insert(name.into(), egui::FontData::from_static(data).into());
+    }
+    let proportional = fonts
+        .families
+        .get_mut(&egui::FontFamily::Proportional)
+        .unwrap();
+    proportional.insert(0, "sans".into());
+    let mut semibold = proportional.clone();
+    semibold.insert(0, "sans-semibold".into());
+    fonts
+        .families
+        .insert(egui::FontFamily::Name("sans-semibold".into()), semibold);
+    ctx.set_fonts(fonts);
     let colors = Palette::new(!light);
     let mut visuals = if light {
         egui::Visuals::light()
@@ -61,12 +119,36 @@ pub fn configure_theme(ctx: &egui::Context, light: bool) {
     visuals.panel_fill = colors.background;
     visuals.window_fill = colors.surface;
     visuals.window_stroke = Stroke::new(1.0, colors.border);
-    visuals.window_corner_radius = egui::CornerRadius::same(12);
-    visuals.extreme_bg_color = colors.background;
+    visuals.window_corner_radius = egui::CornerRadius::same(14);
+    visuals.menu_corner_radius = egui::CornerRadius::same(12);
+    let shadow = Color32::from_black_alpha(if light { 28 } else { 110 });
+    visuals.window_shadow = egui::Shadow {
+        offset: [0, 12],
+        blur: 32,
+        spread: 0,
+        color: shadow,
+    };
+    visuals.popup_shadow = egui::Shadow {
+        offset: [0, 8],
+        blur: 24,
+        spread: 0,
+        color: shadow,
+    };
+    visuals.extreme_bg_color = colors.inset;
+    visuals.text_edit_bg_color = Some(colors.inset);
     visuals.faint_bg_color = colors.surface;
+    visuals.code_bg_color = colors.inset;
     visuals.override_text_color = Some(colors.text);
-    visuals.selection.bg_fill = colors.accent.gamma_multiply(0.18);
+    visuals.hyperlink_color = colors.accent;
+    visuals.weak_text_color = Some(colors.muted);
+    visuals.selection.bg_fill = colors
+        .accent
+        .gamma_multiply(if light { 0.16 } else { 0.24 });
     visuals.selection.stroke = Stroke::new(1.0, colors.accent);
+    visuals.text_cursor.stroke = Stroke::new(2.0, colors.accent);
+    visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
+    visuals.collapsing_header_frame = false;
+    visuals.indent_has_left_vline = false;
     for widget in [
         &mut visuals.widgets.noninteractive,
         &mut visuals.widgets.inactive,
@@ -75,17 +157,23 @@ pub fn configure_theme(ctx: &egui::Context, light: bool) {
         &mut visuals.widgets.open,
     ] {
         widget.corner_radius = egui::CornerRadius::same(8);
-        widget.bg_fill = colors.surface;
-        widget.weak_bg_fill = colors.surface;
+        widget.bg_fill = colors.raised;
+        widget.weak_bg_fill = colors.raised;
         widget.bg_stroke = Stroke::new(1.0, colors.border);
         widget.fg_stroke = Stroke::new(1.5, colors.text);
+        widget.expansion = 0.0;
     }
+    visuals.widgets.noninteractive.bg_fill = colors.surface;
+    visuals.widgets.noninteractive.weak_bg_fill = colors.surface;
     visuals.widgets.noninteractive.fg_stroke.color = colors.muted;
-    visuals.widgets.hovered.bg_fill = colors.border;
-    visuals.widgets.hovered.weak_bg_fill = colors.border;
-    visuals.widgets.hovered.bg_stroke.color = colors.muted;
+    visuals.widgets.hovered.bg_fill = colors.hover;
+    visuals.widgets.hovered.weak_bg_fill = colors.hover;
+    visuals.widgets.hovered.bg_stroke.color = colors.border_strong;
+    visuals.widgets.active.bg_fill = colors.hover;
+    visuals.widgets.active.weak_bg_fill = colors.hover;
     visuals.widgets.active.bg_stroke.color = colors.accent;
-    visuals.widgets.open.bg_stroke.color = colors.accent;
+    visuals.widgets.open.weak_bg_fill = colors.hover;
+    visuals.widgets.open.bg_stroke.color = colors.border_strong;
     ctx.set_visuals(visuals);
     ctx.style_mut_of(
         if light {
@@ -95,21 +183,24 @@ pub fn configure_theme(ctx: &egui::Context, light: bool) {
         },
         |style| {
             style.spacing.item_spacing = egui::vec2(12.0, 10.0);
-            style.spacing.button_padding = egui::vec2(18.0, 11.0);
-            style.spacing.interact_size.y = 36.0;
-            style.spacing.menu_margin = egui::Margin::same(12);
-            style.spacing.scroll = egui::style::ScrollStyle::solid();
-            style.spacing.scroll.bar_width = 6.0;
-            style.animation_time = 0.16;
+            style.spacing.button_padding = egui::vec2(14.0, 9.0);
+            style.spacing.interact_size.y = 34.0;
+            style.spacing.menu_margin = egui::Margin::same(10);
+            style.spacing.menu_spacing = 4.0;
+            style.spacing.scroll = egui::style::ScrollStyle::floating();
+            style.animation_time = 0.14;
             style
                 .text_styles
-                .insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(14.5));
             style
                 .text_styles
-                .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
+                .insert(egui::TextStyle::Button, egui::FontId::proportional(14.5));
             style
                 .text_styles
-                .insert(egui::TextStyle::Small, egui::FontId::proportional(12.0));
+                .insert(egui::TextStyle::Small, egui::FontId::proportional(12.5));
+            style
+                .text_styles
+                .insert(egui::TextStyle::Heading, egui::FontId::proportional(20.0));
         },
     );
 }
@@ -159,34 +250,51 @@ pub fn draw_with_inputs(
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     if demo {
+        let colors = Palette::new(ui.visuals().dark_mode);
         egui::Panel::top("demo_controls")
             .frame(
                 egui::Frame::new()
-                    .fill(ui.visuals().panel_fill)
+                    .fill(colors.background)
                     .inner_margin(egui::Margin::symmetric(16, 6)),
             )
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new("DEMO OFFLINE")
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                    ui.menu_button(state.label(), |ui| {
-                        ui.label(RichText::new("Cenários fictícios, sem player ou rede").small());
-                        ui.separator();
-                        for candidate in SessionState::ALL {
-                            if ui
-                                .selectable_label(state == candidate, candidate.label())
-                                .clicked()
-                            {
-                                inputs.screen = Screen::Home;
-                                inputs.room_panel = false;
-                                actions.push(Action::SetDemoState(candidate));
-                                ui.close();
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    egui::Frame::new()
+                        .fill(colors.warning.gamma_multiply(0.14))
+                        .stroke(Stroke::new(1.0, colors.warning.gamma_multiply(0.4)))
+                        .corner_radius(6)
+                        .inner_margin(egui::Margin::symmetric(8, 3))
+                        .show(ui, |ui| {
+                            ui.label(
+                                strong(ui, "DEMO OFFLINE")
+                                    .size(10.5)
+                                    .extra_letter_spacing(0.6)
+                                    .color(colors.warning),
+                            );
+                        });
+                    ui.menu_button(
+                        RichText::new(state.label()).size(13.5).color(colors.muted),
+                        |ui| {
+                            ui.label(
+                                RichText::new("Cenários fictícios, sem player ou rede")
+                                    .small()
+                                    .color(colors.muted),
+                            );
+                            ui.separator();
+                            for candidate in SessionState::ALL {
+                                if ui
+                                    .selectable_label(state == candidate, candidate.label())
+                                    .clicked()
+                                {
+                                    inputs.screen = Screen::Home;
+                                    inputs.room_panel = false;
+                                    actions.push(Action::SetDemoState(candidate));
+                                    ui.close();
+                                }
                             }
-                        }
-                    });
+                        },
+                    );
                 });
             });
     }
@@ -203,9 +311,19 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
     if state == SessionState::Idle {
         return view;
     }
+    if matches!(
+        state,
+        SessionState::Connecting | SessionState::PendingApproval
+    ) {
+        view.role = Role::Guest;
+        view.peer_name = Some("Ana".into());
+        view.room_address = Some("192.168.1.10:7842".parse().unwrap());
+        view.waiting_approval = state == SessionState::PendingApproval;
+        return view;
+    }
     if state == SessionState::Browsing {
         view.rooms.push(crate::discovery::Room {
-            name: "notebook-ana".into(),
+            name: "Ana".into(),
             address: "100.64.0.2:7842".parse().unwrap(),
         });
         return view;
@@ -294,39 +412,79 @@ fn card(colors: Palette) -> egui::Frame {
     egui::Frame::new()
         .fill(colors.surface)
         .stroke(Stroke::new(1.0, colors.border))
-        .corner_radius(12)
+        .corner_radius(16)
         .inner_margin(24)
+        .shadow(egui::Shadow {
+            offset: [0, 2],
+            blur: 12,
+            spread: 0,
+            color: Color32::from_black_alpha(if colors.dark { 40 } else { 10 }),
+        })
 }
-fn primary(ui: &mut egui::Ui, colors: Palette, text: &str, enabled: bool) -> egui::Response {
-    let width = ui.available_width();
-    ui.add_enabled_ui(enabled, |ui| {
-        ui.add_sized(
-            [width, 48.0],
-            egui::Button::new(RichText::new(text).color(colors.background).strong())
-                .fill(colors.text)
-                .corner_radius(8),
-        )
-    })
-    .inner
+/// Família semibold quando as fontes já foram carregadas; senão, a padrão.
+fn semibold_family(ctx: &egui::Context) -> egui::FontFamily {
+    let family = egui::FontFamily::Name("sans-semibold".into());
+    if ctx.fonts(|fonts| fonts.families().contains(&family)) {
+        family
+    } else {
+        egui::FontFamily::Proportional
+    }
+}
+pub(crate) fn strong(ui: &egui::Ui, text: impl Into<String>) -> RichText {
+    RichText::new(text)
+        .strong()
+        .family(semibold_family(ui.ctx()))
+}
+/// Título de tela, com espaçamento entre letras levemente reduzido.
+fn title(ui: &egui::Ui, text: impl Into<String>, size: f32) -> RichText {
+    strong(ui, text)
+        .size(size)
+        .extra_letter_spacing(-0.02 * size)
 }
 fn feedback(ui: &mut egui::Ui, view: &crate::runtime::View) {
     let colors = Palette::new(ui.visuals().dark_mode);
     if let Some(error) = &view.error {
-        card(colors)
-            .inner_margin(12)
-            .stroke(Stroke::new(1.0, colors.error))
+        egui::Frame::new()
+            .fill(kit::lerp(colors.surface, colors.error, 0.08))
+            .stroke(Stroke::new(1.0, colors.error.gamma_multiply(0.35)))
+            .corner_radius(12)
+            .inner_margin(egui::Margin::symmetric(14, 12))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.label(
-                    RichText::new("Não foi possível continuar")
-                        .strong()
-                        .color(colors.error),
-                );
-                ui.add(egui::Label::new(error).wrap());
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
+                    kit::draw(
+                        ui.painter(),
+                        kit::Glyph::Alert,
+                        rect.center(),
+                        17.0,
+                        colors.error,
+                        0.0,
+                    );
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.label(strong(ui, "Não foi possível continuar").color(colors.error));
+                        ui.add(egui::Label::new(RichText::new(error).color(colors.text)).wrap());
+                    });
+                });
             });
     }
     if let Some(notice) = &view.notice {
-        ui.label(notice);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 18.0), egui::Sense::hover());
+            kit::draw(
+                ui.painter(),
+                kit::Glyph::Info,
+                rect.center(),
+                15.0,
+                colors.muted,
+                0.0,
+            );
+            ui.add(egui::Label::new(RichText::new(notice).color(colors.muted)).wrap());
+        });
     }
 }
 pub fn draw_live(
@@ -347,7 +505,7 @@ fn draw_flow(
     use crate::runtime::Role;
     let mut actions = Vec::new();
     let colors = Palette::new(ui.visuals().dark_mode);
-    let sticky_preparation = ui.available_height() < 760.0;
+    let sticky_preparation = ui.ctx().content_rect().height() < 600.0;
     if inputs.last_role != Role::Local && view.role == Role::Local {
         inputs.screen = Screen::Home;
         inputs.room_panel = false;
@@ -396,6 +554,12 @@ fn draw_flow(
                     .resizable(false)
                     .frame(egui::Frame::new().fill(colors.surface).inner_margin(20))
                     .show(ui, |ui| {
+                        let rect = ui.clip_rect();
+                        ui.painter().vline(
+                            rect.left() + 0.5,
+                            rect.y_range(),
+                            Stroke::new(1.0, colors.border),
+                        );
                         room_contents(ui, colors, view, inputs, &mut actions)
                     });
             }
@@ -405,26 +569,27 @@ fn draw_flow(
             .show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
                 if demo {
-                    ui.painter()
-                        .rect_filled(rect, 0, Color32::from_rgb(10, 17, 33));
-                    visuals::glow(
-                        ui.painter(),
-                        rect.center(),
-                        rect.size() * 0.6,
-                        Color32::from_rgba_unmultiplied(45, 78, 155, 65),
-                    );
-                    ui.painter().text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "Vídeo fictício",
-                        egui::FontId::proportional(20.0),
-                        Color32::from_gray(156),
-                    );
+                    visuals::demo_video(ui.painter(), rect);
                 }
                 actions.extend(crate::player_ui::draw(ui, rect, view, inputs, video, demo));
             });
     } else {
         inputs.player.video_rect = None;
+        egui::Panel::top("app_header")
+            .frame(
+                egui::Frame::new()
+                    .fill(colors.background)
+                    .inner_margin(egui::Margin::symmetric(20, 10)),
+            )
+            .show(ui, |ui| {
+                header(ui, colors, inputs, view.role);
+                let rect = ui.clip_rect();
+                ui.painter().hline(
+                    rect.x_range(),
+                    rect.bottom() - 0.5,
+                    Stroke::new(1.0, colors.border),
+                );
+            });
         if inputs.screen == Screen::Preparation
             && sticky_preparation
             && view.join_request.is_none()
@@ -437,8 +602,14 @@ fn draw_flow(
                     egui::Margin::symmetric(if ui.available_width() < 600.0 { 24 } else { 40 }, 16),
                 ))
                 .show(ui, |ui| {
+                    let rect = ui.clip_rect();
+                    ui.painter().hline(
+                        rect.x_range(),
+                        rect.top() + 0.5,
+                        Stroke::new(1.0, colors.border),
+                    );
                     ui.vertical_centered(|ui| {
-                        ui.set_max_width(ui.available_width().min(760.0));
+                        ui.set_max_width(ui.available_width().min(680.0));
                         preparation::action(ui, colors, view, true, &mut actions);
                     });
                 });
@@ -453,35 +624,25 @@ fn draw_flow(
             ))
             .show(ui, |ui| {
                 let bounds = ui.max_rect();
-                if ui.visuals().dark_mode {
-                    visuals::glow(
-                        ui.painter(),
-                        bounds.right_top() + egui::vec2(-80.0, 80.0),
-                        egui::vec2(600.0, 400.0),
-                        Color32::from_rgba_unmultiplied(35, 53, 110, 28),
-                    );
-                }
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        header(ui, colors, inputs, view.role);
                         let home = inputs.screen == Screen::Home;
-                        ui.add_space(if home {
-                            if bounds.height() < 500.0 {
-                                (bounds.height() * 0.05).clamp(12.0, 24.0)
-                            } else {
-                                (bounds.height() * 0.15).clamp(32.0, 100.0)
-                            }
+                        let connecting = inputs.screen == Screen::Preparation
+                            && view.role == Role::Guest
+                            && !view.connected;
+                        ui.add_space(if home || connecting {
+                            ((bounds.height() - 440.0) * 0.5).clamp(0.0, 100.0)
                         } else {
-                            16.0
+                            8.0
                         });
                         if home {
-                            home_screen(ui, colors, view, inputs, &mut actions);
+                            entry::home(ui, colors, view, inputs, &mut actions);
                         } else {
                             ui.vertical_centered(|ui| {
                                 ui.set_max_width(ui.available_width().min(
                                     if inputs.screen == Screen::Preparation {
-                                        760.0
+                                        680.0
                                     } else {
                                         600.0
                                     },
@@ -489,7 +650,10 @@ fn draw_flow(
                                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                                     match inputs.screen {
                                         Screen::Browse => {
-                                            browse(ui, colors, view, inputs, &mut actions)
+                                            entry::browse(ui, colors, view, inputs, &mut actions)
+                                        }
+                                        Screen::Preparation if connecting => {
+                                            entry::connecting(ui, colors, view, &mut actions)
                                         }
                                         Screen::Preparation => preparation::draw(
                                             ui,
@@ -513,297 +677,139 @@ fn draw_flow(
     actions
 }
 fn quiet(ui: &mut egui::Ui, colors: Palette, text: &str) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new(text).color(colors.muted)).frame(false))
+    kit::Button::new(kit::Kind::Ghost, text)
+        .size(kit::Size::Medium)
+        .show(ui, colors)
 }
 fn secondary(ui: &mut egui::Ui, colors: Palette, text: &str, enabled: bool) -> egui::Response {
-    let width = ui.available_width();
-    ui.add_enabled_ui(enabled, |ui| {
-        ui.add_sized(
-            [width, 48.0],
-            egui::Button::new(text)
-                .fill(colors.surface)
-                .stroke(Stroke::new(1.0, colors.border)),
-        )
-    })
-    .inner
+    kit::Button::new(kit::Kind::Secondary, text)
+        .fill_width(ui)
+        .enabled(enabled)
+        .show(ui, colors)
 }
 fn header(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: crate::runtime::Role) {
     ui.horizontal(|ui| {
-        visuals::brand(ui, colors.text, colors.accent);
+        ui.spacing_mut().item_spacing.x = 10.0;
+        visuals::brand(ui, colors);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.menu_button(
-                RichText::new("Configurações").small().color(colors.muted),
-                |ui| {
-                    ui.label(RichText::new("Aparência").strong());
-                    ui.horizontal(|ui| {
-                        let dark = ui.visuals().dark_mode;
-                        if ui.selectable_label(dark, "Escuro").clicked() {
-                            configure_theme(ui.ctx(), false);
-                        }
-                        if ui.selectable_label(!dark, "Claro").clicked() {
-                            configure_theme(ui.ctx(), true);
-                        }
-                    });
-                    ui.separator();
-                    ui.label("Porta da sala");
-                    ui.add_enabled(
-                        role == crate::runtime::Role::Local,
-                        egui::DragValue::new(&mut inputs.port).range(1..=65535),
-                    );
-                    if role != crate::runtime::Role::Local {
-                        ui.label(RichText::new("Altere antes de criar uma nova sala.").small());
-                    }
-                    ui.separator();
-                    ui.label(RichText::new("Atalhos do player").strong());
-                    ui.label("Espaço · play / pausa");
-                    ui.label("← / → · voltar / avançar 10 s");
-                    ui.label("F · tela cheia    M · silenciar");
-                },
-            );
+            let settings = kit::icon_button(ui, colors, kit::Glyph::Gear, "Configurações", 36.0);
+            egui::Popup::menu(&settings)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| settings_menu(ui, colors, inputs, role));
         });
     });
 }
-fn home_screen(
+fn section_label(ui: &mut egui::Ui, colors: Palette, text: &str) {
+    ui.label(
+        strong(ui, text.to_uppercase())
+            .size(11.0)
+            .extra_letter_spacing(0.8)
+            .color(colors.faint),
+    );
+}
+fn settings_menu(
     ui: &mut egui::Ui,
     colors: Palette,
-    view: &crate::runtime::View,
     inputs: &mut Inputs,
-    actions: &mut Vec<crate::runtime::Command>,
+    role: crate::runtime::Role,
 ) {
-    let wide = ui.available_width() >= 820.0;
-    let width = if wide {
-        460.0
-    } else {
-        ui.available_width().min(560.0)
-    };
-    if wide {
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, 330.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| home_content(ui, colors, view, inputs, actions),
-            );
-            let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), 300.0),
-                egui::Sense::hover(),
-            );
-            visuals::cinema(ui.painter(), rect, ui.visuals().dark_mode);
-        });
-    } else {
-        ui.vertical_centered(|ui| {
-            ui.set_max_width(width);
-            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                home_content(ui, colors, view, inputs, actions)
+    ui.set_width(250.0);
+    ui.spacing_mut().item_spacing.y = 8.0;
+    section_label(ui, colors, "Aparência");
+    let dark = ui.visuals().dark_mode;
+    egui::Frame::new()
+        .fill(colors.inset)
+        .stroke(Stroke::new(1.0, colors.border))
+        .corner_radius(10)
+        .inner_margin(3)
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.columns(2, |columns| {
+                for (column, (label, light)) in
+                    columns.iter_mut().zip([("Escuro", false), ("Claro", true)])
+                {
+                    let selected = dark != light;
+                    let (rect, response) = column.allocate_exact_size(
+                        egui::vec2(column.available_width(), 30.0),
+                        egui::Sense::click(),
+                    );
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::SelectableLabel,
+                            true,
+                            selected,
+                            label,
+                        )
+                    });
+                    if selected {
+                        column.painter().rect(
+                            rect,
+                            8,
+                            colors.raised,
+                            Stroke::new(1.0, colors.border_strong),
+                            egui::StrokeKind::Inside,
+                        );
+                    } else if response.hovered() {
+                        column.painter().rect_filled(rect, 8, colors.hover);
+                    }
+                    column.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        label,
+                        egui::FontId::new(13.5, semibold_family(column.ctx())),
+                        if selected { colors.text } else { colors.muted },
+                    );
+                    if response.clicked() && !selected {
+                        configure_theme(column.ctx(), light);
+                    }
+                }
             });
         });
-    }
-}
-fn home_content(
-    ui: &mut egui::Ui,
-    colors: Palette,
-    view: &crate::runtime::View,
-    inputs: &mut Inputs,
-    actions: &mut Vec<crate::runtime::Command>,
-) {
-    use crate::runtime::Command;
-    let compact = ui.ctx().content_rect().height() < 600.0 || ui.available_width() < 440.0;
-    if !compact {
-        ui.label(
-            RichText::new("CINEMA A DOIS")
-                .size(11.0)
-                .extra_letter_spacing(2.0)
-                .color(colors.accent),
-        );
-        ui.add_space(12.0);
-    }
-    ui.label(
-        RichText::new("O mesmo filme.\nO mesmo momento.")
-            .size(if compact { 36.0 } else { 48.0 })
-            .strong(),
+    ui.add_space(4.0);
+    section_label(ui, colors, "Porta da sala");
+    ui.add_enabled(
+        role == crate::runtime::Role::Local,
+        egui::DragValue::new(&mut inputs.port).range(1..=65535),
     );
-    ui.add_space(12.0);
-    ui.label(
-        RichText::new("Uma cópia em cada PC. Um play para vocês dois.")
-            .size(16.0)
-            .color(colors.muted),
-    );
-    ui.add_space(if compact { 24.0 } else { 30.0 });
-    feedback(ui, view);
-    let create_label = if view.hosting {
-        "Criando sala…"
-    } else {
-        "Criar sala"
-    };
-    if ui.available_width() >= 430.0 {
-        ui.horizontal(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(174.0, 48.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    if primary(ui, colors, create_label, !view.hosting).clicked() {
-                        actions.push(Command::HostAuto(inputs.port));
-                    }
-                },
-            );
-            ui.allocate_ui_with_layout(
-                egui::vec2(226.0, 48.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    if secondary(ui, colors, "Entrar em uma sala", !view.hosting).clicked() {
-                        inputs.screen = Screen::Browse;
-                        actions.push(Command::Discover);
-                    }
-                },
-            );
-        });
-    } else {
-        if primary(ui, colors, create_label, !view.hosting).clicked() {
-            actions.push(Command::HostAuto(inputs.port));
-        }
-        if secondary(ui, colors, "Entrar em uma sala", !view.hosting).clicked() {
-            inputs.screen = Screen::Browse;
-            actions.push(Command::Discover);
-        }
-    }
-    ui.add_space(12.0);
-    if ui
-        .add_enabled(
-            !view.hosting,
-            egui::Button::new(RichText::new("Abrir filme sozinho").color(colors.muted))
-                .frame(false),
-        )
-        .clicked()
-    {
-        actions.push(Command::Open);
-    }
-    if view.player.loaded && view.file.is_some() {
-        if quiet(ui, colors, "Continuar filme aberto").clicked() {
-            actions.push(Command::Control(crate::protocol::Control::Play));
-        }
-        ui.add(
-            egui::Label::new(
-                RichText::new(view.file.as_deref().unwrap_or_default())
-                    .small()
-                    .color(colors.muted),
-            )
-            .truncate(),
-        );
-    }
-    if view.hosting && quiet(ui, colors, "Cancelar").clicked() {
-        actions.push(Command::Leave);
-    }
-}
-fn browse(
-    ui: &mut egui::Ui,
-    colors: Palette,
-    view: &crate::runtime::View,
-    inputs: &mut Inputs,
-    actions: &mut Vec<crate::runtime::Command>,
-) {
-    use crate::runtime::Command;
-    if ui
-        .add(
-            egui::Button::new(RichText::new("Voltar").color(colors.muted))
-                .frame(false)
-                .small(),
-        )
-        .clicked()
-    {
-        inputs.screen = Screen::Home;
-        actions.push(Command::CancelDiscovery);
-    }
-    ui.add_space(8.0);
-    ui.label(RichText::new("Encontre sua sala.").size(32.0).strong());
-    ui.label(RichText::new("Salas disponíveis na sua rede ou VPN.").color(colors.muted));
-    ui.add_space(24.0);
-    if view.rooms.is_empty() {
-        card(colors).inner_margin(20).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.add_space(8.0);
-            if view.searching {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Procurando salas…");
-                });
-            } else if let Some(error) = &view.discovery_error {
-                ui.add(egui::Label::new(error).wrap());
-            } else {
-                ui.label(RichText::new("Ainda não há salas por aqui.").strong());
-                ui.label(
-                    RichText::new("Peça à outra pessoa para criar uma sala. Se ela já criou, conecte pelo endereço abaixo.").color(colors.muted),
-                );
-            }
-            ui.add_space(8.0);
-        });
-    }
-    for room in &view.rooms {
-        card(colors).inner_margin(20).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.label(
-                RichText::new(format!("Sala de {}", room.name))
-                    .size(19.0)
-                    .strong(),
-            );
-            ui.label(
-                RichText::new("Uma vaga para você")
-                    .small()
-                    .color(colors.muted),
-            );
-            ui.add_space(12.0);
-            if primary(ui, colors, "Solicitar entrada", true).clicked() {
-                actions.push(Command::RequestJoin(room.address.to_string()));
-            }
-        });
-        ui.add_space(8.0);
-    }
-    ui.add_space(12.0);
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                !view.searching,
-                egui::Button::new(RichText::new("Atualizar salas").color(colors.muted))
-                    .frame(false)
-                    .small(),
-            )
-            .clicked()
-        {
-            actions.push(Command::Discover);
-        }
-        if view.searching && !view.rooms.is_empty() {
-            ui.spinner();
-        }
-    });
-    ui.add_space(8.0);
-    egui::CollapsingHeader::new("Conectar por endereço").show(ui, |ui| {
+    if role != crate::runtime::Role::Local {
         ui.label(
-            RichText::new("Use o endereço do anfitrião se a sala não aparecer.")
+            RichText::new("Altere antes de criar uma nova sala.")
                 .small()
                 .color(colors.muted),
         );
-        ui.label("Endereço do anfitrião");
-        let address_input = ui.add(
-            egui::TextEdit::singleline(&mut inputs.address)
-                .hint_text("192.168.1.10:7842")
-                .desired_width(ui.available_width()),
-        );
-        let valid = crate::runtime::parse_address(&inputs.address).is_ok();
-        if !inputs.address.trim().is_empty() && !valid {
-            ui.add(
-                egui::Label::new(
-                    RichText::new("Informe um IP, como 192.168.1.10 ou 192.168.1.10:7842.")
-                        .small()
-                        .color(colors.warning),
-                )
-                .wrap(),
-            );
-        }
-        if secondary(ui, colors, "Solicitar entrada", valid).clicked()
-            || valid && address_input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
-        {
-            actions.push(Command::RequestJoin(inputs.address.clone()));
-        }
-    });
-    feedback(ui, view);
+    }
+    ui.add_space(4.0);
+    section_label(ui, colors, "Atalhos do player");
+    egui::Grid::new("shortcuts")
+        .num_columns(2)
+        .spacing(egui::vec2(12.0, 6.0))
+        .show(ui, |ui| {
+            for (key, action) in [
+                ("Espaço", "play / pausa"),
+                ("← / →", "voltar / avançar 10 s"),
+                ("F", "tela cheia"),
+                ("M", "silenciar"),
+            ] {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(52.0, 22.0), egui::Sense::hover());
+                ui.painter().rect(
+                    rect,
+                    6,
+                    colors.inset,
+                    Stroke::new(1.0, colors.border),
+                    egui::StrokeKind::Inside,
+                );
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    key,
+                    egui::FontId::proportional(12.0),
+                    colors.text,
+                );
+                ui.label(RichText::new(action).color(colors.muted));
+                ui.end_row();
+            }
+        });
 }
 fn room_contents(
     ui: &mut egui::Ui,
@@ -815,44 +821,45 @@ fn room_contents(
     use crate::runtime::{Command, Role};
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.heading("Sala");
+            ui.label(title(ui, "Sala", 20.0));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if quiet(ui, colors, "Fechar").clicked() {
+                if kit::icon_button(ui, colors, kit::Glyph::Close, "Fechar", 32.0).clicked() {
                     inputs.room_panel = false;
                 }
             });
         });
-        ui.add_space(16.0);
-        ui.label(
-            view.peer_name
-                .as_deref()
-                .unwrap_or(if view.role == Role::Local {
-                    "Assistindo sozinho"
-                } else {
-                    "Outra pessoa"
-                }),
-        );
-        ui.label(
-            RichText::new(if view.connected {
-                "Conectado"
-            } else if view.role == Role::Local {
-                "Reprodução local"
+        ui.add_space(14.0);
+        let name = view
+            .peer_name
+            .as_deref()
+            .unwrap_or(if view.role == Role::Local {
+                "Assistindo sozinho"
             } else {
-                "Desconectado"
-            })
-            .small()
-            .color(colors.muted),
-        );
-        ui.add_space(24.0);
-        ui.label(RichText::new("Seu arquivo").small().color(colors.muted));
+                "Outra pessoa"
+            });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            kit::avatar(ui, colors, name, 36.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.add(egui::Label::new(strong(ui, name)).truncate());
+                let (label, color) = if view.connected {
+                    ("Conectado", colors.success)
+                } else if view.role == Role::Local {
+                    ("Reprodução local", colors.muted)
+                } else {
+                    ("Desconectado", colors.warning)
+                };
+                kit::status(ui, None, label, color);
+            });
+        });
+        ui.add_space(18.0);
+        section_label(ui, colors, "Seu arquivo");
         ui.add(egui::Label::new(view.file.as_deref().unwrap_or("Nenhum arquivo")).truncate())
             .on_hover_text(view.file.as_deref().unwrap_or_default());
         if view.role != Role::Local {
-            ui.label(
-                RichText::new("Arquivo da outra pessoa")
-                    .small()
-                    .color(colors.muted),
-            );
+            ui.add_space(4.0);
+            section_label(ui, colors, "Arquivo da outra pessoa");
             ui.add(
                 egui::Label::new(view.peer_file.as_deref().unwrap_or("Aguardando arquivo"))
                     .truncate(),
@@ -860,25 +867,20 @@ fn room_contents(
             .on_hover_text(view.peer_file.as_deref().unwrap_or_default());
         }
         ui.add_space(12.0);
-        if secondary(ui, colors, "Trocar filme", true).clicked() {
+        if kit::Button::new(kit::Kind::Secondary, "Trocar filme")
+            .size(kit::Size::Medium)
+            .fill_width(ui)
+            .show(ui, colors)
+            .clicked()
+        {
             inputs.room_panel = false;
             inputs.player.fullscreen = false;
             actions.push(Command::Open);
         }
-        ui.add_space(16.0);
+        ui.add_space(12.0);
         feedback(ui, view);
         connection_details(ui, view, actions);
-        ui.add_space(20.0);
-        if view.role == Role::Host {
-            ui.add(
-                egui::Label::new(
-                    RichText::new("Encerrar a sala desconecta a outra pessoa.")
-                        .small()
-                        .color(colors.muted),
-                )
-                .wrap(),
-            );
-        }
+        ui.add_space(12.0);
         if quiet(ui, colors, preparation::leave_label(view.role)).clicked() {
             inputs.player.fullscreen = false;
             inputs.room_panel = false;

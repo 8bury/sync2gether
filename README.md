@@ -83,7 +83,7 @@ faixas de áudio, legendas e tela cheia. O botão **Sala** abre os detalhes da s
 <details>
 <summary>Ver a preparação no tema claro</summary>
 
-O tema claro fica disponível em **Configurações**.
+O tema claro fica disponível em **Configurações**, no ícone de engrenagem do cabeçalho.
 
 ![Preparação no tema claro, com dados fictícios do modo demo](docs/images/tema-claro.png)
 

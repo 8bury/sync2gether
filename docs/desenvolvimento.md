@@ -39,10 +39,23 @@ um cenário no comando:
 cargo run --locked --features demo -- --demo --demo-state synchronized
 ```
 
-Os valores de `--demo-state` são `idle`, `browsing`, `waiting`, `approval`,
+Os valores de `--demo-state` são `idle`, `browsing`, `connecting`,
+`pending-approval`, `waiting`, `approval`,
 `choosing`, `verifying`, `mismatch`, `stabilizing`, `player-error`, `ready`,
 `synchronized`, `paused` e `reconnecting`. Eles usam as mesmas telas
 do app, com dados fictícios e sem enviar comandos ao runtime. Use `--demo-light` para o tema claro.
+
+Para revisar o fluxo inicial, use `idle` para a tela de boas-vindas,
+`browsing` para a lista e conexão manual, `connecting` para a tentativa de
+conexão e `pending-approval` para a espera do convidado. `approval` continua
+mostrando a solicitação na tela do anfitrião. A fonte Inter, nos pesos regular
+e semibold, está incorporada em `assets/fonts/`, com a licença SIL OFL 1.1;
+a interface não lê fontes do disco durante o desenho.
+
+Os cenários `choosing`, `verifying`, `ready`, `mismatch` e `player-error`
+permitem revisar a lista de arquivos, progresso, liberação do play e falhas.
+Use os menus **⋯** para consultar e copiar os nomes fictícios. `approval` e
+`waiting` exercitam a solicitação e o convite na preparação do anfitrião.
 
 Para salvar uma captura e encerrar:
 
@@ -51,8 +64,16 @@ mkdir -p .cache
 cargo run --locked --features demo -- --demo --demo-state reconnecting --demo-shot .cache/reconnecting.png
 ```
 
-A captura precisa de um display Wayland ou X11 e de OpenGL. Em um ambiente
-sem sessão gráfica, use Xvfb. No Ubuntu, instale `xvfb` e `xauth`; no Arch,
+Esse comando abre a janela na área de trabalho. Para capturar sem exibir
+nada nem roubar o foco, instale `sway` e use a sessão headless:
+
+```sh
+cargo build --locked --features demo
+mkdir -p .cache
+timeout 60s bash scripts/headless.sh target/debug/sync2gether --demo --demo-state reconnecting --demo-shot .cache/reconnecting.png
+```
+
+Em um ambiente sem sessão gráfica, também é possível usar Xvfb. No Ubuntu, instale `xvfb` e `xauth`; no Arch,
 `xorg-server-xvfb` e `xorg-xauth`.
 
 ```sh
@@ -63,9 +84,9 @@ timeout 30s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 target/debug/sync2gether --d
 
 Capturas de revisão e arquivos temporários ficam em `.cache/`, ignorada pelo Git.
 As quatro imagens selecionadas para o README fazem parte da documentação em
-`docs/images/`. Foram geradas em CachyOS com Wayland/Hyprland, em 960 × 640,
-usando os cenários `idle`, `ready` e `synchronized`, além de `ready` com
-`--demo-light`. Todas usam dados fictícios, sem mídia ou conexão real.
+`docs/images/`. Foram geradas em CachyOS pela sessão sway headless de
+`scripts/headless.sh`, em 960 × 640, usando os cenários `idle`, `ready` e
+`synchronized`, além de `ready` com `--demo-light`. Todas usam dados fictícios, sem mídia ou conexão real.
 
 ## Verificações e trabalho com agentes
 

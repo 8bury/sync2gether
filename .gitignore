@@ -1,2 +1,5 @@
 /target/
 /.cache/
+
+/prototype/node_modules/
+/prototype/dist/

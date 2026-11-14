@@ -2,18 +2,6 @@
 use super::{Palette, kit};
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 
-/// Marca no cabeçalho: ícone do aplicativo e nome.
-pub(super) fn brand(ui: &mut egui::Ui, colors: Palette) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-    app_icon(ui.painter(), rect, colors);
-    ui.label(
-        super::strong(ui, "sync2gether")
-            .size(17.0)
-            .extra_letter_spacing(-0.2)
-            .color(colors.text),
-    );
-}
-
 /// Ícone do aplicativo: duas telas sobre um bloco com gradiente.
 pub(super) fn app_icon(painter: &egui::Painter, rect: egui::Rect, colors: Palette) {
     let side = rect.width().min(rect.height());

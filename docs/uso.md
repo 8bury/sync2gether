@@ -6,40 +6,53 @@ Salas pela internet com código, escolha dos arquivos, controles e salas na rede
 
 ## Usar o aplicativo
 
-A interface separa início, entrada com código, preparação e reprodução. Na tela
-inicial, as ações **Criar sala** e **Entrar em uma sala** ficam empilhadas no
-centro, com **Abrir filme sozinho** abaixo. As salas na rede local ficam nas
-opções avançadas, descritas em [Rede local ou VPN](#rede-local-ou-vpn).
+A interface tem três etapas, mostradas no cabeçalho: **Sala**, **Filme** e
+**Assistir**. Na tela inicial ficam **Criar sala**, o campo do código com
+**Entrar** e **Abrir filme sozinho**. As salas na rede local ficam nas opções
+avançadas, descritas em [Rede local ou VPN](#rede-local-ou-vpn).
 
 1. O anfitrião clica em **Criar sala**. O app abre a sala no relay e mostra o
-   cartão **Convidar com código**, com um código como `4821-gato-lua` e o botão
-   **Copiar código**. Enquanto o código não chega, o cartão mostra
+   código, como `4821-gato-lua`, em destaque, com o botão **Copiar**, que passa
+   a dizer **Copiado**. Enquanto o código não chega, a tela mostra
    **Gerando o código…**; sem contato com o servidor, avisa e tenta de novo.
-2. O anfitrião envia o código por qualquer mensageiro. O convidado clica em
-   **Entrar em uma sala**, digita o código e clica em **Entrar** (ou Enter).
-   Maiúsculas, acentos e espaços no lugar dos hífens são aceitos. O botão só
-   fica disponível com o número e duas palavras da lista.
-3. Quem acerta o código entra direto na preparação, sem aprovação. Um código
-   errado mostra **Código incorreto** ao convidado, mantém o texto para correção
-   e avisa o anfitrião; na terceira tentativa errada a sala fecha por segurança.
-   Há uma vaga de convidado por vez.
+   Abaixo, **Esperando alguém entrar…** mostra a vaga ainda livre, e
+   **Escolher meu filme** permite escolher a cópia enquanto espera.
+2. O anfitrião envia o código por qualquer mensageiro. O convidado digita o
+   código no campo da tela inicial e clica em **Entrar** (ou Enter). Maiúsculas,
+   acentos e espaços no lugar dos hífens são aceitos. O botão só fica disponível
+   com o número e duas palavras da lista. Enquanto a sala responde, o botão
+   mostra **Entrando** e **Cancelar** desiste da tentativa.
+3. Quem acerta o código entra direto na etapa **Filme**, sem aprovação. Um
+   código errado mostra **Código incorreto** na linha abaixo do campo, mantém o
+   texto para correção e avisa o anfitrião; na terceira tentativa errada a sala
+   fecha por segurança. Há uma vaga de convidado por vez.
 4. Cada pessoa escolhe sua cópia do filme e aguarda a verificação. O botão
    **Começar a assistir** só fica disponível quando a sessão estiver pronta;
    qualquer participante pode iniciar. O app não dá play automaticamente.
+
+Depois da entrada, o código da sala fica num selo no cabeçalho; um clique copia.
 
 Os dois PCs só precisam de TCP de saída para `relay.pedrosales.dev:7843`.
 As mensagens são cifradas de ponta a ponta; o relay não vê o código completo,
 os nomes dos arquivos nem os comandos. Se a conexão cair, o convidado volta
 sozinho, sem digitar o código de novo. Detalhes em [Salas pela internet e relay](relay.md).
 
-A preparação reúne os dois arquivos numa lista, com **Você** na primeira linha
-e o nome da outra pessoa na segunda. Cada linha mostra o arquivo com extensão,
-o estado e, durante a verificação, a porcentagem. **Escolher arquivo** fica em
-destaque quando falta sua cópia; depois, **Trocar arquivo** permanece na sua
-linha. A escolha da outra pessoa não pode ser alterada neste PC.
-Quando a sessão está pronta, o título muda para **Pronto para assistir** e a ação
-principal passa a ser **Começar a assistir**. Antes disso, o botão fica desativado
-e o motivo aparece junto dele.
+A etapa **Filme** mostra os dois arquivos lado a lado, **Você** à esquerda e a
+outra pessoa à direita; em janelas estreitas os cartões ficam empilhados. Cada
+cartão mostra o arquivo com extensão, o estado e, durante a verificação, a
+porcentagem. **Escolher arquivo** fica em destaque quando falta sua cópia;
+depois, **Trocar arquivo** permanece no seu cartão. A escolha da outra pessoa
+não pode ser alterada neste PC. Entre os cartões, um sinal resume a comparação:
+espera, verificação, iguais (✓) ou diferentes (✕).
+
+O título acompanha o estado: **Escolham o mesmo filme**, **Conferindo os
+arquivos**, **Os arquivos não batem**, **Quase pronto** ou **Tudo pronto**. O
+estado é dito uma vez, numa frase acima do botão principal. Enquanto não dá
+para começar, o botão fica desativado e diz o que falta, como **Escolha seu
+arquivo para começar** ou **Esperando o arquivo de Ana**. Com conteúdos
+diferentes, os dois cartões mostram **Conteúdo diferente** e o botão vira
+**Trocar meu arquivo**. Quando a sessão está pronta, o botão passa a ser
+**Começar a assistir**.
 
 Os dois participantes veem as duas escolhas. O menu **⋯** de cada arquivo reúne
 **Nome completo** e **Copiar nome**, com confirmação da cópia. Esses menus têm
@@ -56,21 +69,28 @@ A verificação mostra porcentagem nos dois PCs. **Cancelar verificação** inte
 a leitura entre blocos, restaura o arquivo anterior e mantém a sala aberta,
 com reprodução pausada. A janela nativa de seleção tem seu próprio cancelamento.
 
-A comparação e o motivo de espera aparecem junto à ação de começar, incluindo
-arquivo ausente, conteúdo diferente, player bloqueado e conexão ainda não pronta.
-Em janelas altas, a ação fica junto à lista. A lista continua vertical em janelas
-menores; o conteúdo pode ser rolado e, abaixo de 600 pixels de altura, o botão
-fica no rodapé, inclusive em 480 × 480. Uma solicitação de entrada recebe
-destaque antes dos arquivos. **Detalhes da sala** abre um menu com o participante
-e os detalhes da conexão, mantendo esses dados fora da lista de filmes.
-**Encerrar sala** identifica a saída do anfitrião e avisa que desconecta a outra
-pessoa. O convidado usa **Sair da sala**. A tela inicial permite continuar um
-filme que ficou carregado após sair.
-Durante a reprodução, o vídeo ocupa a janela sem rolagem. O botão
-**Sala** abre um painel com participante, troca do filme, saída e detalhes da
-conexão; em janelas estreitas, abre uma janela sobre o vídeo. Trocar o arquivo
-pausa a sessão e retorna à preparação. Sair da sala retorna ao início e deixa
-o arquivo carregado e pausado. Estatísticas não ficam permanentemente no player.
+Em janelas altas, o botão principal fica junto aos cartões. O conteúdo pode ser
+rolado e, abaixo de 600 pixels de altura, a frase de estado e o botão ficam no
+rodapé, inclusive em 480 × 480. Uma solicitação de entrada recebe destaque
+antes dos arquivos. **Detalhes da sala** abre um menu com o participante e os
+detalhes da conexão, mantendo esses dados fora dos cartões.
+
+A seta **←** no canto superior esquerdo volta ao início em todas as etapas,
+inclusive no player, e **Esc** faz o mesmo fora do player. Nas salas, voltar é
+sair: a seta se chama **Encerrar sala** no anfitrião e **Sair da sala** no
+convidado. Com a outra pessoa conectada, o app pergunta antes (**Encerrar a
+sala?** ou **Sair da sala?**) e oferece **Continuar na sala**; sozinho na sala,
+sai na hora. A tela inicial permite continuar um filme que ficou carregado após
+sair.
+Durante a reprodução, o vídeo ocupa a janela sem rolagem. No canto superior,
+um selo mostra o estado da sala: **Ana · em sincronia** com a conexão ativa ou
+**Reconectando com Ana…** (no anfitrião, **Esperando Ana voltar…**) quando ela
+cai, sem um segundo aviso sobre o vídeo. A seta **←** ao lado do título sai da
+sala, com a mesma confirmação. Um clique no selo abre um painel com
+participante, troca do filme, saída e detalhes da conexão; em janelas
+estreitas, abre uma janela sobre o vídeo. **Trocar filme** pausa a sessão e
+retorna à preparação. Sair da sala retorna ao início e deixa o arquivo
+carregado e pausado. Estatísticas não ficam permanentemente no player.
 
 ## Rede local ou VPN
 
@@ -92,7 +112,7 @@ escolha vale até fechar o app; os argumentos `--host` e `--join` a ativam.
    ocupadas são removidas e anúncios expiram após cinco segundos. Até 128
    endereços são verificados, com 16 consultas simultâneas e prazo de 800 ms.
 4. O convidado clica em **Solicitar entrada**. O anfitrião aceita ou recusa na
-   preparação. A solicitação expira após 60 segundos e pode ser cancelada pelo
+   etapa **Sala**. A solicitação expira após 60 segundos e pode ser cancelada pelo
    convidado. A tela de conexão distingue **Conectando à sala…** de
    **Aguardando aprovação**; só confirma **Anfitrião encontrado** depois que
    o anfitrião recebe a solicitação. **Cancelar solicitação** sai desse fluxo.
@@ -103,8 +123,8 @@ escolha vale até fechar o app; os argumentos `--host` e `--join` a ativam.
 
 **Conectar por endereço** permite informar `IP:porta` quando a sala não aparece.
 O campo valida o IP antes de enviar e aceita Enter para solicitar entrada.
-Na preparação do anfitrião de uma sala local, o cartão **Convidar por endereço** mostra os endereços
-com **Copiar endereço**, que confirma a cópia.
+Enquanto ninguém entra numa sala local, a etapa **Sala** do anfitrião mostra os
+endereços em destaque, cada um com **Copiar endereço**, que confirma a cópia.
 IP sem porta usa 7842; IPv6 com porta usa `[IP]:porta`. A conexão manual aceita
 IPs numéricos de destino IPv4 e IPv6, sem resolver nomes. Os detalhes da sala
 mostram endereços IPv4 locais que podem ser copiados, além da porta.

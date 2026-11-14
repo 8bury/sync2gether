@@ -531,9 +531,9 @@ fn room_buttons_return_commands_and_play_is_disabled_until_both_are_ready() {
         click_label(&ctx, &view, &mut inputs, "Criar sala").as_slice(),
         [Command::HostInternet(relay)] if relay == sync2gether::network::relay::DEFAULT_RELAY
     ));
-    assert!(click_label(&ctx, &view, &mut inputs, "Entrar em uma sala").is_empty());
-    assert_eq!(inputs.screen, ui::Screen::Join);
-    inputs.screen = ui::Screen::Home;
+    // O código é digitado no próprio início, sem uma tela só para ele.
+    assert!(text.contains("ou entre com um código"));
+    assert_eq!(inputs.screen, ui::Screen::Home);
     inputs.lan = true;
     assert!(matches!(
         click_label(&ctx, &view, &mut inputs, "Criar sala na rede local").as_slice(),
@@ -558,7 +558,10 @@ fn room_buttons_return_commands_and_play_is_disabled_until_both_are_ready() {
         }]
     ));
     view.join_request = None;
-    assert!(click_label(&ctx, &view, &mut inputs, "Começar a assistir").is_empty());
+    view.connected = true;
+    // Desativado, o botão principal diz o que falta.
+    assert!(click_label(&ctx, &view, &mut inputs, "Escolha seu arquivo para começar").is_empty());
+    view.file = Some("Filme.mkv".into());
     view.ready = true;
     assert!(matches!(
         click_label(&ctx, &view, &mut inputs, "Começar a assistir").as_slice(),
@@ -646,7 +649,7 @@ fn home_actions_are_visible_in_the_smallest_window() {
                 },
             );
             output.textures_delta.clear();
-            for label in ["Criar sala", "Entrar em uma sala", "Abrir filme sozinho"] {
+            for label in ["Criar sala", "Entrar", "Abrir filme sozinho"] {
                 let clip = output
                     .shapes
                     .iter()
@@ -837,11 +840,13 @@ fn player_shows_actionable_notices_and_omits_routine_status() {
             let text = visible_text(&output.shapes);
             assert!(!text.contains("Assistindo juntos"));
             assert!(!text.contains("Sessão pausada"));
+            // A queda da conexão aparece só no selo da sala, sem um segundo aviso.
             assert_eq!(
-                text.contains("Aguardando a outra pessoa voltar"),
+                text.contains("Esperando a outra pessoa voltar"),
                 disconnected
             );
-            assert_eq!(text.contains("Opções da sala"), disconnected);
+            assert_eq!(text.contains("em sincronia"), !disconnected);
+            assert!(!text.contains("Opções da sala"));
             output.textures_delta.clear();
         }
     }
@@ -986,7 +991,7 @@ fn each_file_menu_copies_the_full_name_without_changing_playback() {
             ));
             let (output, actions) = preparation_output(&ctx, &view, &mut inputs, vec![]);
             assert!(actions.is_empty());
-            assert!(visible_text(&output.shapes).contains("Copiado!"));
+            assert!(visible_text(&output.shapes).contains("Copiado"));
             assert!(!inputs.player.fullscreen);
         }
     }
@@ -1012,7 +1017,9 @@ fn preparation_changes_only_the_local_file_and_cancels_scheduled_start() {
             click_label(&ctx, &view, &mut inputs, "Escolher arquivo").as_slice(),
             [Command::Open]
         ));
-        assert!(click_label(&ctx, &view, &mut inputs, "Começar a assistir").is_empty());
+        assert!(
+            click_label(&ctx, &view, &mut inputs, "Escolha seu arquivo para começar").is_empty()
+        );
         view.file = Some("Meu.mkv".into());
         assert!(matches!(
             click_label(&ctx, &view, &mut inputs, "Trocar arquivo").as_slice(),
@@ -1033,7 +1040,7 @@ fn preparation_changes_only_the_local_file_and_cancels_scheduled_start() {
         view.player.blocked = true;
         let text = preparation_frame(&view, [960.0, 800.0], light);
         assert!(text.contains("Player indisponível"));
-        assert!(click_label(&ctx, &view, &mut inputs, "Começar a assistir").is_empty());
+        assert!(click_label(&ctx, &view, &mut inputs, "Aguardando o player").is_empty());
     }
 }
 
@@ -1074,7 +1081,7 @@ fn connection_screen_reports_only_confirmed_stages_and_keeps_cancellation_visibl
                     assert_eq!(text.contains("Solicitação enviada"), waiting);
                     assert_eq!(text.contains("Aguardando aprovação"), waiting);
                     assert!(!text.contains("Começar a assistir"));
-                    assert!(!text.contains("Selecionar filme"));
+                    assert!(!text.contains("Escolham o mesmo filme"));
                     assert!(!text.contains("private-token"));
                     let clip = output
                         .shapes
@@ -1121,7 +1128,7 @@ fn connection_screen_reports_only_confirmed_stages_and_keeps_cancellation_visibl
             view.error = None;
             view.connected = true;
             let text = preparation_frame(&view, size, light);
-            assert!(text.contains("Selecionar filme"));
+            assert!(text.contains("Escolham o mesmo filme"));
             assert!(!text.contains("Cancelar solicitação"));
         }
     }
@@ -1252,11 +1259,6 @@ fn preparation_shows_both_files_and_explains_content_comparison_for_both_roles()
             assert!(text.contains("Os arquivos são diferentes"));
             assert!(!text.contains("Os arquivos são iguais"));
             assert!(text.contains("Escolham arquivos com o mesmo conteúdo"));
-            assert!(text.contains(if role == Role::Host {
-                "Encerrar sala"
-            } else {
-                "Sair da sala"
-            }));
             for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
                 view.file = Some(format!("{}.mkv", "Filme muito longo ".repeat(15)));
                 view.peer_file = Some(format!("{}.mp4", "Outra edição ".repeat(20)));
@@ -1305,7 +1307,7 @@ fn cancelling_verification_keeps_the_room_and_start_is_blocked() {
             &ctx,
             &view,
             &mut inputs,
-            "Começar a assistir",
+            "Conferindo seu arquivo…",
             [960.0, 640.0]
         )
         .is_empty()
@@ -1420,7 +1422,6 @@ fn code_entry_validates_joins_and_returns_to_the_code_after_a_refusal() {
         ui::configure_theme(&ctx, light);
         let mut view = View::default();
         let mut inputs = ui::Inputs::default();
-        click_label(&ctx, &view, &mut inputs, "Entrar em uma sala");
         inputs.code = "4821-gato-limao".into();
         assert!(click_label(&ctx, &view, &mut inputs, "Entrar").is_empty());
         assert!(preparation_text_of(&ctx, &view, &mut inputs).contains("Digite o código completo"));
@@ -1430,21 +1431,23 @@ fn code_entry_validates_joins_and_returns_to_the_code_after_a_refusal() {
             [Command::JoinCode { relay, code }]
                 if relay == sync2gether::network::relay::DEFAULT_RELAY && code == " 4821 Gato LUA "
         ));
-        // A recusa leva de volta ao código digitado, com o erro visível.
+        // Enquanto a sala responde, o início continua na tela com o progresso no botão.
         view.role = Role::Guest;
         view.internet = true;
         let text = preparation_text_of(&ctx, &view, &mut inputs);
-        assert!(text.contains("Conectando pela internet"));
+        assert_eq!(inputs.screen, ui::Screen::Home);
+        assert!(text.contains("Entrando"));
+        assert!(!text.contains("Conectando pela internet"));
+        // A recusa mostra o erro sob o código digitado.
         view = View {
             error: Some("Código incorreto. Confira as palavras ou peça um código novo.".into()),
             ..Default::default()
         };
         let text = preparation_text_of(&ctx, &view, &mut inputs);
-        assert_eq!(inputs.screen, ui::Screen::Join);
-        assert!(text.contains("Código incorreto"));
-        assert_eq!(inputs.code, " 4821 Gato LUA ");
-        assert!(click_label(&ctx, &view, &mut inputs, "Voltar").is_empty());
         assert_eq!(inputs.screen, ui::Screen::Home);
+        assert_eq!(text.matches("Código incorreto").count(), 1);
+        assert!(!text.contains("Entrando"));
+        assert_eq!(inputs.code, " 4821 Gato LUA ");
     }
 }
 
@@ -1454,7 +1457,6 @@ fn code_field_accepts_enter_after_typing_in_the_same_frame() {
     let ctx = egui::Context::default();
     let view = View::default();
     let mut inputs = ui::Inputs::default();
-    inputs.screen = ui::Screen::Join;
     preparation_text_of(&ctx, &view, &mut inputs);
     ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("room_code")));
     let mut actions = Vec::new();
@@ -1496,9 +1498,9 @@ fn internet_room_invites_with_the_code_and_never_with_addresses() {
             view.room_code = Some("4821-gato-lua".into());
             view.relay_offline = true;
             let text = preparation_frame(&view, size, light);
-            assert!(text.contains("Convidar com código"));
+            assert!(text.contains("Envie este código"));
             assert!(text.contains("4821-gato-lua"));
-            assert!(text.contains("Copiar código"));
+            assert!(text.contains("Copiar"));
             assert!(text.contains("Sem contato com o servidor"));
             assert!(!text.contains("192.168.1.10"));
         }
@@ -1519,4 +1521,193 @@ fn advanced_network_settings_reveal_the_relay_and_validate_it() {
     let text = preparation_text_of(&ctx, &view, &mut inputs);
     assert!(text.contains("Servidor das salas pela internet"));
     assert!(text.contains("Informe o servidor"));
+}
+
+#[test]
+fn mismatch_says_it_once_and_the_main_button_changes_the_local_file() {
+    use sync2gether::runtime::{Command, Role, View};
+    for light in [false, true] {
+        let ctx = egui::Context::default();
+        ui::configure_theme(&ctx, light);
+        let mut inputs = ui::Inputs::default();
+        let view = View {
+            role: Role::Guest,
+            connected: true,
+            file: Some("Meu.mkv".into()),
+            peer_file: Some("Outro.mp4".into()),
+            verified: true,
+            peer_verified: true,
+            peer_ready: true,
+            ..Default::default()
+        };
+        let text = preparation_frame(&view, [960.0, 800.0], light);
+        assert!(text.contains("Os arquivos não batem"));
+        assert_eq!(text.matches("Os arquivos são diferentes").count(), 1);
+        // Nenhum cartão diz "Conferido" ao lado do aviso de diferença.
+        assert!(!text.contains("Conferido"));
+        assert!(!text.contains("Começar a assistir"));
+        assert!(matches!(
+            click_label(&ctx, &view, &mut inputs, "Trocar meu arquivo").as_slice(),
+            [Command::Open]
+        ));
+    }
+}
+
+#[test]
+fn host_room_shows_the_invite_until_someone_joins_then_the_film_step() {
+    use sync2gether::runtime::{Role, View};
+    let mut view = View {
+        role: Role::Host,
+        internet: true,
+        room_code: Some("4821-gato-lua".into()),
+        ..Default::default()
+    };
+    for size in [[480.0, 480.0], [960.0, 640.0]] {
+        let text = preparation_frame(&view, size, false);
+        assert!(text.contains("Esperando alguém entrar"));
+        assert!(text.contains("Escolher meu filme"));
+        assert!(!text.contains("Escolham o mesmo filme"));
+        assert!(!text.contains("Começar a assistir"));
+    }
+    view.connected = true;
+    view.peer_name = Some("Ana".into());
+    let text = preparation_frame(&view, [960.0, 640.0], false);
+    assert!(text.contains("Escolham o mesmo filme"));
+    assert!(!text.contains("Esperando alguém entrar"));
+    // A etapa atual e o código ficam no cabeçalho.
+    assert!(text.contains("Filme") && text.contains("4821-gato-lua"));
+}
+
+/// Clica num controle pelo nome acessível e devolve os comandos do clique.
+fn click_accessible(
+    ctx: &egui::Context,
+    view: &sync2gether::runtime::View,
+    inputs: &mut ui::Inputs,
+    label: &str,
+    size: [f32; 2],
+) -> Vec<sync2gether::runtime::Command> {
+    ctx.enable_accesskit();
+    let frame = |inputs: &mut ui::Inputs, events| {
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
+                events,
+                ..Default::default()
+            },
+            |root| actions = ui::draw_live(root, view, inputs, None),
+        );
+        (output, actions)
+    };
+    let mut position = None;
+    for _ in 0..3 {
+        let (mut output, actions) = frame(inputs, vec![]);
+        assert!(actions.is_empty());
+        for (_, node) in &output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+        {
+            if node.label() == Some(label) {
+                let b = node.bounds().expect("accessible control must have bounds");
+                position = Some(egui::pos2(
+                    ((b.x0 + b.x1) * 0.5) as f32,
+                    ((b.y0 + b.y1) * 0.5) as f32,
+                ));
+            }
+        }
+        output.textures_delta.clear();
+    }
+    let position = position.unwrap_or_else(|| panic!("accessible control not found: {label}"));
+    let mut commands = Vec::new();
+    for pressed in [true, false] {
+        let (mut output, actions) = frame(
+            inputs,
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        output.textures_delta.clear();
+        commands.extend(actions);
+    }
+    commands
+}
+
+#[test]
+fn back_arrow_leaves_the_room_and_asks_first_when_someone_is_there() {
+    use sync2gether::{
+        player::Status,
+        runtime::{Command, Role, View},
+    };
+    for light in [false, true] {
+        for size in [[480.0, 480.0], [960.0, 640.0]] {
+            let ctx = egui::Context::default();
+            ui::configure_theme(&ctx, light);
+            let mut inputs = ui::Inputs::default();
+            // Sozinho na sala: a seta sai na hora.
+            let mut view = View {
+                role: Role::Host,
+                internet: true,
+                room_code: Some("4821-gato-lua".into()),
+                ..Default::default()
+            };
+            assert!(matches!(
+                click_accessible(&ctx, &view, &mut inputs, "Encerrar sala", size).as_slice(),
+                [Command::Leave]
+            ));
+            // Com a outra pessoa conectada, pergunta antes de desconectá-la.
+            view.connected = true;
+            view.peer_name = Some("Ana".into());
+            assert!(click_accessible(&ctx, &view, &mut inputs, "Encerrar sala", size).is_empty());
+            assert!(inputs.confirm_leave);
+            let text = preparation_text_of(&ctx, &view, &mut inputs);
+            assert!(
+                text.contains("Encerrar a sala?") && text.contains("a conexão com Ana termina")
+            );
+            assert!(
+                click_label_at_size(&ctx, &view, &mut inputs, "Continuar na sala", size).is_empty()
+            );
+            assert!(!inputs.confirm_leave);
+            // Esc faz o mesmo que a seta.
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
+                    events: vec![key(egui::Key::Escape)],
+                    ..Default::default()
+                },
+                |root| assert!(ui::draw_live(root, &view, &mut inputs, None).is_empty()),
+            );
+            output.textures_delta.clear();
+            assert!(inputs.confirm_leave);
+            assert!(matches!(
+                click_label_at_size(&ctx, &view, &mut inputs, "Encerrar", size).as_slice(),
+                [Command::Leave]
+            ));
+            assert!(!inputs.confirm_leave);
+            // O convidado vê "Sair da sala", também no player.
+            view.role = Role::Guest;
+            view.watching = true;
+            view.player = Status {
+                loaded: true,
+                paused: true,
+                duration: 120.0,
+                ..Default::default()
+            };
+            assert!(click_accessible(&ctx, &view, &mut inputs, "Sair da sala", size).is_empty());
+            let text = preparation_text_of(&ctx, &view, &mut inputs);
+            assert!(text.contains("Sair da sala?"));
+            assert!(matches!(
+                click_label_at_size(&ctx, &view, &mut inputs, "Sair", size).as_slice(),
+                [Command::Leave]
+            ));
+        }
+    }
 }

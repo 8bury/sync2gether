@@ -184,12 +184,12 @@ pub(crate) fn draw(
                 (inputs.player.last_activity + 3.0 - now).max(0.01),
             ));
     }
+    // A queda da conexão aparece só no selo da sala, sem um segundo aviso.
     let has_notice = view.error.is_some()
         || view.preparing
         || view.scheduled
         || view.player.blocked
-        || view.notice.is_some()
-        || (view.role != Role::Local && !view.connected);
+        || view.notice.is_some();
     let top_height: f32 = if has_notice { 160.0 } else { 80.0 };
     gradient(
         ui.painter(),
@@ -214,7 +214,14 @@ pub(crate) fn draw(
     ui.scope_builder(egui::UiBuilder::new().max_rect(top), |ui| {
         ui.visuals_mut().override_text_color = Some(Color32::WHITE);
         ui.horizontal(|ui| {
-            let title_width = (ui.available_width() - 96.0).max(20.0);
+            // Sair do player fica no mesmo canto que a seta das outras telas.
+            let back = crate::ui::preparation_leave_label(view.role);
+            if glass_icon(ui, Glyph::ArrowLeft, back).clicked() {
+                crate::ui::request_leave(view, inputs, &mut actions);
+            }
+            let pill = room_pill(view);
+            let pill_width = glass_width(ui, &pill.label);
+            let title_width = (ui.available_width() - pill_width - 16.0).max(20.0);
             ui.allocate_ui_with_layout(
                 egui::vec2(title_width, 32.0),
                 egui::Layout::left_to_right(egui::Align::Center),
@@ -237,29 +244,22 @@ pub(crate) fn draw(
                 },
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if glass_button(ui, "Sala", Glyph::People, inputs.room_panel).clicked() {
+                if glass(ui, &pill, inputs.room_panel).clicked() {
                     inputs.room_panel = !inputs.room_panel;
                 }
             });
         });
         if has_notice {
-            let status = if view.role != Role::Local && !view.connected {
-                if view.role == Role::Host {
-                    "Aguardando a outra pessoa voltar. O filme está pausado."
-                } else {
-                    "Reconectando ao anfitrião… O filme está pausado."
-                }
-            } else if view.preparing || view.scheduled {
+            let status = if view.preparing || view.scheduled {
                 "Preparando a reprodução…"
             } else if view.player.blocked {
                 "A reprodução foi interrompida. Aguardando o player…"
             } else {
                 &view.status
             };
-            let disconnected = view.role != Role::Local && !view.connected;
             let glyph = if view.error.is_some() || view.player.blocked {
                 Glyph::Alert
-            } else if disconnected || view.preparing || view.scheduled {
+            } else if view.preparing || view.scheduled {
                 Glyph::Spinner
             } else {
                 Glyph::Info
@@ -304,16 +304,6 @@ pub(crate) fn draw(
                             .wrap(),
                         );
                     });
-                    if disconnected {
-                        ui.add_space(2.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(26.0);
-                            if glass_button(ui, "Opções da sala", Glyph::People, false).clicked()
-                            {
-                                inputs.room_panel = true;
-                            }
-                        });
-                    }
                 });
         }
     });
@@ -595,24 +585,102 @@ fn seek_bar(ui: &egui::Ui, response: &egui::Response, seek: f64, duration: f64, 
     }
 }
 
-/// Botão translúcido sobre o vídeo, legível sobre imagens claras ou escuras.
-fn glass_button(ui: &mut egui::Ui, label: &str, glyph: Glyph, selected: bool) -> egui::Response {
-    let text = crate::ui::strong(ui, label)
-        .size(13.5)
-        .color(Color32::WHITE);
-    let galley = egui::WidgetText::from(text).into_galley(
+/// O estado da sala num único selo, sempre no mesmo lugar sobre o vídeo.
+struct Pill {
+    label: String,
+    glyph: Option<Glyph>,
+    /// Sem conexão com a outra pessoa: o selo fica âmbar.
+    warning: bool,
+}
+
+fn room_pill(view: &View) -> Pill {
+    let peer = view.peer_name.as_deref().unwrap_or("a outra pessoa");
+    if view.role == Role::Local {
+        return Pill {
+            label: "Sala".into(),
+            glyph: Some(Glyph::People),
+            warning: false,
+        };
+    }
+    if !view.connected {
+        return Pill {
+            label: if view.role == Role::Host {
+                format!("Esperando {peer} voltar…")
+            } else {
+                format!("Reconectando com {peer}…")
+            },
+            glyph: Some(Glyph::Spinner),
+            warning: true,
+        };
+    }
+    Pill {
+        label: format!(
+            "{} · em sincronia",
+            view.peer_name.as_deref().unwrap_or("Outra pessoa")
+        ),
+        glyph: None,
+        warning: false,
+    }
+}
+
+/// Botão redondo translúcido só com ícone; o rótulo fica no leitor de tela e na dica.
+fn glass_icon(ui: &mut egui::Ui, glyph: Glyph, label: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let hover =
+        ui.ctx()
+            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+    let painter = ui.painter();
+    painter.circle(
+        rect.center(),
+        16.0,
+        kit::lerp(
+            Color32::from_black_alpha(130),
+            Color32::from_white_alpha(40),
+            hover,
+        ),
+        Stroke::new(1.0, Color32::from_white_alpha(40)),
+    );
+    if response.has_focus() {
+        painter.circle_stroke(rect.center(), 18.0, Stroke::new(2.0, ACCENT));
+    }
+    kit::draw(painter, glyph, rect.center(), 15.0, Color32::WHITE, 0.0);
+    response
+        .on_hover_text(label)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+const PILL_FONT: f32 = 13.5;
+const PILL_MAX: f32 = 280.0;
+
+fn glass_width(ui: &egui::Ui, label: &str) -> f32 {
+    let galley = egui::WidgetText::from(crate::ui::strong(ui, label).size(PILL_FONT)).into_galley(
         ui,
         Some(egui::TextWrapMode::Extend),
         f32::INFINITY,
         egui::TextStyle::Button,
     );
-    let size = egui::vec2(galley.size().x + 16.0 + 8.0 + 24.0, 32.0);
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    (galley.size().x + 12.0 + 20.0 + 8.0 + 14.0).min(PILL_MAX)
+}
+
+/// Selo translúcido sobre o vídeo, legível sobre imagens claras ou escuras.
+fn glass(ui: &mut egui::Ui, pill: &Pill, selected: bool) -> egui::Response {
+    let width = glass_width(ui, &pill.label);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::click());
+    let label = pill.label.clone();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    let response = response
+        .on_hover_text("Detalhes da sala")
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     let hover =
         ui.ctx()
             .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+    let warning = Color32::from_rgb(244, 192, 104);
+    let ink = if pill.warning {
+        warning
+    } else {
+        Color32::WHITE
+    };
     let painter = ui.painter();
     painter.rect(
         rect,
@@ -621,12 +689,19 @@ fn glass_button(ui: &mut egui::Ui, label: &str, glyph: Glyph, selected: bool) ->
             Color32::from_white_alpha(60)
         } else {
             kit::lerp(
-                Color32::from_black_alpha(110),
+                Color32::from_black_alpha(130),
                 Color32::from_white_alpha(40),
                 hover,
             )
         },
-        Stroke::new(1.0, Color32::from_white_alpha(40)),
+        Stroke::new(
+            1.0,
+            if pill.warning {
+                warning.gamma_multiply(0.55)
+            } else {
+                Color32::from_white_alpha(40)
+            },
+        ),
         egui::StrokeKind::Inside,
     );
     if response.has_focus() {
@@ -637,18 +712,36 @@ fn glass_button(ui: &mut egui::Ui, label: &str, glyph: Glyph, selected: bool) ->
             egui::StrokeKind::Outside,
         );
     }
-    kit::draw(
-        painter,
-        glyph,
-        egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
-        15.0,
-        Color32::WHITE,
-        0.0,
+    let slot = egui::pos2(rect.left() + 6.0 + 10.0, rect.center().y);
+    match pill.glyph {
+        Some(glyph) => {
+            kit::draw(painter, glyph, slot, 15.0, ink, ui.input(|i| i.time));
+            if glyph == Glyph::Spinner {
+                ui.ctx().request_repaint();
+            }
+        }
+        // Conectados: um ponto verde, como numa chamada em andamento.
+        None => {
+            let green = Color32::from_rgb(92, 214, 164);
+            painter.circle_filled(slot, 7.0, green.gamma_multiply(0.22));
+            painter.circle_filled(slot, 3.5, green);
+        }
+    }
+    let galley = egui::WidgetText::from(
+        crate::ui::strong(ui, &pill.label)
+            .size(PILL_FONT)
+            .color(ink),
+    )
+    .into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        width - 6.0 - 20.0 - 8.0 - 14.0,
+        egui::TextStyle::Button,
     );
-    painter.galley(
-        egui::pos2(rect.left() + 36.0, rect.center().y - galley.size().y * 0.5),
+    ui.painter().galley(
+        egui::pos2(rect.left() + 34.0, rect.center().y - galley.size().y * 0.5),
         galley,
-        Color32::WHITE,
+        ink,
     );
     response
 }

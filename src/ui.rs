@@ -207,10 +207,9 @@ pub fn configure_theme(ctx: &egui::Context, light: bool) {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Screen {
+    /// Início: criar sala, entrar com código ou abrir um filme sozinho.
     #[default]
     Home,
-    /// Entrada com o código de uma sala pela internet.
-    Join,
     /// Salas da rede local, nas opções avançadas.
     Browse,
     Preparation,
@@ -225,8 +224,14 @@ pub struct Inputs {
     pub relay: String,
     /// Mostra salas na rede local e entrada por endereço.
     pub lan: bool,
-    /// A última entrada foi por código: uma recusa volta para a tela do código.
+    /// A última entrada foi por código: uma recusa mostra o erro sob o campo.
     pub code_entry: bool,
+    /// O código foi editado depois da última tentativa, cujo erro some.
+    pub code_edited: bool,
+    /// Entrando numa sala pela internet: o início mostra o progresso no botão.
+    pub joining: bool,
+    /// Pede confirmação antes de sair de uma sala com a outra pessoa conectada.
+    pub confirm_leave: bool,
     pub screen: Screen,
     pub room_panel: bool,
     pub volume: f64,
@@ -244,6 +249,9 @@ impl Default for Inputs {
             relay: crate::network::relay::DEFAULT_RELAY.into(),
             lan: false,
             code_entry: false,
+            code_edited: false,
+            joining: false,
+            confirm_leave: false,
             screen: Screen::Home,
             room_panel: false,
             volume: 100.0,
@@ -318,9 +326,10 @@ pub fn draw_with_inputs(
         inputs.screen = Screen::Browse;
         inputs.lan = true;
     }
-    if state == SessionState::JoinCode {
-        inputs.screen = Screen::Join;
+    if matches!(state, SessionState::JoinCode | SessionState::Connecting) {
+        inputs.screen = Screen::Home;
         inputs.code = "4821-gato-lua".into();
+        inputs.joining = state == SessionState::Connecting;
     }
     let _ = draw_flow(ui, &view, inputs, None, demo);
     actions
@@ -536,17 +545,17 @@ fn draw_flow(
     let colors = Palette::new(ui.visuals().dark_mode);
     let sticky_preparation = ui.ctx().content_rect().height() < 600.0;
     if inputs.last_role != Role::Local && view.role == Role::Local {
-        // Um código recusado volta para a correção, com o erro e o texto digitado.
-        inputs.screen =
-            if inputs.last_role == Role::Guest && inputs.code_entry && view.error.is_some() {
-                Screen::Join
-            } else {
-                Screen::Home
-            };
+        // Um código recusado volta ao início, com o erro sob o código digitado.
+        inputs.screen = Screen::Home;
+        inputs.joining = false;
+        inputs.confirm_leave = false;
         inputs.room_panel = false;
         inputs.player.fullscreen = false;
     }
     inputs.last_role = view.role;
+    if view.connected || view.role == Role::Host {
+        inputs.joining = false;
+    }
     if view.role == Role::Local
         && !view.loading
         && view.file.is_none()
@@ -554,7 +563,7 @@ fn draw_flow(
     {
         inputs.screen = Screen::Home;
     }
-    if view.role != Role::Local {
+    if view.role != Role::Local && !(inputs.joining && !view.connected) {
         if inputs.screen == Screen::Watching && !view.watching {
             inputs.player.fullscreen = false;
         }
@@ -610,26 +619,54 @@ fn draw_flow(
             });
     } else {
         inputs.player.video_rect = None;
+        // Entrando com código, o início continua na tela até a sala responder.
+        let joining = inputs.joining && view.role == Role::Guest && !view.connected;
+        let body = if inputs.screen == Screen::Home || joining {
+            Body::Home
+        } else if inputs.screen == Screen::Browse {
+            Body::Browse
+        } else if view.role == Role::Host && !view.connected {
+            Body::Room
+        } else if view.role == Role::Guest && !view.connected {
+            Body::Connecting
+        } else {
+            Body::Preparation
+        };
+        let step = match body {
+            Body::Home | Body::Browse => None,
+            _ if view.role == Role::Local => None,
+            Body::Room | Body::Connecting => Some(0),
+            Body::Preparation => Some(1),
+        };
         egui::Panel::top("app_header")
+            .show_separator_line(false)
             .frame(
                 egui::Frame::new()
                     .fill(colors.background)
-                    .inner_margin(egui::Margin::symmetric(20, 10)),
+                    .inner_margin(egui::Margin::symmetric(16, 8)),
             )
             .show(ui, |ui| {
-                header(ui, colors, inputs, view.role);
-                let rect = ui.clip_rect();
-                ui.painter().hline(
-                    rect.x_range(),
-                    rect.bottom() - 0.5,
-                    Stroke::new(1.0, colors.border),
-                );
+                header(ui, colors, inputs, view, step, body, &mut actions);
+                // Sem etapa nem sala, o cabeçalho faz parte da página: sem linha.
+                if step.is_some() {
+                    let rect = ui.clip_rect();
+                    ui.painter().hline(
+                        rect.x_range(),
+                        rect.bottom() - 0.5,
+                        Stroke::new(1.0, colors.border),
+                    );
+                }
             });
-        if inputs.screen == Screen::Preparation
-            && sticky_preparation
-            && view.join_request.is_none()
-            && !(view.role == Role::Guest && !view.connected)
+        // Esc faz o mesmo que a seta do cabeçalho, fora de campos de texto e menus.
+        if back_label(view, body).is_some()
+            && !inputs.confirm_leave
+            && !egui::Popup::is_any_open(ui.ctx())
+            && ui.ctx().memory(|m| m.focused().is_none())
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
+            request_leave(view, inputs, &mut actions);
+        }
+        if body == Body::Preparation && sticky_preparation && view.join_request.is_none() {
             egui::Panel::bottom("preparation_action")
                 .exact_size(148.0)
                 .resizable(false)
@@ -645,13 +682,13 @@ fn draw_flow(
                     );
                     ui.vertical_centered(|ui| {
                         ui.set_max_width(ui.available_width().min(680.0));
-                        preparation::action(ui, colors, view, true, &mut actions);
+                        preparation::action(ui, colors, view, &mut actions);
                     });
                 });
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(colors.background).inner_margin(
-                if inputs.screen == Screen::Preparation {
+                if body == Body::Preparation {
                     egui::Margin::symmetric(24, 16)
                 } else {
                     egui::Margin::same(if ui.available_width() < 600.0 { 24 } else { 40 })
@@ -662,57 +699,157 @@ fn draw_flow(
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        let home = inputs.screen == Screen::Home;
-                        let connecting = inputs.screen == Screen::Preparation
-                            && view.role == Role::Guest
-                            && !view.connected;
-                        ui.add_space(if home || connecting {
-                            ((bounds.height() - 440.0) * 0.5).clamp(0.0, 100.0)
-                        } else {
-                            8.0
-                        });
-                        if home {
+                        // Telas curtas ficam um pouco acima do centro, não presas ao topo.
+                        let height = match body {
+                            Body::Home => 430.0,
+                            Body::Room => 400.0,
+                            Body::Connecting => 440.0,
+                            Body::Browse | Body::Preparation => bounds.height(),
+                        };
+                        ui.add_space(((bounds.height() - height) * 0.4).clamp(0.0, 90.0));
+                        if body == Body::Home {
                             entry::home(ui, colors, view, inputs, &mut actions);
-                        } else {
-                            ui.vertical_centered(|ui| {
-                                ui.set_max_width(ui.available_width().min(
-                                    if inputs.screen == Screen::Preparation {
-                                        680.0
-                                    } else {
-                                        600.0
-                                    },
-                                ));
-                                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                                    match inputs.screen {
-                                        Screen::Browse => {
-                                            entry::browse(ui, colors, view, inputs, &mut actions)
-                                        }
-                                        Screen::Join => {
-                                            entry::join(ui, colors, view, inputs, &mut actions)
-                                        }
-                                        Screen::Preparation if connecting => {
-                                            entry::connecting(ui, colors, view, &mut actions)
-                                        }
-                                        Screen::Preparation => preparation::draw(
-                                            ui,
-                                            colors,
-                                            view,
-                                            sticky_preparation,
-                                            &mut actions,
-                                        ),
-                                        Screen::Home | Screen::Watching => {}
-                                    }
-                                });
-                            });
+                            return;
                         }
+                        ui.vertical_centered(|ui| {
+                            ui.set_max_width(ui.available_width().min(match body {
+                                Body::Preparation => 680.0,
+                                Body::Room => 460.0,
+                                _ => 600.0,
+                            }));
+                            ui.with_layout(
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| match body {
+                                    Body::Browse => {
+                                        entry::browse(ui, colors, view, inputs, &mut actions)
+                                    }
+                                    Body::Connecting => {
+                                        entry::connecting(ui, colors, view, &mut actions)
+                                    }
+                                    Body::Room => preparation::room(ui, colors, view, &mut actions),
+                                    Body::Preparation => preparation::draw(
+                                        ui,
+                                        colors,
+                                        view,
+                                        sticky_preparation,
+                                        &mut actions,
+                                    ),
+                                    Body::Home => {}
+                                },
+                            );
+                        });
                     });
             });
     }
 
+    if inputs.confirm_leave {
+        confirm_leave(ui.ctx(), colors, view, inputs, &mut actions);
+    }
     if demo {
         actions.clear();
     }
     actions
+}
+
+/// O rótulo da seta de voltar, ou nada quando a tela já é o começo.
+fn back_label(view: &crate::runtime::View, body: Body) -> Option<&'static str> {
+    match body {
+        Body::Home | Body::Browse => None,
+        _ => Some(preparation::leave_label(view.role)),
+    }
+}
+
+/// Sai da sala; com a outra pessoa conectada, pergunta antes.
+pub(crate) fn request_leave(
+    view: &crate::runtime::View,
+    inputs: &mut Inputs,
+    actions: &mut Vec<crate::runtime::Command>,
+) {
+    if view.role != crate::runtime::Role::Local && view.connected {
+        inputs.confirm_leave = true;
+    } else {
+        inputs.player.fullscreen = false;
+        inputs.room_panel = false;
+        actions.push(crate::runtime::Command::Leave);
+    }
+}
+
+fn confirm_leave(
+    ctx: &egui::Context,
+    colors: Palette,
+    view: &crate::runtime::View,
+    inputs: &mut Inputs,
+    actions: &mut Vec<crate::runtime::Command>,
+) {
+    use crate::runtime::Role;
+    // A outra pessoa saiu enquanto a pergunta estava aberta: não há mais o que confirmar.
+    if view.role == Role::Local || !view.connected {
+        inputs.confirm_leave = false;
+        return;
+    }
+    let host = view.role == Role::Host;
+    let peer = view.peer_name.as_deref().unwrap_or("A outra pessoa");
+    let modal = egui::Modal::new(egui::Id::new("confirm_leave"))
+        .frame(
+            egui::Frame::new()
+                .fill(colors.surface)
+                .stroke(Stroke::new(1.0, colors.border))
+                .corner_radius(16)
+                .inner_margin(24),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(ui.available_width().min(340.0));
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.label(title(
+                ui,
+                if host {
+                    "Encerrar a sala?"
+                } else {
+                    "Sair da sala?"
+                },
+                20.0,
+            ));
+            ui.add(
+                egui::Label::new(
+                    RichText::new(if host {
+                        format!("A sala fecha e a conexão com {peer} termina.")
+                    } else {
+                        format!("Você deixa a sala de {peer} e volta ao início.")
+                    })
+                    .color(colors.muted),
+                )
+                .wrap(),
+            );
+            ui.add_space(10.0);
+            let leave = if host { "Encerrar" } else { "Sair" };
+            let mut stay = false;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if kit::Button::new(kit::Kind::Primary, "Continuar na sala")
+                        .size(kit::Size::Medium)
+                        .show(ui, colors)
+                        .clicked()
+                    {
+                        stay = true;
+                    }
+                    if kit::Button::new(kit::Kind::Secondary, leave)
+                        .size(kit::Size::Medium)
+                        .show(ui, colors)
+                        .clicked()
+                    {
+                        inputs.confirm_leave = false;
+                        inputs.player.fullscreen = false;
+                        inputs.room_panel = false;
+                        actions.push(crate::runtime::Command::Leave);
+                    }
+                });
+            });
+            stay
+        });
+    if modal.inner || modal.should_close() {
+        inputs.confirm_leave = false;
+    }
 }
 fn quiet(ui: &mut egui::Ui, colors: Palette, text: &str) -> egui::Response {
     kit::Button::new(kit::Kind::Ghost, text)
@@ -725,18 +862,181 @@ fn secondary(ui: &mut egui::Ui, colors: Palette, text: &str, enabled: bool) -> e
         .enabled(enabled)
         .show(ui, colors)
 }
-fn header(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: crate::runtime::Role) {
+/// O que ocupa o centro da janela fora do player.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Body {
+    Home,
+    Browse,
+    /// Anfitrião esperando alguém entrar: o convite é a tela.
+    Room,
+    /// Convidado conectando à sala da rede local ou reconectando.
+    Connecting,
+    Preparation,
+}
+
+/// Etapas do fluxo, mostradas no cabeçalho no lugar de um título por estado.
+const STEPS: [&str; 3] = ["Sala", "Filme", "Assistir"];
+
+fn header(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    inputs: &mut Inputs,
+    view: &crate::runtime::View,
+    step: Option<usize>,
+    body: Body,
+    actions: &mut Vec<crate::runtime::Command>,
+) {
     ui.horizontal(|ui| {
+        ui.set_min_height(36.0);
         ui.spacing_mut().item_spacing.x = 10.0;
-        visuals::brand(ui, colors);
+        let wide = ui.available_width() >= 600.0;
+        // Voltar fica sempre no mesmo canto; nas salas, voltar é sair delas.
+        if let Some(label) = back_label(view, body)
+            && kit::icon_button(ui, colors, kit::Glyph::ArrowLeft, label, 36.0).clicked()
+        {
+            request_leave(view, inputs, actions);
+        }
+        if let Some(step) = step {
+            steps(ui, colors, step, wide);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let settings = kit::icon_button(ui, colors, kit::Glyph::Gear, "Configurações", 36.0);
             egui::Popup::menu(&settings)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| settings_menu(ui, colors, inputs, role));
+                .show(|ui| settings_menu(ui, colors, inputs, view.role));
+            if wide
+                && step.is_some()
+                && let Some(code) = view.room_code.as_deref().filter(|_| view.internet)
+            {
+                room_chip(ui, colors, code, view.connected);
+            }
         });
     });
 }
+
+/// Três etapas numeradas; a atual acesa, as anteriores marcadas.
+fn steps(ui: &mut egui::Ui, colors: Palette, current: usize, labels: bool) {
+    ui.spacing_mut().item_spacing.x = 8.0;
+    for (index, name) in STEPS.iter().enumerate() {
+        if index > 0 {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
+            ui.painter().hline(
+                rect.x_range(),
+                rect.center().y,
+                Stroke::new(1.0, colors.border_strong),
+            );
+        }
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+        let center = rect.center();
+        if index < current {
+            ui.painter()
+                .circle_filled(center, 10.0, colors.success.gamma_multiply(0.16));
+            kit::draw(
+                ui.painter(),
+                kit::Glyph::Check,
+                center,
+                11.0,
+                colors.success,
+                0.0,
+            );
+        } else if index == current {
+            ui.painter().circle_filled(center, 10.0, colors.action);
+            ui.painter().text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                (index + 1).to_string(),
+                egui::FontId::new(11.5, semibold_family(ui.ctx())),
+                Color32::WHITE,
+            );
+        } else {
+            ui.painter()
+                .circle_stroke(center, 9.5, Stroke::new(1.0, colors.border_strong));
+            ui.painter().text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                (index + 1).to_string(),
+                egui::FontId::proportional(11.5),
+                colors.faint,
+            );
+        }
+        if labels || index == current {
+            ui.label(
+                strong(ui, *name)
+                    .size(13.5)
+                    .color(match index.cmp(&current) {
+                        std::cmp::Ordering::Less => colors.muted,
+                        std::cmp::Ordering::Equal => colors.text,
+                        std::cmp::Ordering::Greater => colors.faint,
+                    }),
+            );
+        }
+    }
+}
+
+/// O código da sala, sempre à vista; um clique copia.
+fn room_chip(ui: &mut egui::Ui, colors: Palette, code: &str, connected: bool) {
+    let prefix = RichText::new("Sala ").size(12.5).color(colors.muted);
+    let font = egui::FontId::new(12.5, semibold_family(ui.ctx()));
+    let galley = ui
+        .painter()
+        .layout_no_wrap(code.to_owned(), font, colors.text);
+    let prefix = egui::WidgetText::from(prefix).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    let width = 12.0 + 7.0 + 8.0 + prefix.size().x + galley.size().x + 12.0;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::click());
+    let label = format!("Copiar código da sala {code}");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    let id = ui.id().with(("copied", code));
+    let now = ui.input(|i| i.time);
+    if response.clicked() {
+        ui.ctx().copy_text(code.to_owned());
+        ui.ctx().data_mut(|d| d.insert_temp(id, now + 2.0));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(2));
+    }
+    let copied = ui
+        .ctx()
+        .data(|d| d.get_temp::<f64>(id))
+        .is_some_and(|until| until > now);
+    let hover =
+        ui.ctx()
+            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+    ui.painter().rect(
+        rect,
+        15,
+        kit::lerp(colors.surface, colors.hover, hover),
+        Stroke::new(1.0, colors.border),
+        egui::StrokeKind::Inside,
+    );
+    let dot = egui::pos2(rect.left() + 12.0 + 3.5, rect.center().y);
+    if connected {
+        ui.painter()
+            .circle_filled(dot, 6.5, colors.success.gamma_multiply(0.18));
+        ui.painter().circle_filled(dot, 3.5, colors.success);
+    } else {
+        ui.painter().circle_filled(dot, 3.5, colors.faint);
+    }
+    let x = rect.left() + 12.0 + 7.0 + 8.0;
+    let prefix_width = prefix.size().x;
+    ui.painter().galley(
+        egui::pos2(x, rect.center().y - prefix.size().y * 0.5),
+        prefix,
+        colors.muted,
+    );
+    ui.painter().galley(
+        egui::pos2(x + prefix_width, rect.center().y - galley.size().y * 0.5),
+        galley,
+        colors.text,
+    );
+    response
+        .on_hover_text(if copied { "Copiado" } else { "Copiar código" })
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+}
+
 fn section_label(ui: &mut egui::Ui, colors: Palette, text: &str) {
     ui.label(
         strong(ui, text.to_uppercase())
@@ -948,12 +1248,15 @@ fn room_contents(
         connection_details(ui, view, actions);
         ui.add_space(12.0);
         if quiet(ui, colors, preparation::leave_label(view.role)).clicked() {
-            inputs.player.fullscreen = false;
-            inputs.room_panel = false;
-            actions.push(Command::Leave);
+            request_leave(view, inputs, actions);
         }
     });
 }
+/// Rótulo da saída para o papel atual, usado também pela seta do player.
+pub(crate) fn preparation_leave_label(role: crate::runtime::Role) -> &'static str {
+    preparation::leave_label(role)
+}
+
 /// O título preserva o nome do usuário, omitindo apenas a extensão de vídeo.
 pub(crate) fn media_title(file: &str) -> &str {
     if let Some((name, extension)) = file.rsplit_once('.')

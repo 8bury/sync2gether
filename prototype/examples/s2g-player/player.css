@@ -1,0 +1,148 @@
+/* The player fills the stage: the film is the frame */
+.w2g-win {
+  inset: 0;
+  width: 880px;
+  height: 560px;
+}
+
+/* A stand-in frame: two soft glows on near-black, never a real film */
+.w2g-video {
+  position: relative;
+  height: 522px;
+  background:
+    radial-gradient(55% 65% at 32% 40%, rgb(64 84 200 / 0.3), transparent 70%),
+    radial-gradient(50% 60% at 72% 62%, rgb(130 70 190 / 0.2), transparent 70%),
+    rgb(8 10 20);
+}
+
+.w2g-top {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 16px 0 20px;
+  background: linear-gradient(rgb(0 0 0 / 0.55), transparent);
+}
+
+.w2g-title {
+  color: var(--ss-text-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* The room's one status, changing on itself */
+.w2g-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px 0 6px;
+  white-space: nowrap;
+  border-radius: var(--ss-radius-pill);
+  background: rgb(21 22 28 / 0.88);
+  box-shadow: inset 0 0 0 1px var(--ss-line-faint);
+  color: var(--ss-text-strong);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: box-shadow 0.35s ease, color 0.35s ease;
+}
+
+.w2g-pill[data-link='lost'] {
+  box-shadow: inset 0 0 0 1px rgb(244 192 104 / 0.5);
+  color: var(--ss-warning-text);
+}
+
+.w2g-pill__in {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.w2g-pill {
+  will-change: transform;
+}
+
+/* The spinner gets the avatar's 20px slot, so the words start in one place */
+.w2g-spin {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.w2g-toasts {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  transform: translateX(-50%);
+}
+
+.w2g-toasts > * {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+
+.s2g .w2g-toasts .ss-toast {
+  background: rgb(29 31 38 / 0.94);
+  color: var(--ss-text-strong);
+  box-shadow: inset 0 0 0 1px var(--ss-line-faint), 0 12px 32px rgb(0 0 0 / 0.4);
+}
+
+.w2g-controls {
+  position: absolute;
+  inset: auto 0 0;
+  padding: 28px 16px 12px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 0.7));
+}
+
+.w2g-track {
+  height: 4px;
+  margin: 0 4px 10px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.18);
+}
+
+.w2g-track > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--ss-accent-2);
+  transition: width 0.9s linear;
+}
+
+.w2g-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ss-text-strong);
+}
+
+.w2g-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--ss-radius-sm);
+}
+
+.w2g-btn--main[data-hover] {
+  background: rgb(255 255 255 / 0.1);
+}
+
+.w2g-time {
+  margin-left: 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.w2g-time i {
+  color: var(--ss-text);
+  font-style: normal;
+}
+
+.w2g-gap {
+  flex: 1;
+}

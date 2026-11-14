@@ -1,75 +1,68 @@
-//! Preparação e comparação dos dois arquivos, sem I/O.
-use super::{Palette, card, connection_details, feedback, kit, secondary, strong, title, visuals};
+//! Sala do anfitrião, preparação e comparação dos dois arquivos, sem I/O.
+use super::{Palette, connection_details, feedback, kit, strong, title, visuals};
 use crate::{
     protocol::Control,
     runtime::{Command, Role, View},
 };
-use eframe::egui::{self, RichText, Stroke};
+use eframe::egui::{self, Color32, RichText, Stroke};
 
-/// Explica a condição que impede o play, sem usar o nome como identidade.
-pub(super) fn readiness(view: &View) -> (&'static str, &'static str) {
-    if view.error.is_some() {
-        return ("Não foi possível preparar o filme", "");
-    }
-    if view.preparing || view.scheduled {
-        return ("Preparando a reprodução…", "");
-    }
-    if view.loading {
-        return if view.pending_file.is_some() {
-            ("Verificando seu arquivo…", "")
-        } else {
-            (
-                "Escolha seu arquivo",
-                "A janela de seleção está aberta neste PC.",
-            )
-        };
-    }
-    if view.role != Role::Local && !view.connected {
-        return if view.role == Role::Host {
-            ("Aguardando participante", "")
-        } else if view.waiting_approval {
-            ("Aguardando aprovação", "")
-        } else {
-            ("Conectando à sala…", "")
-        };
-    }
-    if view.file.is_none() {
-        return ("Escolha sua cópia do filme", "");
-    }
-    if view.role != Role::Local {
-        if view.peer_loading {
-            return ("A outra pessoa está preparando o arquivo", "");
-        }
-        if view.peer_file.is_none() && !view.peer_ready {
-            return ("Falta o arquivo da outra pessoa", "");
-        }
-        if view.verified && view.peer_verified && !view.matched {
-            return (
-                "Os arquivos são diferentes",
-                "Escolham arquivos com o mesmo conteúdo.",
-            );
+/// Cor e ícone de uma linha de estado.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Muted,
+    Busy,
+    Success,
+    Warning,
+    Error,
+}
+
+impl Tone {
+    fn color(self, colors: Palette) -> Color32 {
+        match self {
+            Self::Muted | Self::Busy => colors.muted,
+            Self::Success => colors.success,
+            Self::Warning => colors.warning,
+            Self::Error => colors.error,
         }
     }
-    if view.player.blocked || view.peer_blocked {
-        return (
-            "Aguardando o player",
-            "Se a espera continuar, selecione o arquivo novamente.",
-        );
+    fn glyph(self) -> Option<kit::Glyph> {
+        match self {
+            Self::Muted => None,
+            Self::Busy => Some(kit::Glyph::Spinner),
+            Self::Success => Some(kit::Glyph::Check),
+            Self::Warning | Self::Error => Some(kit::Glyph::Alert),
+        }
     }
-    if view.ready || view.role == Role::Local && view.player.loaded {
-        return if view.role == Role::Local {
-            ("Seu filme está pronto", "")
-        } else {
-            ("Os arquivos são iguais", "")
-        };
-    }
-    if view.matched && view.player.loaded && view.peer_ready {
-        return (
-            "Os arquivos são iguais",
-            "Aguardando a conexão estabilizar para liberar o play.",
-        );
-    }
-    ("Preparando os arquivos…", "")
+}
+
+/// O que o botão principal faz. Desativado, ele diz o que falta.
+enum Main {
+    Start,
+    Cancel,
+    Change,
+    Waiting(String),
+}
+
+/// A situação da preparação, dita uma vez: uma frase e o botão principal.
+struct Readiness {
+    note: String,
+    tone: Tone,
+    main: Main,
+}
+
+fn peer_name(view: &View) -> &str {
+    view.peer_name.as_deref().unwrap_or("a outra pessoa")
+}
+
+/// Os dois arquivos foram conferidos e o conteúdo é diferente.
+fn mismatch(view: &View) -> bool {
+    view.role != Role::Local
+        && view.connected
+        && view.verified
+        && view.peer_verified
+        && !view.matched
+        && !view.loading
+        && !view.peer_loading
 }
 
 fn start_enabled(view: &View) -> bool {
@@ -81,84 +74,722 @@ fn start_enabled(view: &View) -> bool {
                 && !view.player.blocked)
 }
 
-pub(super) fn action(
+/// Explica a condição que impede o play, sem usar o nome como identidade.
+fn readiness(view: &View) -> Readiness {
+    let waiting = |note: &str, tone, button: &str| Readiness {
+        note: note.into(),
+        tone,
+        main: Main::Waiting(button.into()),
+    };
+    if let Some(error) = &view.error {
+        return waiting(error, Tone::Error, "Começar a assistir");
+    }
+    if view.preparing || view.scheduled {
+        return Readiness {
+            note: "Preparando a reprodução…".into(),
+            tone: Tone::Busy,
+            main: Main::Cancel,
+        };
+    }
+    if view.loading {
+        return if view.pending_file.is_some() {
+            waiting(
+                "Conferindo o conteúdo do seu arquivo…",
+                Tone::Busy,
+                "Conferindo seu arquivo…",
+            )
+        } else {
+            waiting(
+                "A janela de seleção está aberta neste PC.",
+                Tone::Muted,
+                "Escolha seu arquivo para começar",
+            )
+        };
+    }
+    if view.file.is_none() {
+        return waiting(
+            if view.role == Role::Local {
+                "Escolha um arquivo de vídeo neste PC."
+            } else {
+                "Cada pessoa escolhe a própria cópia. O app compara o conteúdo, não o nome."
+            },
+            Tone::Muted,
+            "Escolha seu arquivo para começar",
+        );
+    }
+    // Pronto vem da sala: os dois arquivos já foram conferidos.
+    if view.ready && !view.player.blocked && !view.peer_blocked {
+        return Readiness {
+            note: "Os arquivos são iguais.".into(),
+            tone: Tone::Success,
+            main: Main::Start,
+        };
+    }
+    if view.role != Role::Local {
+        let peer = peer_name(view);
+        if view.peer_loading {
+            return Readiness {
+                note: format!("O arquivo de {peer} está sendo conferido…"),
+                tone: Tone::Busy,
+                main: Main::Waiting(format!("Esperando o arquivo de {peer}")),
+            };
+        }
+        if view.peer_file.is_none() && !view.peer_ready {
+            return Readiness {
+                note: format!("Falta o arquivo de {peer}."),
+                tone: Tone::Muted,
+                main: Main::Waiting(format!("Esperando o arquivo de {peer}")),
+            };
+        }
+        if mismatch(view) {
+            return Readiness {
+                note: "Os arquivos são diferentes. Escolham arquivos com o mesmo conteúdo.".into(),
+                tone: Tone::Warning,
+                main: Main::Change,
+            };
+        }
+    }
+    if view.player.blocked || view.peer_blocked {
+        return waiting(
+            "Se a espera continuar, selecione o arquivo novamente.",
+            Tone::Warning,
+            "Aguardando o player",
+        );
+    }
+    if start_enabled(view) {
+        return Readiness {
+            note: if view.role == Role::Local {
+                "Seu filme está pronto."
+            } else {
+                "Os arquivos são iguais."
+            }
+            .into(),
+            tone: Tone::Success,
+            main: Main::Start,
+        };
+    }
+    if view.matched && view.player.loaded && view.peer_ready {
+        return waiting(
+            "Os arquivos são iguais. Aguardando a conexão estabilizar para liberar o play.",
+            Tone::Success,
+            "Preparando a conexão…",
+        );
+    }
+    waiting("Preparando os arquivos…", Tone::Busy, "Preparando…")
+}
+
+/// Título da tela segundo o estado, no lugar de um título fixo.
+fn heading(view: &View) -> &'static str {
+    if start_enabled(view) {
+        "Tudo pronto"
+    } else if view.error.is_some() || view.player.blocked {
+        "O filme não abriu"
+    } else if mismatch(view) {
+        "Os arquivos não batem"
+    } else if view.loading && view.pending_file.is_some() || view.peer_loading {
+        "Conferindo os arquivos"
+    } else if compare(view) == Compare::Same {
+        "Quase pronto"
+    } else if view.role == Role::Local {
+        "Escolha o filme"
+    } else {
+        "Escolham o mesmo filme"
+    }
+}
+
+/// Uma frase de estado, centralizada, com o ícone quando cabe numa linha.
+fn note(ui: &mut egui::Ui, colors: Palette, text: &str, tone: Tone) {
+    let color = tone.color(colors);
+    let font = egui::FontId::proportional(14.0);
+    let width = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, color)
+        .size()
+        .x;
+    match tone.glyph() {
+        Some(glyph) if width + 24.0 <= ui.available_width() => {
+            kit::centered_row(ui, &[16.0, width], |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(16.0, 18.0), egui::Sense::hover());
+                kit::draw(
+                    ui.painter(),
+                    glyph,
+                    rect.center(),
+                    15.0,
+                    color,
+                    ui.input(|i| i.time),
+                );
+                if glyph == kit::Glyph::Spinner {
+                    ui.ctx().request_repaint();
+                }
+                ui.label(RichText::new(text).size(14.0).color(color));
+            });
+        }
+        _ => {
+            ui.add(
+                egui::Label::new(RichText::new(text).size(14.0).color(color))
+                    .halign(egui::Align::Center)
+                    .wrap(),
+            );
+        }
+    }
+}
+
+/// A frase de estado e o botão principal, que carrega a próxima ação.
+pub(super) fn action(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
+    let state = readiness(view);
+    ui.vertical_centered(|ui| {
+        note(ui, colors, &state.note, state.tone);
+        ui.add_space(6.0);
+    });
+    ui.vertical_centered(|ui| {
+        ui.set_max_width(ui.available_width().min(340.0));
+        let button = match &state.main {
+            Main::Start => {
+                kit::Button::new(kit::Kind::Primary, "Começar a assistir").glyph(kit::Glyph::Play)
+            }
+            Main::Cancel => kit::Button::new(kit::Kind::Secondary, "Cancelar início"),
+            Main::Change => kit::Button::new(kit::Kind::Secondary, "Trocar meu arquivo")
+                .glyph(kit::Glyph::Refresh),
+            Main::Waiting(label) => kit::Button::new(kit::Kind::Secondary, label)
+                .glyph(kit::Glyph::Play)
+                .enabled(false),
+        };
+        if button.fill_width(ui).show(ui, colors).clicked() {
+            actions.push(match state.main {
+                Main::Start => Command::Control(Control::Play),
+                Main::Cancel => Command::Control(Control::Pause),
+                Main::Change => Command::Open,
+                Main::Waiting(_) => return,
+            });
+        }
+    });
+}
+
+/// Como os dois arquivos se comparam, desenhado na emenda entre os cartões.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Compare {
+    Waiting,
+    Checking,
+    Same,
+    Different,
+}
+
+fn compare(view: &View) -> Compare {
+    if mismatch(view) {
+        Compare::Different
+    } else if view.loading || view.peer_loading {
+        Compare::Checking
+    } else if view.matched && view.verified && view.peer_verified {
+        Compare::Same
+    } else {
+        Compare::Waiting
+    }
+}
+
+fn seam(ui: &egui::Ui, colors: Palette, center: egui::Pos2, state: Compare) {
+    let painter = ui.painter();
+    painter.circle_filled(center, 23.0, colors.background);
+    let (fill, ink) = match state {
+        Compare::Same => (colors.success, colors.background),
+        Compare::Different => (colors.warning, colors.background),
+        Compare::Waiting | Compare::Checking => (colors.raised, colors.muted),
+    };
+    painter.circle_filled(center, 18.0, fill);
+    if matches!(state, Compare::Waiting | Compare::Checking) {
+        painter.circle_stroke(center, 17.5, Stroke::new(1.0, colors.border));
+    }
+    match state {
+        Compare::Waiting => {
+            painter.circle_filled(center, 3.0, colors.faint);
+        }
+        Compare::Checking => {
+            kit::draw(
+                painter,
+                kit::Glyph::Spinner,
+                center,
+                16.0,
+                colors.accent,
+                ui.input(|i| i.time),
+            );
+            ui.ctx().request_repaint();
+        }
+        Compare::Same => kit::draw(painter, kit::Glyph::Check, center, 16.0, ink, 0.0),
+        Compare::Different => kit::draw(painter, kit::Glyph::Close, center, 14.0, ink, 0.0),
+    }
+}
+
+const CARD: f32 = 118.0;
+const GAP: f32 = 16.0;
+
+/// As duas cópias lado a lado (ou empilhadas numa janela estreita), como iguais.
+fn pair(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
+    let width = ui.available_width();
+    if view.role == Role::Local {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, CARD), egui::Sense::hover());
+        copy_card(ui, rect, colors, view, true, actions);
+        return;
+    }
+    let wide = width >= 560.0;
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(width, if wide { CARD } else { 2.0 * CARD + GAP }),
+        egui::Sense::hover(),
+    );
+    let (mine, theirs) = if wide {
+        let half = (width - GAP) * 0.5;
+        (
+            egui::Rect::from_min_size(rect.min, egui::vec2(half, CARD)),
+            egui::Rect::from_min_size(
+                rect.min + egui::vec2(half + GAP, 0.0),
+                egui::vec2(half, CARD),
+            ),
+        )
+    } else {
+        (
+            egui::Rect::from_min_size(rect.min, egui::vec2(width, CARD)),
+            egui::Rect::from_min_size(
+                rect.min + egui::vec2(0.0, CARD + GAP),
+                egui::vec2(width, CARD),
+            ),
+        )
+    };
+    ui.push_id("local_file", |ui| {
+        copy_card(ui, mine, colors, view, true, actions)
+    });
+    ui.push_id("peer_file", |ui| {
+        copy_card(ui, theirs, colors, view, false, actions)
+    });
+    let center = if wide {
+        egui::pos2(rect.center().x, rect.center().y)
+    } else {
+        egui::pos2(rect.center().x, mine.bottom() + GAP * 0.5)
+    };
+    seam(ui, colors, center, compare(view));
+}
+
+/// Um cartão: quem, o arquivo e o estado dele. Ações só no seu.
+fn copy_card(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    colors: Palette,
+    view: &View,
+    local: bool,
+    actions: &mut Vec<Command>,
+) {
+    let name = if local {
+        if view.loading {
+            view.pending_file.as_deref()
+        } else {
+            view.file.as_deref()
+        }
+    } else {
+        view.peer_file.as_deref()
+    };
+    let loading = if local {
+        view.loading
+    } else {
+        view.peer_loading
+    };
+    let blocked = if local {
+        view.player.blocked
+    } else {
+        view.peer_blocked
+    };
+    let progress = if local {
+        view.verification
+    } else {
+        view.peer_verification
+    };
+    let verified = (if local {
+        view.verified
+    } else {
+        view.peer_verified
+    }) && !loading
+        && !blocked
+        && (local || view.connected);
+    let different = mismatch(view);
+    let (status, tone) = if !local && !view.connected {
+        ("Ainda não entrou na sala", Tone::Muted)
+    } else if loading && name.is_none() {
+        ("Escolhendo arquivo…", Tone::Busy)
+    } else if loading {
+        ("Conferindo…", Tone::Busy)
+    } else if blocked {
+        ("Player indisponível", Tone::Warning)
+    } else if different {
+        ("Conteúdo diferente", Tone::Warning)
+    } else if verified {
+        ("Conferido", Tone::Success)
+    } else if name.is_some() {
+        ("Preparando o player…", Tone::Muted)
+    } else if !local {
+        ("Aguardando a escolha do filme", Tone::Muted)
+    } else {
+        ("Nenhum arquivo escolhido", Tone::Muted)
+    };
+    let warn = matches!(tone, Tone::Warning);
+    ui.painter().rect(
+        rect,
+        14,
+        colors.surface,
+        Stroke::new(
+            1.0,
+            if warn {
+                colors.warning.gamma_multiply(0.45)
+            } else {
+                colors.border
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    let inner = rect.shrink(16.0);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 12.0);
+        // Quem: avatar e nome; à direita, as ações do arquivo.
+        ui.horizontal(|ui| {
+            ui.set_height(24.0);
+            let who = if local {
+                "Você"
+            } else {
+                view.peer_name.as_deref().unwrap_or("Outra pessoa")
+            };
+            let menu = if name.is_some() { MENU } else { 0.0 };
+            let button = local
+                .then(|| {
+                    if loading && view.pending_file.is_some() {
+                        Some(
+                            kit::Button::new(kit::Kind::Ghost, "Cancelar verificação")
+                                .size(kit::Size::Small),
+                        )
+                    } else if !loading && name.is_some() {
+                        Some(
+                            kit::Button::new(kit::Kind::Ghost, "Trocar arquivo")
+                                .glyph(kit::Glyph::Refresh)
+                                .size(kit::Size::Small),
+                        )
+                    } else {
+                        None
+                    }
+                })
+                .flatten();
+            let buttons = button.as_ref().map_or(0.0, |b| b.natural_width(ui) + 4.0) + menu;
+            kit::avatar(ui, colors, who, 22.0);
+            let room = (ui.available_width() - buttons - 8.0).max(20.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(room, 24.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.add(
+                        egui::Label::new(strong(ui, who).size(13.5).color(colors.muted)).truncate(),
+                    );
+                },
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if let Some(name) = name {
+                    file_menu(ui, colors, name, local);
+                }
+                if let Some(button) = button
+                    && button.show(ui, colors).clicked()
+                {
+                    actions.push(if loading {
+                        Command::CancelOpen
+                    } else {
+                        Command::Open
+                    });
+                }
+            });
+        });
+        // O arquivo: ícone, nome e estado, ou o botão para escolher.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            let icon = match tone {
+                Tone::Success => colors.success,
+                Tone::Warning => colors.warning,
+                _ if name.is_some() => colors.accent,
+                _ => colors.faint,
+            };
+            visuals::file(ui, icon, 42.0, true);
+            if local && name.is_none() && !loading {
+                let choose = kit::Button::new(kit::Kind::Primary, "Escolher arquivo")
+                    .glyph(kit::Glyph::Folder)
+                    .size(kit::Size::Medium);
+                if choose.show(ui, colors).clicked() {
+                    actions.push(Command::Open);
+                }
+                return;
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 5.0;
+                match name {
+                    Some(name) => {
+                        ui.add(egui::Label::new(strong(ui, name).size(14.0)).truncate())
+                            .on_hover_text(name);
+                    }
+                    None => {
+                        ui.label(
+                            RichText::new("Nenhum arquivo ainda")
+                                .size(14.0)
+                                .color(colors.faint),
+                        );
+                    }
+                }
+                if let Some(progress) = progress.filter(|_| loading) {
+                    kit::progress(
+                        ui,
+                        colors,
+                        progress.fraction(),
+                        ui.available_width().min(220.0),
+                    );
+                } else {
+                    kit::status(ui, tone.glyph(), status, tone.color(colors));
+                }
+            });
+        });
+    });
+}
+
+pub(super) fn draw(
     ui: &mut egui::Ui,
     colors: Palette,
     view: &View,
-    explain: bool,
+    sticky: bool,
     actions: &mut Vec<Command>,
 ) {
-    let enabled = start_enabled(view);
-    let (title, detail) = readiness(view);
-    if explain {
-        let (tone, glyph) = if view.error.is_some() {
-            (colors.error, Some(kit::Glyph::Alert))
-        } else if enabled {
-            (colors.success, Some(kit::Glyph::Check))
-        } else if view.verified && view.peer_verified && !view.matched && view.connected {
-            (colors.warning, Some(kit::Glyph::Alert))
-        } else if view.preparing || view.scheduled || view.loading || view.peer_loading {
-            (colors.muted, Some(kit::Glyph::Spinner))
-        } else {
-            (colors.muted, None)
-        };
-        // A família é obtida antes: consultar as fontes dentro de `fonts_mut` travaria o contexto.
-        let font = egui::FontId::new(14.5, super::semibold_family(ui.ctx()));
-        let galley_width = ui
-            .fonts_mut(|f| f.layout_no_wrap(title.to_owned(), font, tone))
-            .size()
-            .x;
-        kit::centered_row(ui, &[16.0, galley_width], |ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 18.0), egui::Sense::hover());
-            match glyph {
-                Some(glyph) => {
-                    kit::draw(
-                        ui.painter(),
-                        glyph,
-                        rect.center(),
-                        15.0,
-                        tone,
-                        ui.input(|i| i.time),
-                    );
-                    if glyph == kit::Glyph::Spinner {
-                        ui.ctx().request_repaint();
-                    }
-                }
-                None => {
-                    ui.painter().circle_filled(rect.center(), 3.5, tone);
-                }
-            }
-            ui.add(egui::Label::new(strong(ui, title).size(14.5).color(tone)).wrap());
-        });
-        ui.add_space(2.0);
+    let local = view.role == Role::Local;
+    let compact = ui.ctx().content_rect().height() < 700.0;
+    ui.spacing_mut().item_spacing.y = if compact { 6.0 } else { 10.0 };
+    if let Some(request) = &view.join_request {
+        approval(ui, colors, request, actions);
+        ui.add_space(8.0);
     }
     ui.vertical_centered(|ui| {
-        ui.set_max_width(ui.available_width().min(320.0));
-        if view.preparing || view.scheduled {
-            if secondary(ui, colors, "Cancelar início", true).clicked() {
-                actions.push(Command::Control(Control::Pause));
+        ui.label(title(ui, heading(view), if compact { 24.0 } else { 26.0 }));
+    });
+    ui.add_space(if compact { 8.0 } else { 16.0 });
+    pair(ui, colors, view, actions);
+    if !sticky && view.join_request.is_none() {
+        ui.add_space(if compact { 10.0 } else { 16.0 });
+        action(ui, colors, view, actions);
+    }
+    if view.error.is_none() {
+        feedback(ui, view);
+    }
+    if !local {
+        ui.add_space(if compact { 6.0 } else { 14.0 });
+        footer(ui, colors, view, actions);
+    }
+}
+
+/// Detalhes da conexão, discretos, no pé da tela. A saída fica na seta do cabeçalho.
+fn footer(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
+    ui.vertical_centered(|ui| {
+        let details = kit::Button::new(kit::Kind::Ghost, "Detalhes da sala")
+            .size(kit::Size::Medium)
+            .show(ui, colors);
+        egui::Popup::menu(&details)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_max_width(320.0);
+                ui.add(
+                    egui::Label::new(
+                        strong(
+                            ui,
+                            view.peer_name
+                                .as_deref()
+                                .unwrap_or("Aguardando participante"),
+                        )
+                        .size(14.0),
+                    )
+                    .wrap(),
+                );
+                connection_details(ui, view, actions);
+            });
+    });
+}
+
+/// Primeira etapa do anfitrião: o convite é a tela, com o código em destaque.
+pub(super) fn room(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
+    if let Some(request) = &view.join_request {
+        approval(ui, colors, request, actions);
+        ui.add_space(12.0);
+    }
+    feedback(ui, view);
+    ui.vertical_centered(|ui| {
+        ui.spacing_mut().item_spacing.y = 10.0;
+        ui.label(
+            RichText::new(if view.internet {
+                "Envie este código para a outra pessoa"
+            } else {
+                "Envie este endereço para a outra pessoa"
+            })
+            .size(14.5)
+            .color(colors.muted),
+        );
+        if view.internet {
+            invite_code(ui, colors, view);
+        } else {
+            for address in super::room_addresses(view) {
+                ui.push_id(address, |ui| {
+                    invite_box(ui, colors, &address.to_string(), 17.0, "Copiar endereço")
+                });
+            }
+        }
+        if view.relay_offline {
+            ui.label(
+                RichText::new("Sem contato com o servidor. Tentando de novo…")
+                    .size(13.0)
+                    .color(colors.warning),
+            );
+        }
+        ui.add_space(6.0);
+        presence(ui, colors);
+        ui.add_space(14.0);
+        ui.set_max_width(ui.available_width().min(340.0));
+        // Dá para escolher o filme enquanto espera; a ação é secundária até a outra pessoa entrar.
+        if view.loading {
+            if let Some(progress) = view.verification.filter(|_| view.pending_file.is_some()) {
+                ui.label(
+                    RichText::new("Conferindo seu arquivo")
+                        .size(13.0)
+                        .color(colors.muted),
+                );
+                kit::progress(ui, colors, progress.fraction(), ui.available_width());
+            } else {
+                kit::status(
+                    ui,
+                    Some(kit::Glyph::Spinner),
+                    "Escolhendo arquivo…",
+                    colors.muted,
+                );
             }
         } else {
-            let response = kit::Button::new(
-                if enabled {
-                    kit::Kind::Primary
-                } else {
-                    kit::Kind::Secondary
-                },
-                "Começar a assistir",
-            )
-            .glyph(kit::Glyph::Play)
-            .enabled(enabled)
-            .fill_width(ui)
-            .show(ui, colors);
-            if response.clicked() {
-                actions.push(Command::Control(Control::Play));
+            let label = if view.file.is_some() {
+                "Trocar meu filme"
+            } else {
+                "Escolher meu filme"
+            };
+            if kit::Button::new(kit::Kind::Secondary, label)
+                .glyph(kit::Glyph::Folder)
+                .fill_width(ui)
+                .show(ui, colors)
+                .clicked()
+            {
+                actions.push(Command::Open);
+            }
+            if let Some(file) = &view.file {
+                ui.add(
+                    egui::Label::new(RichText::new(file).size(12.5).color(colors.muted))
+                        .halign(egui::Align::Center)
+                        .truncate(),
+                )
+                .on_hover_text(file);
             }
         }
     });
-    if explain && !detail.is_empty() {
-        ui.add(egui::Label::new(RichText::new(detail).small().color(colors.muted)).wrap());
+}
+
+/// Você e o lugar vazio de quem vai entrar.
+fn presence(ui: &mut egui::Ui, colors: Palette) {
+    let text = "Esperando alguém entrar…";
+    let width = ui
+        .painter()
+        .layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::proportional(14.0),
+            colors.muted,
+        )
+        .size()
+        .x;
+    kit::centered_row(ui, &[28.0, 24.0, 28.0, width + 4.0], |ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        kit::avatar(ui, colors, "Você", 28.0);
+        let (line, _) = ui.allocate_exact_size(egui::vec2(24.0, 28.0), egui::Sense::hover());
+        ui.painter().hline(
+            line.x_range(),
+            line.center().y,
+            Stroke::new(2.0, colors.border_strong),
+        );
+        let (seat, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+        let time = ui.input(|i| i.time) as f32;
+        ui.painter()
+            .circle_stroke(seat.center(), 13.0, Stroke::new(1.5, colors.border_strong));
+        // Um arco que gira: a vaga foi oferecida e ainda não foi aceita.
+        let arc: Vec<egui::Pos2> = (0..=12)
+            .map(|i| {
+                let a = time * 2.4 + i as f32 / 12.0 * 1.4;
+                seat.center() + egui::vec2(a.cos(), a.sin()) * 13.0
+            })
+            .collect();
+        ui.painter()
+            .add(egui::Shape::line(arc, Stroke::new(1.5, colors.accent)));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
+        ui.add_space(4.0);
+        ui.label(RichText::new(text).size(14.0).color(colors.muted));
+    });
+}
+
+/// Um valor para enviar em destaque, com o botão de copiar ao lado.
+fn invite_box(ui: &mut egui::Ui, colors: Palette, value: &str, size: f32, copy: &str) {
+    egui::Frame::new()
+        .fill(colors.surface)
+        .stroke(Stroke::new(1.0, colors.border))
+        .corner_radius(14)
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let button = kit::Button::new(kit::Kind::Primary, copy)
+                    .glyph(kit::Glyph::Copy)
+                    .size(kit::Size::Medium)
+                    .natural_width(ui);
+                ui.add_space(8.0);
+                let room = (ui.available_width() - button - 16.0).max(40.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(room, 40.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                strong(ui, value)
+                                    .size(size)
+                                    .extra_letter_spacing(-0.01 * size),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(value);
+                    },
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    copy_button_with(ui, kit::Kind::Primary, kit::Size::Medium, copy, value);
+                });
+            });
+        });
+}
+
+/// Convite pela internet: o código é tudo que a outra pessoa precisa.
+fn invite_code(ui: &mut egui::Ui, colors: Palette, view: &View) {
+    match &view.room_code {
+        Some(code) => {
+            let size = if ui.available_width() < 400.0 {
+                22.0
+            } else {
+                28.0
+            };
+            invite_box(ui, colors, code, size, "Copiar");
+        }
+        None => {
+            kit::centered_row(ui, &[18.0, 140.0], |ui| {
+                kit::status(
+                    ui,
+                    Some(kit::Glyph::Spinner),
+                    "Gerando o código…",
+                    colors.muted,
+                );
+            });
+        }
     }
 }
 
@@ -171,6 +802,17 @@ pub(super) fn leave_label(role: Role) -> &'static str {
 }
 
 pub(super) fn copy_button(ui: &mut egui::Ui, label: &str, value: &str) {
+    copy_button_with(ui, kit::Kind::Secondary, kit::Size::Small, label, value);
+}
+
+/// Copia `value`; por dois segundos o próprio botão diz Copiado.
+pub(super) fn copy_button_with(
+    ui: &mut egui::Ui,
+    kind: kit::Kind,
+    size: kit::Size,
+    label: &str,
+    value: &str,
+) {
     let colors = Palette::new(ui.visuals().dark_mode);
     let id = ui.id().with(("copied", value));
     let now = ui.input(|i| i.time);
@@ -179,15 +821,15 @@ pub(super) fn copy_button(ui: &mut egui::Ui, label: &str, value: &str) {
         .data(|d| d.get_temp::<f64>(id))
         .is_some_and(|until| until > now);
     if kit::Button::new(
-        kit::Kind::Secondary,
-        if copied { "Copiado!" } else { label },
+        if copied { kit::Kind::Secondary } else { kind },
+        if copied { "Copiado" } else { label },
     )
     .glyph(if copied {
         kit::Glyph::Check
     } else {
         kit::Glyph::Copy
     })
-    .size(kit::Size::Small)
+    .size(size)
     .show(ui, colors)
     .clicked()
     {
@@ -239,277 +881,7 @@ fn file_menu(ui: &mut egui::Ui, colors: Palette, name: &str, local: bool) {
         });
 }
 
-fn file_row(
-    ui: &mut egui::Ui,
-    colors: Palette,
-    view: &View,
-    local: bool,
-    actions: &mut Vec<Command>,
-) {
-    let name = if local {
-        if view.loading {
-            view.pending_file.as_deref()
-        } else {
-            view.file.as_deref()
-        }
-    } else {
-        view.peer_file.as_deref()
-    };
-    let loading = if local {
-        view.loading
-    } else {
-        view.peer_loading
-    };
-    let verified = if local {
-        view.verified
-    } else {
-        view.peer_verified
-    };
-    let blocked = if local {
-        view.player.blocked
-    } else {
-        view.peer_blocked
-    };
-    let progress = if local {
-        view.verification
-    } else {
-        view.peer_verification
-    };
-    let verified = verified && !loading && !blocked && (local || view.connected);
-    let status = if !local && !view.connected {
-        "Ainda não entrou na sala"
-    } else if loading && name.is_none() {
-        "Escolhendo arquivo…"
-    } else if loading {
-        "Verificando conteúdo…"
-    } else if blocked {
-        "Player indisponível"
-    } else if verified {
-        "Arquivo verificado"
-    } else if name.is_some() {
-        "Preparando o player…"
-    } else if !local {
-        "Aguardando a escolha do filme"
-    } else {
-        "Nenhum arquivo escolhido"
-    };
-    let has_action = local && (!loading || view.pending_file.is_some());
-    let button = has_action.then(|| {
-        if loading {
-            kit::Button::new(kit::Kind::Ghost, "Cancelar verificação").size(kit::Size::Small)
-        } else if name.is_none() {
-            kit::Button::new(kit::Kind::Primary, "Escolher arquivo").size(kit::Size::Medium)
-        } else {
-            kit::Button::new(kit::Kind::Secondary, "Trocar arquivo").size(kit::Size::Small)
-        }
-    });
-    let gap = ui.spacing().item_spacing.x;
-    // O menu ⋯ ocupa sempre a mesma coluna nas duas linhas.
-    let menu_slot = if name.is_some() { MENU } else { 0.0 };
-    let action_width = button
-        .as_ref()
-        .map_or(0.0, |button| button.natural_width(ui) + gap)
-        + menu_slot;
-    let tone = if verified {
-        colors.success
-    } else if blocked {
-        colors.warning
-    } else if loading {
-        colors.accent
-    } else {
-        colors.muted
-    };
-    ui.horizontal(|ui| {
-        let icon_color = if verified {
-            colors.success
-        } else if blocked {
-            colors.warning
-        } else if name.is_some() || loading {
-            colors.accent
-        } else {
-            colors.faint
-        };
-        visuals::file(ui, icon_color, 44.0, true);
-        let text_width =
-            (ui.available_width() - action_width - ui.spacing().item_spacing.x).max(1.0);
-        ui.allocate_ui_with_layout(
-            egui::vec2(text_width, 64.0),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.set_min_width(text_width);
-                ui.spacing_mut().item_spacing.y = 3.0;
-                ui.add(
-                    egui::Label::new(
-                        strong(
-                            ui,
-                            if local {
-                                "Você"
-                            } else {
-                                view.peer_name.as_deref().unwrap_or("Outra pessoa")
-                            },
-                        )
-                        .size(15.0),
-                    )
-                    .truncate(),
-                );
-                if let Some(name) = name {
-                    ui.add(egui::Label::new(RichText::new(name).color(colors.muted)).truncate())
-                        .on_hover_text(name);
-                }
-                if let Some(progress) = progress.filter(|_| loading) {
-                    kit::progress(ui, colors, progress.fraction(), text_width.min(360.0));
-                    ui.add(
-                        egui::Label::new(RichText::new(status).size(12.5).color(colors.muted))
-                            .truncate(),
-                    );
-                } else {
-                    kit::status(
-                        ui,
-                        if verified {
-                            Some(kit::Glyph::Check)
-                        } else if blocked {
-                            Some(kit::Glyph::Alert)
-                        } else if loading {
-                            Some(kit::Glyph::Spinner)
-                        } else {
-                            None
-                        },
-                        status,
-                        tone,
-                    );
-                }
-            },
-        );
-        if action_width > 0.0 {
-            ui.allocate_ui_with_layout(
-                egui::vec2(action_width, 48.0),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    ui.set_min_width(action_width);
-                    ui.set_max_width(action_width);
-                    ui.spacing_mut().item_spacing.x = gap;
-                    if let Some(name) = name {
-                        file_menu(ui, colors, name, local);
-                    }
-                    if let Some(button) = button
-                        && button.show(ui, colors).clicked()
-                    {
-                        actions.push(if loading {
-                            Command::CancelOpen
-                        } else {
-                            Command::Open
-                        });
-                    }
-                },
-            );
-        }
-    });
-}
-
-pub(super) fn draw(
-    ui: &mut egui::Ui,
-    colors: Palette,
-    view: &View,
-    sticky: bool,
-    actions: &mut Vec<Command>,
-) {
-    let local = view.role == Role::Local;
-    let compact = ui.ctx().content_rect().height() < 700.0;
-    ui.spacing_mut().item_spacing.y = if compact { 6.0 } else { 10.0 };
-    ui.vertical_centered(|ui| {
-        if !compact && view.join_request.is_none() {
-            visuals::file(ui, colors.faint, 56.0, false);
-            ui.add_space(6.0);
-        }
-        ui.label(title(
-            ui,
-            if start_enabled(view) {
-                "Pronto para assistir"
-            } else {
-                "Selecionar filme"
-            },
-            if compact { 26.0 } else { 30.0 },
-        ));
-    });
-    ui.add_space(if compact { 10.0 } else { 22.0 });
-    if view.error.is_some() {
-        feedback(ui, view);
-        ui.add_space(4.0);
-    }
-    if let Some(request) = &view.join_request {
-        approval(ui, colors, request, actions);
-        ui.add_space(8.0);
-    }
-    // Enquanto ninguém entrou, o convite é o que o anfitrião precisa ver primeiro.
-    if view.role == Role::Host && !view.connected {
-        invite(ui, colors, view);
-        ui.add_space(if compact { 6.0 } else { 12.0 });
-    }
-    card(colors)
-        .inner_margin(egui::Margin::symmetric(
-            if compact { 14 } else { 18 },
-            if compact { 10 } else { 14 },
-        ))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.push_id("local_file", |ui| file_row(ui, colors, view, true, actions));
-            if !local {
-                ui.add_space(if compact { 4.0 } else { 8.0 });
-                let y = ui.cursor().top();
-                ui.painter()
-                    .hline(ui.max_rect().x_range(), y, Stroke::new(1.0, colors.border));
-                ui.add_space(if compact { 5.0 } else { 9.0 });
-                ui.push_id("peer_file", |ui| file_row(ui, colors, view, false, actions));
-            }
-        });
-    if !sticky && view.join_request.is_none() {
-        ui.add_space(if compact { 14.0 } else { 22.0 });
-        ui.vertical_centered(|ui| action(ui, colors, view, true, actions));
-    }
-    if view.error.is_none() {
-        feedback(ui, view);
-    }
-    ui.add_space(if compact { 6.0 } else { 18.0 });
-    let leave = leave_label(view.role);
-    let ghost = |label| kit::Button::new(kit::Kind::Ghost, label).size(kit::Size::Medium);
-    let mut widths = vec![ghost(leave).natural_width(ui)];
-    if !local {
-        widths.insert(0, ghost("Detalhes da sala").natural_width(ui));
-    }
-    kit::centered_row(ui, &widths, |ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
-        if !local {
-            let details = ghost("Detalhes da sala").show(ui, colors);
-            egui::Popup::menu(&details)
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| {
-                    ui.set_max_width(320.0);
-                    ui.add(
-                        egui::Label::new(
-                            strong(
-                                ui,
-                                view.peer_name
-                                    .as_deref()
-                                    .unwrap_or("Aguardando participante"),
-                            )
-                            .size(14.0),
-                        )
-                        .wrap(),
-                    );
-                    connection_details(ui, view, actions);
-                });
-            let y = ui.max_rect().center().y;
-            let x = ui.cursor().left();
-            ui.painter()
-                .circle_filled(egui::pos2(x - 6.0, y), 1.5, colors.faint);
-        }
-        if ghost(leave).show(ui, colors).clicked() {
-            actions.push(Command::Leave);
-        }
-    });
-}
-
-fn approval(
+pub(super) fn approval(
     ui: &mut egui::Ui,
     colors: Palette,
     request: &crate::runtime::JoinRequest,
@@ -585,130 +957,6 @@ fn approval(
                     id: request.id,
                     accept,
                 });
-            }
-        });
-}
-
-fn invite(ui: &mut egui::Ui, colors: Palette, view: &View) {
-    if view.internet {
-        return invite_code(ui, colors, view);
-    }
-    card(colors)
-        .inner_margin(egui::Margin::symmetric(18, 14))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 8.0;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-                kit::draw(
-                    ui.painter(),
-                    kit::Glyph::People,
-                    rect.center(),
-                    16.0,
-                    colors.accent,
-                    0.0,
-                );
-                ui.label(strong(ui, "Convidar por endereço"));
-            });
-            for address in super::room_addresses(view) {
-                ui.horizontal_wrapped(|ui| {
-                    egui::Frame::new()
-                        .fill(colors.inset)
-                        .stroke(Stroke::new(1.0, colors.border))
-                        .corner_radius(8)
-                        .inner_margin(egui::Margin::symmetric(10, 7))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(address.to_string())
-                                    .monospace()
-                                    .size(13.0)
-                                    .color(colors.text),
-                            );
-                        });
-                    copy_button(ui, "Copiar endereço", &address.to_string());
-                });
-            }
-        });
-}
-
-/// Convite pela internet: o código é tudo que a outra pessoa precisa.
-fn invite_code(ui: &mut egui::Ui, colors: Palette, view: &View) {
-    card(colors)
-        .inner_margin(egui::Margin::symmetric(18, 14))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 8.0;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-                kit::draw(
-                    ui.painter(),
-                    kit::Glyph::People,
-                    rect.center(),
-                    16.0,
-                    colors.accent,
-                    0.0,
-                );
-                ui.label(strong(ui, "Convidar com código"));
-            });
-            match &view.room_code {
-                Some(code) => {
-                    ui.horizontal_wrapped(|ui| {
-                        egui::Frame::new()
-                            .fill(colors.inset)
-                            .stroke(Stroke::new(1.0, colors.border))
-                            .corner_radius(8)
-                            .inner_margin(egui::Margin::symmetric(12, 8))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(code.as_str())
-                                        .monospace()
-                                        .size(18.0)
-                                        .color(colors.text),
-                                );
-                            });
-                        copy_button(ui, "Copiar código", code);
-                    });
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(
-                                "Envie o código para a outra pessoa. Ela entra com ele em \"Entrar em uma sala\".",
-                            )
-                            .small()
-                            .color(colors.muted),
-                        )
-                        .wrap(),
-                    );
-                }
-                None => {
-                    ui.horizontal(|ui| {
-                        let (rect, _) =
-                            ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-                        kit::draw(
-                            ui.painter(),
-                            kit::Glyph::Spinner,
-                            rect.center(),
-                            16.0,
-                            colors.accent,
-                            ui.input(|i| i.time),
-                        );
-                        ui.ctx().request_repaint();
-                        ui.label(RichText::new("Gerando o código…").color(colors.muted));
-                    });
-                }
-            }
-            if view.relay_offline {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new("Sem contato com o servidor. Tentando de novo…")
-                            .small()
-                            .color(colors.warning),
-                    )
-                    .wrap(),
-                );
             }
         });
 }

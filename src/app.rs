@@ -75,6 +75,7 @@ impl App {
                     self.inputs.relay = relay.clone();
                     self.inputs.code = code.clone();
                     self.inputs.code_entry = true;
+                    self.inputs.joining = true;
                 }
                 _ => {}
             }

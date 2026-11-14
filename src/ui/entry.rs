@@ -2,6 +2,7 @@
 use super::{
     Inputs, Palette, Screen, card, feedback, kit, quiet, secondary, strong, title, visuals,
 };
+
 use crate::runtime::{Command, View};
 use eframe::egui::{self, RichText, Stroke};
 
@@ -12,214 +13,240 @@ pub(super) fn home(
     inputs: &mut Inputs,
     actions: &mut Vec<Command>,
 ) {
-    let compact = ui.available_height() < 430.0;
+    // Entrando com um código: o início continua na tela, com o progresso no botão.
+    let joining = inputs.joining && view.role == crate::runtime::Role::Guest && !view.connected;
+    let compact = ui.available_height() < 400.0;
     ui.vertical_centered(|ui| {
         if compact {
             ui.spacing_mut().item_spacing.y = 6.0;
         }
-        ui.set_max_width(ui.available_width().min(560.0));
-        let icon = if compact { 44.0 } else { 76.0 };
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(icon, icon), egui::Sense::hover());
-        visuals::app_icon(ui.painter(), rect, colors);
-        ui.add_space(if compact { 6.0 } else { 26.0 });
-        ui.label(title(
-            ui,
-            "Assistir a um filme",
-            if compact { 26.0 } else { 34.0 },
-        ));
-        ui.add_space(if compact { 8.0 } else { 28.0 });
-        feedback(ui, view);
-        ui.vertical_centered(|ui| {
-            ui.set_max_width(ui.available_width().min(320.0));
-            let create = kit::Button::new(
-                kit::Kind::Primary,
-                if view.hosting {
-                    "Criando sala…"
-                } else {
-                    "Criar sala"
-                },
-            )
-            .glyph(kit::Glyph::Plus)
-            .busy(view.hosting)
-            .fill_width(ui)
-            .show(ui, colors);
-            if create.clicked() {
-                actions.push(Command::HostInternet(inputs.relay.clone()));
-            }
-            let join = kit::Button::new(kit::Kind::Secondary, "Entrar em uma sala")
-                .glyph(kit::Glyph::ArrowRight)
-                .enabled(!view.hosting)
-                .fill_width(ui)
-                .show(ui, colors);
-            if join.clicked() {
-                inputs.screen = Screen::Join;
-            }
-            if inputs.lan {
-                ui.add_space(if compact { 0.0 } else { 4.0 });
-                ui.label(
-                    RichText::new("Rede local ou VPN")
-                        .small()
-                        .color(colors.muted),
-                );
-                if kit::Button::new(kit::Kind::Ghost, "Criar sala na rede local")
-                    .size(kit::Size::Medium)
-                    .enabled(!view.hosting)
-                    .fill_width(ui)
-                    .show(ui, colors)
-                    .clicked()
-                {
-                    actions.push(Command::HostAuto(inputs.port));
-                }
-                if kit::Button::new(kit::Kind::Ghost, "Procurar na rede local")
-                    .size(kit::Size::Medium)
-                    .enabled(!view.hosting)
-                    .fill_width(ui)
-                    .show(ui, colors)
-                    .clicked()
-                {
-                    inputs.screen = Screen::Browse;
-                    actions.push(Command::Discover);
-                }
-            }
-            ui.add_space(if compact { 0.0 } else { 4.0 });
-            if kit::Button::new(kit::Kind::Link, "Abrir filme sozinho")
-                .size(kit::Size::Medium)
-                .enabled(!view.hosting)
-                .show(ui, colors)
-                .clicked()
-            {
-                actions.push(Command::Open);
-            }
-            if view.player.loaded && view.file.is_some() {
-                if quiet(ui, colors, "Continuar filme aberto").clicked() {
-                    actions.push(Command::Control(crate::protocol::Control::Play));
-                }
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(view.file.as_deref().unwrap_or_default())
-                            .small()
-                            .color(colors.muted),
+        ui.set_max_width(ui.available_width().min(380.0));
+        if !compact {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
+            visuals::app_icon(ui.painter(), rect, colors);
+            ui.add_space(14.0);
+        }
+        ui.label(title(ui, "Assistir junto", if compact { 24.0 } else { 28.0 }));
+        if !compact {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Cada pessoa abre a sua cópia do filme. Play, pause e posição ficam iguais nos dois PCs.",
                     )
-                    .truncate(),
-                );
-            }
-            if view.hosting && quiet(ui, colors, "Cancelar").clicked() {
-                actions.push(Command::Leave);
-            }
-        });
-    });
-}
-
-/// Campo do código da sala pela internet.
-pub(super) fn join(
-    ui: &mut egui::Ui,
-    colors: Palette,
-    view: &View,
-    inputs: &mut Inputs,
-    actions: &mut Vec<Command>,
-) {
-    if kit::Button::new(kit::Kind::Ghost, "Voltar")
-        .glyph(kit::Glyph::ArrowLeft)
-        .size(kit::Size::Small)
-        .show(ui, colors)
-        .clicked()
-    {
-        inputs.screen = Screen::Home;
-    }
-    ui.add_space(6.0);
-    ui.label(title(ui, "Entrar em uma sala", 26.0));
-    ui.label(RichText::new("Peça o código para quem criou a sala.").color(colors.muted));
-    ui.add_space(10.0);
-    card(colors)
-        .fill(colors.surface)
-        .inner_margin(20)
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 6.0;
-            let code_label = ui.label(RichText::new("Código da sala").small().color(colors.muted));
-            ui.add_space(2.0);
-            let wide = ui.available_width() >= 460.0;
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), if wide { 48.0 } else { 106.0 }),
-                if wide {
-                    egui::Layout::left_to_right(egui::Align::Center)
-                } else {
-                    egui::Layout::top_down(egui::Align::Min)
-                },
+                    .color(colors.muted),
+                )
+                .halign(egui::Align::Center)
+                .wrap(),
+            );
+        }
+        ui.add_space(if compact { 6.0 } else { 18.0 });
+        // Erros da sala recém-criada; os do código aparecem na linha do campo.
+        if !inputs.code_entry {
+            feedback(ui, view);
+        }
+        let busy = view.hosting || joining;
+        let create = kit::Button::new(
+            kit::Kind::Primary,
+            if view.hosting {
+                "Criando sala…"
+            } else {
+                "Criar sala"
+            },
+        )
+        .glyph(kit::Glyph::Plus)
+        .busy(view.hosting)
+        .enabled(!busy)
+        .fill_width(ui)
+        .show(ui, colors);
+        if create.clicked() {
+            inputs.code_entry = false;
+            actions.push(Command::HostInternet(inputs.relay.clone()));
+        }
+        ui.add_space(if compact { 2.0 } else { 6.0 });
+        divider(ui, colors, "ou entre com um código");
+        ui.add_space(if compact { 0.0 } else { 2.0 });
+        code_entry(ui, colors, view, inputs, joining, actions);
+        ui.add_space(if compact { 0.0 } else { 4.0 });
+        if inputs.lan {
+            let ghost = |label| {
+                kit::Button::new(kit::Kind::Ghost, label)
+                    .size(kit::Size::Small)
+                    .enabled(!busy)
+            };
+            let host = "Criar sala na rede local";
+            let browse = "Procurar na rede local";
+            kit::centered_row(
+                ui,
+                &[ghost(host).natural_width(ui), ghost(browse).natural_width(ui)],
                 |ui| {
-                    let valid = crate::network::relay::Code::parse(&inputs.code).is_some();
-                    let button = kit::Button::new(
-                        if valid {
-                            kit::Kind::Primary
-                        } else {
-                            kit::Kind::Secondary
-                        },
-                        "Entrar",
-                    )
-                    .glyph(kit::Glyph::ArrowRight);
-                    let field_width = if wide {
-                        ui.available_width()
-                            - button.natural_width(ui)
-                            - ui.spacing().item_spacing.x
-                    } else {
-                        ui.available_width()
-                    };
-                    let field = ui
-                        .add_sized(
-                            [field_width, 48.0],
-                            egui::TextEdit::singleline(&mut inputs.code)
-                                .id(egui::Id::new("room_code"))
-                                .hint_text(RichText::new("4821-gato-lua").color(colors.faint))
-                                .margin(egui::vec2(14.0, 14.0)),
-                        )
-                        .labelled_by(code_label.id)
-                        .on_hover_text("Número e duas palavras, como 4821-gato-lua");
-                    // Valide após desenhar o campo para aceitar a edição e Enter no mesmo frame.
-                    let valid = crate::network::relay::Code::parse(&inputs.code).is_some();
-                    let button = if wide { button } else { button.fill_width(ui) };
-                    if button.enabled(valid).show(ui, colors).clicked()
-                        || valid
-                            && field.lost_focus()
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    {
-                        inputs.code_entry = true;
-                        actions.push(Command::JoinCode {
-                            relay: inputs.relay.clone(),
-                            code: inputs.code.clone(),
-                        });
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if ghost(host).show(ui, colors).clicked() {
+                        actions.push(Command::HostAuto(inputs.port));
+                    }
+                    if ghost(browse).show(ui, colors).clicked() {
+                        inputs.screen = Screen::Browse;
+                        actions.push(Command::Discover);
                     }
                 },
             );
-            // O aviso só aparece quando já há número e palavras suficientes para conferir.
-            let parts = inputs
-                .code
-                .split(|c: char| c == '-' || c == '.' || c.is_whitespace())
-                .filter(|part| !part.is_empty())
-                .count();
-            if parts >= 3 && crate::network::relay::Code::parse(&inputs.code).is_none() {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(crate::runtime::CODE_HINT)
-                            .small()
-                            .color(colors.warning),
-                    )
-                    .wrap(),
-                );
+        }
+        if joining {
+            if quiet(ui, colors, "Cancelar").clicked() {
+                inputs.joining = false;
+                actions.push(Command::Leave);
             }
-        });
-    ui.add_space(8.0);
-    feedback(ui, view);
-    if inputs.lan {
-        ui.add_space(4.0);
-        if kit::Button::new(kit::Kind::Link, "Procurar salas na rede local")
+        } else if view.hosting {
+            if quiet(ui, colors, "Cancelar").clicked() {
+                actions.push(Command::Leave);
+            }
+        } else if kit::Button::new(kit::Kind::Link, "Abrir filme sozinho")
             .size(kit::Size::Medium)
             .show(ui, colors)
             .clicked()
         {
-            inputs.screen = Screen::Browse;
-            actions.push(Command::Discover);
+            actions.push(Command::Open);
         }
-    }
+        if view.player.loaded && view.file.is_some() {
+            if quiet(ui, colors, "Continuar filme aberto").clicked() {
+                actions.push(Command::Control(crate::protocol::Control::Play));
+            }
+            ui.add(
+                egui::Label::new(
+                    RichText::new(view.file.as_deref().unwrap_or_default())
+                        .small()
+                        .color(colors.muted),
+                )
+                .truncate(),
+            );
+        }
+    });
+}
+
+/// Linha fina com um rótulo no meio, separando as duas formas de começar.
+fn divider(ui: &mut egui::Ui, colors: Palette, text: &str) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(12.5),
+        colors.faint,
+    );
+    let half = galley.size().x * 0.5 + 12.0;
+    let y = rect.center().y;
+    let stroke = Stroke::new(1.0, colors.border);
+    ui.painter()
+        .hline(rect.left()..=rect.center().x - half, y, stroke);
+    ui.painter()
+        .hline(rect.center().x + half..=rect.right(), y, stroke);
+    ui.painter()
+        .galley(rect.center() - galley.size() * 0.5, galley, colors.faint);
+}
+
+/// Campo do código e botão Entrar. O resultado da tentativa fica na linha
+/// abaixo do campo, que sempre existe, para nada se mover quando ele chega.
+fn code_entry(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    view: &View,
+    inputs: &mut Inputs,
+    joining: bool,
+    actions: &mut Vec<Command>,
+) {
+    let error = inputs.code_entry
+        && !inputs.code_edited
+        && !joining
+        && view.role == crate::runtime::Role::Local;
+    let error_text = view.error.as_deref().filter(|_| error);
+    let parts = inputs
+        .code
+        .split(|c: char| c == '-' || c == '.' || c.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .count();
+    let hint = parts >= 3 && crate::network::relay::Code::parse(&inputs.code).is_none();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let valid = crate::network::relay::Code::parse(&inputs.code).is_some();
+        let label = if joining { "Entrando" } else { "Entrar" };
+        let button = kit::Button::new(
+            if valid && !hint {
+                kit::Kind::Primary
+            } else {
+                kit::Kind::Secondary
+            },
+            label,
+        )
+        .glyph(kit::Glyph::ArrowRight)
+        .busy(joining)
+        .size(kit::Size::Medium);
+        let field_width = (ui.available_width() - button.natural_width(ui) - 8.0).max(80.0);
+        let stroke = if error_text.is_some() || hint {
+            Some(if hint { colors.warning } else { colors.error })
+        } else {
+            None
+        };
+        let field = ui.scope(|ui| {
+            if let Some(color) = stroke {
+                let visuals = ui.visuals_mut();
+                for widget in [
+                    &mut visuals.widgets.inactive,
+                    &mut visuals.widgets.hovered,
+                    &mut visuals.widgets.active,
+                ] {
+                    widget.bg_stroke = Stroke::new(1.0, color.gamma_multiply(0.7));
+                }
+                visuals.selection.stroke = Stroke::new(1.0, color);
+            }
+            ui.add_enabled_ui(!joining, |ui| {
+                ui.add_sized(
+                    [field_width, 40.0],
+                    egui::TextEdit::singleline(&mut inputs.code)
+                        .id(egui::Id::new("room_code"))
+                        .hint_text(RichText::new("Ex.: 4821-gato-lua").color(colors.faint))
+                        .margin(egui::vec2(12.0, 11.0)),
+                )
+                .on_hover_text("Número e duas palavras, como 4821-gato-lua")
+            })
+            .inner
+        });
+        let field = field.inner;
+        // Valide após desenhar o campo para aceitar a edição e Enter no mesmo frame.
+        let valid = crate::network::relay::Code::parse(&inputs.code).is_some();
+        if field.changed() {
+            // Editar o código apaga o erro da tentativa anterior.
+            inputs.code_edited = true;
+        }
+        if button.enabled(valid && !joining).show(ui, colors).clicked()
+            || valid
+                && !joining
+                && field.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+        {
+            inputs.code_entry = true;
+            inputs.code_edited = false;
+            inputs.joining = true;
+            actions.push(Command::JoinCode {
+                relay: inputs.relay.clone(),
+                code: inputs.code.clone(),
+            });
+        }
+    });
+    let (text, color) = if let Some(error) = error_text {
+        (error, colors.error)
+    } else if hint {
+        (crate::runtime::CODE_HINT, colors.warning)
+    } else {
+        ("", colors.muted)
+    };
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), 18.0),
+        egui::Layout::left_to_right(egui::Align::Min),
+        |ui| {
+            ui.set_min_height(18.0);
+            if !text.is_empty() {
+                ui.add(egui::Label::new(RichText::new(text).size(12.5).color(color)).wrap());
+            }
+        },
+    );
 }
 
 pub(super) fn browse(

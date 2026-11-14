@@ -35,6 +35,8 @@ funcionalidades reais.
 - `src/session.rs` e `src/sync.rs`: preparação confirmada, início agendado,
   relógio monotônico filtrado e correção de reprodução.
 - `src/media.rs`: identidade dos arquivos locais.
+- `prototype/`: protótipo React das telas, feito com o kit Stageshow; referência
+  visual para `src/ui`, fora do build do app e sem `node_modules` no Git.
 - `tests/layout.rs`: teste da interface sem janela ou conexão.
 - `tests/network.rs`: comunicação TCP real em localhost.
 - `tests/relay.rs`: salas pela internet com relay real em localhost.

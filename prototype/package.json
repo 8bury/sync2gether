@@ -1,0 +1,24 @@
+{
+  "name": "sync2gether-prototype",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Protótipo React das telas do sync2gether, feito com o kit Stageshow.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "lucide-react": "0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.6.3",
+    "vite": "^6.4.5"
+  }
+}

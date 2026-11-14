@@ -1,0 +1,268 @@
+/* sync2gether look: the app's dark palette (src/ui.rs, Palette::new) mapped
+   to the kit's tokens, with Inter from the app's assets/fonts. Shared by every s2g-*
+   scene so the prototype reads as one product. */
+
+@font-face {
+  font-family: 'S2G Inter';
+  src: url('../../../assets/fonts/Inter-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: 'S2G Inter';
+  src: url('../../../assets/fonts/Inter-SemiBold.ttf') format('truetype');
+  font-weight: 500 700;
+}
+
+.s2g .ss-stage {
+  --ss-font: 'S2G Inter', system-ui, sans-serif;
+  --ss-canvas: rgb(13 14 18);
+  --ss-surface: rgb(21 22 28);
+  --ss-chrome: rgb(17 18 23);
+  --ss-well: rgb(9 9 12);
+  --ss-raised: rgb(29 31 38);
+  --ss-line: rgb(60 63 76);
+  --ss-line-faint: rgb(38 40 49);
+  --ss-text-strong: rgb(240 242 247);
+  --ss-text: rgb(150 155 170);
+  --ss-text-faint: rgb(98 103 118);
+  --ss-icon: rgb(150 155 170);
+  --ss-icon-faint: rgb(98 103 118);
+  --ss-accent: rgb(70 104 240);
+  --ss-accent-2: rgb(101 133 255);
+  --ss-accent-soft: rgb(70 104 240 / 0.16);
+  --ss-accent-text: rgb(122 156 255);
+  --ss-success: rgb(92 214 164);
+  --ss-success-soft: rgb(92 214 164 / 0.14);
+  --ss-success-text: rgb(92 214 164);
+  --ss-warning: rgb(244 192 104);
+  --ss-warning-soft: rgb(244 192 104 / 0.14);
+  --ss-warning-text: rgb(244 192 104);
+  --ss-danger: rgb(255 134 134);
+  --ss-danger-soft: rgb(255 134 134 / 0.13);
+  --ss-danger-text: rgb(255 134 134);
+  --ss-radius-sm: 8px;
+  --ss-radius-md: 10px;
+  --ss-radius-lg: 14px;
+  --ss-control: 42px;
+  overflow: hidden;
+  background: var(--ss-well);
+  font-family: var(--ss-font);
+}
+
+/* The app window: a step lighter than the page, a hairline on top, no glow */
+.s2g .s2g-win {
+  position: absolute;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 0 0 1px rgb(255 255 255 / 0.07), 0 30px 80px rgb(0 0 0 / 0.5);
+}
+
+.s2g .s2g-win .ss-window__body {
+  background: var(--ss-canvas);
+}
+
+/* Header inside the app: where you are in the flow, and the room once there is one */
+.s2g-head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  height: 52px;
+  padding: 0 16px 0 20px;
+  border-bottom: 1px solid var(--ss-line-faint);
+  transition: border-color 0.35s ease;
+}
+
+/* The start screen has no step and no room: the header keeps only settings
+   and drops its rule, so it reads as part of the page, not an empty band */
+.s2g-head[data-bare] {
+  border-bottom-color: transparent;
+}
+
+.s2g-head__end {
+  display: flex;
+  justify-self: end;
+  align-items: center;
+  gap: 10px;
+}
+
+.s2g-gear {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ss-radius-sm);
+  color: var(--ss-icon);
+}
+
+/* Stepper: three named steps, the current one lit, the done ones ticked */
+.s2g-steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ss-text-faint);
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity 0.4s ease;
+}
+
+.s2g-steps[data-hidden] {
+  opacity: 0;
+}
+
+.s2g-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: color 0.35s ease;
+}
+
+.s2g-step__num {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--ss-line);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 0.35s ease, box-shadow 0.35s ease, color 0.35s ease;
+}
+
+.s2g-step__num > * {
+  grid-area: 1 / 1;
+  transition: opacity 0.25s ease;
+}
+
+.s2g-step[data-state='now'] {
+  color: var(--ss-text-strong);
+}
+
+.s2g-step[data-state='now'] .s2g-step__num {
+  background: var(--ss-accent);
+  box-shadow: none;
+  color: #fff;
+}
+
+.s2g-step[data-state='done'] {
+  color: var(--ss-text);
+}
+
+.s2g-step[data-state='done'] .s2g-step__num {
+  background: var(--ss-success-soft);
+  box-shadow: none;
+  color: var(--ss-success);
+}
+
+.s2g-step:not([data-state='done']) .s2g-step__tick,
+.s2g-step[data-state='done'] .s2g-step__n {
+  opacity: 0;
+}
+
+.s2g-step__rule {
+  width: 22px;
+  height: 1px;
+  background: var(--ss-line);
+}
+
+/* The room chip in the header: the code, always one click from copying */
+.s2g-room {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--ss-radius-pill);
+  background: var(--ss-surface);
+  box-shadow: inset 0 0 0 1px var(--ss-line-faint);
+  color: var(--ss-text);
+  font-size: 12.5px;
+  transition: opacity 0.35s ease;
+}
+
+.s2g-room[data-hidden] {
+  opacity: 0;
+}
+
+.s2g-room b {
+  color: var(--ss-text-strong);
+  font-weight: 500;
+}
+
+/* Primary actions are tall: the one thing a screen asks you to do */
+.s2g .s2g-cta {
+  --ss-button-height: 42px;
+  --ss-button-pad: 18px;
+  --ss-button-pad-icon: 18px;
+  --ss-button-icon: 16px;
+  --ss-button-gap: 8px;
+  border-radius: var(--ss-radius-md);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.s2g .ss-button[data-variant='primary'] {
+  background: linear-gradient(rgb(101 133 255), rgb(70 104 240));
+}
+
+.s2g .ss-button[data-variant='secondary'] {
+  background: var(--ss-raised);
+  box-shadow: inset 0 0 0 1px var(--ss-line-faint);
+}
+
+.s2g .ss-button[data-variant='secondary'][data-hover] {
+  background: rgb(37 39 48);
+}
+
+.s2g .ss-button svg {
+  width: var(--ss-button-icon);
+  height: var(--ss-button-icon);
+}
+
+.s2g-link {
+  color: var(--ss-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.s2g-link--accent {
+  color: var(--ss-accent-text);
+}
+
+/* Screens that replace each other in one place, crossfading with a short rise */
+.s2g-screens {
+  display: grid;
+  height: 100%;
+}
+
+.s2g-screen {
+  grid-area: 1 / 1;
+  min-width: 0;
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  will-change: transform;
+  transition: opacity 0.32s ease, transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.s2g-screen[data-on] {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0.14s;
+  pointer-events: auto;
+}
+
+/* The app's mark: two screens on a gradient tile (src/ui/visuals.rs) */
+.s2g-mark {
+  display: grid;
+  place-items: center;
+  border-radius: 28%;
+  background: linear-gradient(rgb(101 133 255), rgb(70 104 240));
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14), 0 10px 28px rgb(70 104 240 / 0.35);
+}
+
+.s2g-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ss-success);
+  box-shadow: 0 0 0 3px var(--ss-success-soft);
+}

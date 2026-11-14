@@ -1,0 +1,103 @@
+/* The app window pinned top and sides, off the bottom: the screen's content
+   sits in its upper two thirds, the empty foot is what the stage cuts */
+.h2g-win {
+  left: 40px;
+  top: 32px;
+  width: 800px;
+  height: 600px;
+}
+
+.h2g-body {
+  height: calc(100% - 52px);
+}
+
+.h2g-room {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0 auto;
+}
+
+.h2g-wide {
+  align-self: stretch;
+  /* Centered across a wide fill: the icon side pads as much as the words do */
+  --ss-button-pad-icon: 22px;
+}
+
+/* The room: the code is the screen */
+.h2g-room {
+  width: 440px;
+  padding-top: 64px;
+}
+
+.h2g-label {
+  color: var(--ss-text);
+  font-size: 14px;
+}
+
+.h2g-code {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  align-self: stretch;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: var(--ss-radius-lg);
+  background: var(--ss-surface);
+  box-shadow: inset 0 0 0 1px var(--ss-line-faint);
+}
+
+.h2g-code__text {
+  flex: 1;
+  padding-left: 12px;
+  color: var(--ss-text-strong);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.h2g-copy {
+  min-width: 118px;
+}
+
+.h2g-people {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: stretch;
+  margin-top: 22px;
+  padding: 0 4px;
+}
+
+/* A line from you to the partner that fills in when they arrive */
+.h2g-link {
+  width: 28px;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, var(--ss-success) 50%, var(--ss-line) 50%) right / 200% 100%;
+  transition: background-position 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.h2g-link[data-on] {
+  background-position: left;
+}
+
+.h2g-presence {
+  margin-left: 6px;
+  color: var(--ss-text);
+  font-size: 14px;
+  transition: color 0.3s ease;
+}
+
+.h2g-presence[data-on] {
+  color: var(--ss-text-strong);
+}
+
+.h2g-next {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  align-self: stretch;
+  margin-top: 40px;
+}

@@ -83,6 +83,10 @@ timeout 30s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 target/debug/sync2gether --d
 ```
 
 Capturas de revisão e arquivos temporários ficam em `.cache/`, ignorada pelo Git.
+
+O fluxo das telas foi decidido num protótipo React em `prototype/`, com o kit
+Stageshow. Ele roda com `npm install` e `npm run dev` dentro da pasta e serve
+de referência visual; veja `prototype/README.md`.
 As quatro imagens selecionadas para o README fazem parte da documentação em
 `docs/images/`. Foram geradas em CachyOS pela sessão sway headless de
 `scripts/headless.sh`, em 960 × 640, usando os cenários `idle`, `ready` e

@@ -8,7 +8,7 @@ VPN, ou pela rede local.
 [Instalar](#instalação) · [Como funciona](#como-funciona) ·
 [Screenshots](#screenshots) · [Desenvolver](#desenvolvimento)
 
-![Tela inicial do sync2gether no tema escuro, com ações para criar ou entrar em uma sala](docs/images/inicio.png)
+![Tela inicial do sync2gether no tema escuro, com Criar sala e o campo para entrar com um código](docs/images/inicio.png)
 
 *Captura do modo demo offline, com dados fictícios. As imagens desta página
 mostram a interface; não demonstram reprodução ou sincronização real.*
@@ -20,7 +20,7 @@ seu próprio arquivo com libmpv. A conexão envia apenas comandos e informaçõe
 de sincronização, nunca o vídeo.
 
 1. Uma pessoa clica em **Criar sala** e recebe um código como `4821-gato-lua`.
-2. Ela envia o código para a outra pessoa, que o digita em **Entrar em uma sala**.
+2. Ela envia o código para a outra pessoa, que o digita na tela inicial e clica em **Entrar**.
 3. Cada pessoa escolhe sua cópia do filme. O app verifica o conteúdo dos dois
    arquivos; quando ambos estão prontos, qualquer participante pode clicar em
    **Começar a assistir**.
@@ -38,20 +38,20 @@ o convidado sozinho. É possível abrir um filme sozinho.
 ## Instalação
 
 Baixe o pacote para sua distribuição e o arquivo `SHA256SUMS` em
-[Releases](https://github.com/8bury/sync2gether/releases). A versão 0.2.0 tem
+[Releases](https://github.com/8bury/sync2gether/releases). A versão 0.3.0 tem
 pacotes para **Arch Linux atualizado** e **Ubuntu 24.04**, ambos em x86_64.
-As salas pela internet exigem a 0.2.0 nos dois PCs.
+As salas pela internet exigem a 0.2.0 ou mais nova nos dois PCs.
 
 ### Arch Linux
 
 ```sh
-sudo pacman -U ./sync2gether-0.2.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./sync2gether-0.3.0-1-x86_64.pkg.tar.zst
 ```
 
 ### Ubuntu 24.04
 
 ```sh
-sudo apt install ./sync2gether_0.2.0_amd64.deb
+sudo apt install ./sync2gether_0.3.0_amd64.deb
 ```
 
 Os gerenciadores instalam as dependências, incluindo libmpv. Abra
@@ -74,15 +74,16 @@ Todas as capturas abaixo usam os cenários fictícios do modo demo offline.
 
 ### Escolham o filme
 
-Os dois participantes veem os arquivos escolhidos e o resultado da comparação
-de conteúdo antes de começar.
+Os dois arquivos aparecem lado a lado, com o resultado da comparação de
+conteúdo entre eles, antes de começar.
 
-![Preparação no modo demo, com os dois arquivos verificados e a ação Começar a assistir](docs/images/preparacao.png)
+![Etapa Filme no modo demo, com os dois arquivos conferidos lado a lado e a ação Começar a assistir](docs/images/preparacao.png)
 
 ### Assistam juntos
 
 O player reúne a linha do tempo, play/pause, saltos de 10 segundos, volume,
-faixas de áudio, legendas e tela cheia. O botão **Sala** abre os detalhes da sessão.
+faixas de áudio, legendas e tela cheia. O selo da sala, no canto, mostra se a
+outra pessoa está em sincronia e abre os detalhes da sessão.
 
 ![Interface do player no modo demo, com vídeo fictício e controles de reprodução](docs/images/player.png)
 
@@ -145,6 +146,7 @@ bash scripts/check.sh
 | [Diagnóstico](docs/diagnostico.md) | Logs, GDB e travamentos em Wayland |
 | [Pacotes Linux](docs/empacotamento.md) | Builds com Docker e GitHub Actions |
 | [Histórico de validação](docs/validacao.md) | Ambientes e cenários testados nas revisões anteriores |
+| [Notas da versão 0.3.0](docs/releases/v0.3.0.md) | Novo fluxo das telas, validação e limites |
 | [Notas da versão 0.2.0](docs/releases/v0.2.0.md) | Salas pela internet, validação e limites |
 | [Notas da versão 0.1.0](docs/releases/v0.1.0.md) | Pacotes, validação e limites da release |
 

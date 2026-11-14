@@ -1,0 +1,238 @@
+.p2g-win {
+  left: 40px;
+  top: 32px;
+  width: 800px;
+  height: 600px;
+}
+
+.p2g-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 600px;
+  margin: 0 auto;
+  padding-top: 44px;
+}
+
+.p2g-title {
+  color: var(--ss-text-strong);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Two equal copies with a seam between them */
+.p2g-pair {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-self: stretch;
+  margin-top: 24px;
+}
+
+.p2g-copy {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: var(--ss-radius-lg);
+  background: var(--ss-surface);
+  box-shadow: inset 0 0 0 1px var(--ss-line-faint);
+  transition: box-shadow 0.4s ease;
+}
+
+.p2g-copy[data-state='bad'] {
+  box-shadow: inset 0 0 0 1px rgb(244 192 104 / 0.45);
+}
+
+.p2g-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  color: var(--ss-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.p2g-swap {
+  margin-left: auto;
+  transition: opacity 0.3s ease;
+}
+
+.p2g-swap[data-hidden] {
+  opacity: 0;
+}
+
+.p2g-status-lane {
+  flex: 1;
+  min-width: 0;
+}
+
+.p2g-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+}
+
+.p2g-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--ss-radius-md);
+  background: var(--ss-raised);
+  color: var(--ss-icon);
+  transition: color 0.4s ease, background-color 0.4s ease;
+}
+
+.p2g-copy[data-state='ok'] .p2g-icon {
+  background: var(--ss-success-soft);
+  color: var(--ss-success);
+}
+
+.p2g-copy[data-state='bad'] .p2g-icon {
+  background: var(--ss-warning-soft);
+  color: var(--ss-warning);
+}
+
+.p2g-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.p2g-lanes {
+  flex: 1;
+  min-width: 0;
+}
+
+.p2g-lanes > .ss-states {
+  width: 100%;
+}
+
+.p2g-meta {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.p2g-name {
+  overflow: hidden;
+  color: var(--ss-text-strong);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.p2g-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 16px;
+  color: var(--ss-text);
+  font-size: 12.5px;
+}
+
+.p2g-size {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.p2g-size[data-bad] {
+  color: var(--ss-warning-text);
+  font-weight: 600;
+}
+
+.p2g-status {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.p2g-status--ok {
+  color: var(--ss-success-text);
+}
+
+.p2g-status--bad {
+  color: var(--ss-warning-text);
+}
+
+.p2g-meter {
+  flex: 1;
+  max-width: 120px;
+}
+
+.p2g-pct {
+  width: 32px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The comparison's mark sits on the seam, over both card edges */
+.p2g-seam {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  border-radius: 50%;
+  background: var(--ss-raised);
+  box-shadow: 0 0 0 5px var(--ss-canvas), inset 0 0 0 1px var(--ss-line-faint);
+  color: var(--ss-text);
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+.p2g-seam[data-compare='same'] {
+  background: var(--ss-success);
+  color: rgb(13 14 18);
+}
+
+.p2g-seam[data-compare='different'] {
+  background: var(--ss-warning);
+  color: rgb(13 14 18);
+}
+
+.p2g-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ss-text-faint);
+}
+
+.p2g-note {
+  align-self: stretch;
+  margin-top: 18px;
+  color: var(--ss-text);
+  font-size: 13.5px;
+  line-height: 1.45;
+  text-align: center;
+  transition: color 0.3s ease;
+}
+
+.p2g-note > .ss-states {
+  width: 100%;
+}
+
+.p2g-note[data-compare='different'] {
+  color: var(--ss-warning-text);
+}
+
+.p2g-main {
+  width: 320px;
+  margin-top: 20px;
+  --ss-button-pad-icon: 22px;
+}
+
+/* Not yet: the button still says what comes next, in readable gray */
+.s2g .p2g-main[data-off] {
+  background: var(--ss-surface);
+  box-shadow: inset 0 0 0 1px var(--ss-line-faint);
+  color: var(--ss-text);
+}

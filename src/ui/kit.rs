@@ -74,6 +74,8 @@ pub(crate) enum Glyph {
     Info,
     People,
     Spinner,
+    /// Pasta aberta: escolher um arquivo.
+    Folder,
 }
 
 const GLYPH: f32 = 16.0;
@@ -202,7 +204,8 @@ impl<'a> Button<'a> {
         let painter = ui.painter();
         let (text_color, glyph_color) = match self.kind {
             Kind::Primary if enabled || self.busy => (Color32::WHITE, Color32::WHITE),
-            Kind::Primary | Kind::Secondary if !enabled => (colors.faint, colors.faint),
+            // Desativado, o botão ainda diz o que falta: o texto continua legível.
+            Kind::Primary | Kind::Secondary if !enabled => (colors.muted, colors.faint),
             Kind::Primary | Kind::Secondary => (colors.text, colors.accent),
             Kind::Ghost if !enabled => (colors.faint, colors.faint),
             Kind::Ghost => {
@@ -653,6 +656,20 @@ pub(crate) fn draw(
                     Stroke::new(stroke.width, col),
                 ));
             }
+        }
+        Glyph::Folder => {
+            painter.add(Shape::closed_line(
+                vec![
+                    p(-7.0, -5.5),
+                    p(-2.5, -5.5),
+                    p(-0.5, -3.5),
+                    p(6.0, -3.5),
+                    p(6.0, 5.5),
+                    p(-7.0, 5.5),
+                ],
+                stroke,
+            ));
+            painter.line_segment([p(-7.0, -0.5), p(6.0, -0.5)], stroke);
         }
         Glyph::Spinner => {
             let start = (time * 5.0) as f32;

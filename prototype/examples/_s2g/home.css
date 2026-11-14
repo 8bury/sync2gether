@@ -1,0 +1,97 @@
+.s2g-home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 380px;
+  margin: 0 auto;
+  padding-top: 56px;
+}
+
+.s2g-home__title {
+  margin-top: 20px;
+  color: var(--ss-text-strong);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.s2g-home__sub {
+  margin: 8px 0 28px;
+  color: var(--ss-text);
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.s2g-home__wide {
+  align-self: stretch;
+  --ss-button-pad-icon: 22px;
+}
+
+.s2g-home__or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  align-self: stretch;
+  margin: 22px 0 14px;
+  color: var(--ss-text-faint);
+  font-size: 12.5px;
+}
+
+.s2g-home__or::before,
+.s2g-home__or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--ss-line-faint);
+}
+
+.s2g-home__join {
+  display: flex;
+  gap: 8px;
+  align-self: stretch;
+}
+
+.s2g-home__field {
+  flex: 1;
+}
+
+.s2g .s2g-home__field .ss-field__box {
+  border-radius: var(--ss-radius-md);
+  background: var(--ss-chrome);
+}
+
+.s2g .s2g-home__enter {
+  width: 116px;
+  --ss-button-pad-icon: 18px;
+}
+
+.s2g-home__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.s2g-home__label {
+  height: 18px;
+}
+
+.s2g-home__label svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* One line under the field, always there, so an error never moves the page */
+.s2g-home__lane {
+  align-self: stretch;
+  height: 18px;
+  margin-top: 8px;
+  padding-left: 2px;
+  color: var(--ss-danger-text);
+  font-size: 12.5px;
+}
+
+.s2g-home__solo {
+  margin-top: 14px;
+}

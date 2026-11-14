@@ -1,0 +1,10 @@
+.g2g-win {
+  left: 40px;
+  top: 32px;
+  width: 800px;
+  height: 600px;
+}
+
+.g2g-body {
+  height: calc(100% - 52px);
+}

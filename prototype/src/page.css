@@ -1,0 +1,57 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: rgb(9 9 12);
+  color: rgb(240 242 247);
+}
+
+.pg {
+  display: grid;
+  gap: 56px;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 16px 96px;
+}
+
+.pg-intro h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+}
+
+.pg-intro p,
+.pg-scene p {
+  margin: 0;
+  color: rgb(150 155 170);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.pg-scene header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.pg-scene h2 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.pg-scene button {
+  flex: none;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid rgb(60 63 76);
+  border-radius: 8px;
+  background: rgb(29 31 38);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}

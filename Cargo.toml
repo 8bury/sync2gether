@@ -1,6 +1,6 @@
 [package]
 name = "sync2gether"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.98"
 description = "Assista a filmes locais em sincronia com outra pessoa pela internet ou rede local"

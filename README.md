@@ -38,20 +38,21 @@ o convidado sozinho. É possível abrir um filme sozinho.
 ## Instalação
 
 Baixe o pacote para sua distribuição e o arquivo `SHA256SUMS` em
-[Releases](https://github.com/8bury/sync2gether/releases). A versão 0.3.0 tem
+[Releases](https://github.com/8bury/sync2gether/releases). A versão 0.4.0 tem
 pacotes para **Arch Linux atualizado** e **Ubuntu 24.04**, ambos em x86_64.
-As salas pela internet exigem a 0.2.0 ou mais nova nos dois PCs.
+As salas pela internet no relay padrão (TLS) exigem a 0.4.0 ou mais nova nos
+dois PCs.
 
 ### Arch Linux
 
 ```sh
-sudo pacman -U ./sync2gether-0.3.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./sync2gether-0.4.0-1-x86_64.pkg.tar.zst
 ```
 
 ### Ubuntu 24.04
 
 ```sh
-sudo apt install ./sync2gether_0.3.0_amd64.deb
+sudo apt install ./sync2gether_0.4.0_amd64.deb
 ```
 
 Os gerenciadores instalam as dependências, incluindo libmpv. Abra
@@ -146,6 +147,7 @@ bash scripts/check.sh
 | [Diagnóstico](docs/diagnostico.md) | Logs, GDB e travamentos em Wayland |
 | [Pacotes Linux](docs/empacotamento.md) | Builds com Docker e GitHub Actions |
 | [Histórico de validação](docs/validacao.md) | Ambientes e cenários testados nas revisões anteriores |
+| [Notas da versão 0.4.0](docs/releases/v0.4.0.md) | TLS no transporte do relay, modularização e validação |
 | [Notas da versão 0.3.0](docs/releases/v0.3.0.md) | Novo fluxo das telas, validação e limites |
 | [Notas da versão 0.2.0](docs/releases/v0.2.0.md) | Salas pela internet, validação e limites |
 | [Notas da versão 0.1.0](docs/releases/v0.1.0.md) | Pacotes, validação e limites da release |

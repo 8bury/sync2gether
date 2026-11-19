@@ -89,13 +89,19 @@ vídeo, GPU ou sincronização entre PCs.
   os candidatos por TCP, em segundo plano.
 - `network/rooms.rs` implementa descoberta, aprovação limitada a uma vaga e
   tokens internos para reconexão. As tarefas de conexão terminam ao fechar a sala.
-- `network/relay.rs` implementa as salas pela internet: código da sala, conexão
-  de controle do anfitrião, entradas por conexões de dados e reconexão.
+- `network/relay.rs` implementa as salas pela internet: transporte TLS via
+  `tokio-rustls`/`rustls` (`ring` e `webpki-roots`), esquemas `tls://` e
+  `tcp://` (TLS por padrão em nomes públicos, TCP puro em IPs literais e
+  `localhost`, sem downgrade silencioso), código da sala, conexão de controle
+  do anfitrião, entradas por conexões de dados e reconexão.
 - `network/secure.rs` deriva a chave do código com SPAKE2 e abre o canal Noise
   cifrado. As mensagens da sala passam pelos mesmos traços `Inbound`/`Outbound`
   usados pelo TCP aberto, então sessão e sincronização não mudam.
 - `relay/` é um crate separado no workspace, com o servidor e o protocolo de
-  controle. Depende só de Tokio e Serde e não conhece as mensagens da sala.
+  controle. Depende de Tokio, Serde e `tokio-rustls`/`rustls` (`ring`), aceita
+  TLS nativo opcional (`--tls-cert`/`--tls-key` ou
+  `RELAY_TLS_CERT`/`RELAY_TLS_KEY`) ou TCP puro atrás de proxy TLS, e não
+  conhece as mensagens da sala.
 - `network.rs` implementa TCP com mensagens enquadradas, limite de tamanho,
   autenticação da sala, timeout de heartbeat e reconexão.
 - `protocol.rs` define as mensagens Serde e a versão do protocolo.
@@ -110,14 +116,17 @@ vídeo, GPU ou sincronização entre PCs.
 
 ### Salas pela internet
 
-O anfitrião mantém uma conexão de controle com o relay. Cada entrada chega
+As conexões com o relay usam TLS por padrão para nomes públicos (nativo no
+`sync2gether-relay` ou terminado em proxy TCP como Traefik/Caddy), protegendo o
+canal de controle, o número da sala e o segredo de 128 bits do anfitrião. O
+anfitrião mantém uma conexão de controle com o relay. Cada entrada chega
 como um aviso nessa conexão; o anfitrião abre uma conexão de dados própria e
 o relay junta as duas, passando a repassar bytes. Assim o lado do anfitrião se
 comporta como um `accept` de TCP, e cada reconexão do convidado é uma nova
-conexão de dados. Na conexão pareada, o convidado envia SPAKE2 (primeira
-entrada) ou pedido de retomada, e os dois fazem o handshake Noise antes de
-qualquer mensagem da sala. Formato, limites e garantias estão em
-[Salas pela internet e relay](relay.md).
+conexão de dados. Na conexão pareada, dentro do transporte TLS, o convidado
+envia SPAKE2 (primeira entrada) ou pedido de retomada, e os dois fazem o
+handshake Noise antes de qualquer mensagem da sala. Formato, limites e
+garantias estão em [Salas pela internet e relay](relay.md).
 
 O relógio filtrado mede o RTT através do relay, então a margem do início
 agendado já inclui o desvio geográfico. O teste MVP pelo relay usa

@@ -5,7 +5,7 @@ use std::{
 use sync2gether::{
     network::{
         self, Event,
-        relay::{Code, MAX_WRONG_CODES},
+        relay::{ClientTls, Code, MAX_WRONG_CODES},
     },
     protocol::{Control, Message},
 };
@@ -345,6 +345,216 @@ async fn leaving_host_closes_the_room_for_new_entries() {
     ));
     assert!(rejected(&mut guest_rx).await.contains("Não há sala"));
     guest.abort();
+}
+
+struct TestPki {
+    ca_pem: Vec<u8>,
+    cert_pem: Vec<u8>,
+    key_pem: Vec<u8>,
+}
+
+fn generate_pki(sans: &[&str]) -> TestPki {
+    let mut ca_params = rcgen::CertificateParams::default();
+    ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![
+        rcgen::KeyUsagePurpose::KeyCertSign,
+        rcgen::KeyUsagePurpose::CrlSign,
+    ];
+    let ca_key = rcgen::KeyPair::generate().unwrap();
+    let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+    let issuer = rcgen::Issuer::new(ca_params, ca_key);
+
+    let leaf_params =
+        rcgen::CertificateParams::new(sans.iter().map(|san| (*san).to_owned()).collect::<Vec<_>>())
+            .unwrap();
+    let leaf_key = rcgen::KeyPair::generate().unwrap();
+    let leaf_cert = leaf_params.signed_by(&leaf_key, &issuer).unwrap();
+
+    TestPki {
+        ca_pem: ca_cert.pem().into_bytes(),
+        cert_pem: leaf_cert.pem().into_bytes(),
+        key_pem: leaf_key.serialize_pem().into_bytes(),
+    }
+}
+
+fn start_tls_relay(address: SocketAddr, cert_pem: &[u8], key_pem: &[u8]) -> Relay {
+    let acceptor = sync2gether_relay::tls::acceptor_from_pem(cert_pem, key_pem).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let listener = std::net::TcpListener::bind(address).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    runtime.spawn(async move {
+        let listener = TcpListener::from_std(listener).unwrap();
+        sync2gether_relay::serve_tls(listener, Limits::default(), acceptor).await
+    });
+    Relay(Some(runtime))
+}
+
+#[tokio::test]
+async fn tls_room_exchanges_encrypted_messages_and_survives_dropped_link_and_restart() {
+    let pki = generate_pki(&["127.0.0.1", "localhost"]);
+    let client_tls = ClientTls::from_pem(&pki.ca_pem).unwrap();
+    let relay = free_address();
+    let first = start_tls_relay(relay, &pki.cert_pem, &pki.key_pem);
+
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host_with_tls(
+        format!("tls://{relay}"),
+        client_tls.clone(),
+        host_tx,
+        Instant::now(),
+    ));
+    let code = room_code(&mut host_rx).await;
+    let parsed = Code::parse(&code).expect("código no formato documentado");
+
+    let link = Link::new(relay).await;
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest_with_tls(
+        format!("tls://{}", link.address),
+        parsed,
+        client_tls,
+        guest_tx,
+        Instant::now(),
+    ));
+    let (host_out, guest_name) = connected(&mut host_rx).await;
+    let (guest_out, host_name) = connected(&mut guest_rx).await;
+    let local = sync2gether::discovery::local_name();
+    assert_eq!(guest_name.as_deref(), Some(local.as_str()));
+    assert_eq!(host_name.as_deref(), Some(local.as_str()));
+    for n in 0..10 {
+        exchanged(&guest_out, &mut host_rx, n as f64).await;
+        exchanged(&host_out, &mut guest_rx, n as f64 + 0.5).await;
+    }
+
+    link.cut().await;
+    let (host_out, _) = connected(&mut host_rx).await;
+    let (guest_out, _) = connected(&mut guest_rx).await;
+    exchanged(&guest_out, &mut host_rx, 42.0).await;
+    exchanged(&host_out, &mut guest_rx, 43.0).await;
+
+    first.stop();
+    let _second = start_tls_relay(relay, &pki.cert_pem, &pki.key_pem);
+    let mut offline = false;
+    loop {
+        match next(&mut host_rx).await {
+            Event::RelayOffline => offline = true,
+            Event::RoomCode(again) => {
+                assert_eq!(again, code, "o número da sala mudou após o reinício TLS");
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(offline);
+    let (host_out, _) = connected(&mut host_rx).await;
+    let (guest_out, _) = connected(&mut guest_rx).await;
+    exchanged(&guest_out, &mut host_rx, 77.0).await;
+    exchanged(&host_out, &mut guest_rx, 78.0).await;
+    host.abort();
+    guest.abort();
+}
+
+#[tokio::test]
+async fn tls_rejects_untrusted_certificate_and_wrong_hostname_without_downgrade() {
+    let valid_pki = generate_pki(&["127.0.0.1", "localhost"]);
+    let untrusted_relay = free_address();
+    let _untrusted_server =
+        start_tls_relay(untrusted_relay, &valid_pki.cert_pem, &valid_pki.key_pem);
+
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host(
+        format!("tls://{untrusted_relay}"),
+        host_tx,
+        Instant::now(),
+    ));
+    assert!(rejected(&mut host_rx).await.contains("certificado"));
+    host.abort();
+
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest(
+        format!("tls://{untrusted_relay}"),
+        Code::parse("4821-gato-lua").unwrap(),
+        guest_tx,
+        Instant::now(),
+    ));
+    assert!(rejected(&mut guest_rx).await.contains("certificado"));
+    guest.abort();
+
+    let wrong_host_pki = generate_pki(&["outro-relay.exemplo.invalid"]);
+    let wrong_host_tls = ClientTls::from_pem(&wrong_host_pki.ca_pem).unwrap();
+    let wrong_host_relay = free_address();
+    let _wrong_host_server = start_tls_relay(
+        wrong_host_relay,
+        &wrong_host_pki.cert_pem,
+        &wrong_host_pki.key_pem,
+    );
+
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host_with_tls(
+        format!("tls://{wrong_host_relay}"),
+        wrong_host_tls.clone(),
+        host_tx,
+        Instant::now(),
+    ));
+    assert!(rejected(&mut host_rx).await.contains("certificado"));
+    host.abort();
+
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest_with_tls(
+        format!("tls://{wrong_host_relay}"),
+        Code::parse("4821-gato-lua").unwrap(),
+        wrong_host_tls.clone(),
+        guest_tx,
+        Instant::now(),
+    ));
+    assert!(rejected(&mut guest_rx).await.contains("certificado"));
+    guest.abort();
+
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host_with_tls(
+        format!("tls://localhost:{}", wrong_host_relay.port()),
+        wrong_host_tls,
+        host_tx,
+        Instant::now(),
+    ));
+    assert!(rejected(&mut host_rx).await.contains("certificado"));
+    host.abort();
+
+    let plain_relay = free_address();
+    let _plain_server = start_relay(plain_relay);
+
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host_with_tls(
+        format!("tls://{plain_relay}"),
+        ClientTls::from_pem(&valid_pki.ca_pem).unwrap(),
+        host_tx,
+        Instant::now(),
+    ));
+    match next(&mut host_rx).await {
+        Event::RelayOffline => {}
+        Event::RoomCode(_) => panic!("cliente TLS fez downgrade silencioso para TCP puro"),
+        Event::Rejected(_) => {}
+        _ => {}
+    }
+    assert!(
+        timeout(Duration::from_millis(500), host_rx.recv())
+            .await
+            .is_err()
+            || !matches!(host_rx.try_recv(), Ok(Event::RoomCode(_)))
+    );
+    host.abort();
+
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host(
+        format!("tcp://{plain_relay}"),
+        host_tx,
+        Instant::now(),
+    ));
+    let _ = room_code(&mut host_rx).await;
+    host.abort();
 }
 
 #[tokio::test]

@@ -27,8 +27,8 @@ de sincronização, nunca o vídeo.
 4. Play, pause e mudanças de posição acompanham os dois players. Volume,
    áudio e legendas são ajustados separadamente em cada PC.
 
-Pela internet, os dois apps se encontram num [relay](docs/relay.md) que só
-repassa mensagens cifradas de ponta a ponta com uma chave derivada do código.
+Pela internet, os dois apps se conectam com TLS a um [relay](docs/relay.md) que
+só repassa mensagens cifradas de ponta a ponta com uma chave derivada do código.
 Salas na rede local ou VPN, com descoberta e aprovação de entrada, continuam
 disponíveis em **Configurações → Opções avançadas de rede**.
 
@@ -102,7 +102,7 @@ O tema claro fica disponível em **Configurações**, no ícone de engrenagem do
   hash BLAKE3; nomes diferentes são aceitos, mas remuxes e alterações de
   metadados podem tornar os arquivos incompatíveis. A verificação ocorre em
   segundo plano e pode levar algum tempo em arquivos grandes.
-- Pela internet, os dois PCs precisam de conexão TCP de saída para
+- Pela internet, os dois PCs precisam de conexão TLS/TCP de saída para
   `relay.pedrosales.dev:7843`. Não é preciso abrir portas no roteador.
 - Na rede local, a porta padrão da sala é TCP `7842` e a descoberta usa UDP
   `7841`, com multicast e broadcast IPv4. Se a sala não aparecer, use

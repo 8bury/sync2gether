@@ -8,14 +8,26 @@ e como publicá-lo.
 ## Visão geral
 
 Os dois aplicativos abrem conexões de saída para o relay, então funcionam atrás
-de qualquer NAT ou firewall que permita TCP de saída na porta `7843`. O relay
-só pareia as conexões e repassa bytes. O vídeo nunca passa por ele: cada PC
-continua reproduzindo a própria cópia. O tráfego de uma sala é da ordem de
+de qualquer NAT ou firewall que permita TCP/TLS de saída na porta `7843`. O
+relay só pareia as conexões e repassa bytes. O vídeo nunca passa por ele: cada
+PC continua reproduzindo a própria cópia. O tráfego de uma sala é da ordem de
 poucos kB/s.
 
 O relay padrão é `relay.pedrosales.dev:7843`. Outro servidor pode ser
 informado em **Configurações → Opções avançadas de rede**, por `--relay` ou
 pela variável `SYNC2GETHER_RELAY`.
+
+O endereço aceita os esquemas explícitos `tls://host[:porta]` e
+`tcp://host[:porta]`, além de endereços sem esquema:
+
+- **nomes de host públicos** sem esquema (como `relay.pedrosales.dev:7843`)
+  usam **TLS por padrão**;
+- **endereços IP literais** (`127.0.0.1:7843`, `[::1]:7843`) e `localhost` sem
+  esquema usam **TCP puro**, facilitando testes e uso local;
+- `tls://` força TLS (inclusive em IP ou `localhost`) e `tcp://` força TCP puro.
+
+Uma conexão configurada para TLS nunca faz downgrade silencioso para TCP puro
+em caso de erro de certificado ou handshake.
 
 ## Código da sala
 
@@ -29,10 +41,16 @@ A digitação aceita maiúsculas, acentos e espaços no lugar dos hífens.
 
 ## Segurança
 
-- Na primeira entrada, os dois aplicativos executam SPAKE2 (curva Ed25519) com
-  o código completo. O resultado é uma chave de 256 bits. Quem observa ou
-  controla o caminho, inclusive o próprio relay, não aprende o código e só
-  testa um palpite por conexão.
+- O transporte até o relay usa **TLS** (`rustls` com `ring` e raízes
+  `webpki-roots`), autenticando o certificado e o nome do servidor e protegendo
+  em trânsito o canal de controle (`Host`, `Accept`, `Join`, `Alive`), o número
+  da sala e o segredo de 128 bits do anfitrião. Certificados não confiáveis ou
+  com nome incompatível são recusados sem downgrade para TCP puro.
+- Por dentro do transporte, na primeira entrada, os dois aplicativos executam
+  SPAKE2 (curva Ed25519) com o código completo. O resultado é uma chave de 256
+  bits. Quem observa ou controla o caminho, inclusive o próprio relay ou um
+  proxy TLS à frente dele, não aprende o código e só testa um palpite por
+  conexão.
 - Cada conexão faz um handshake Noise `NNpsk0_25519_ChaChaPoly_BLAKE2s` com essa
   chave e chaves efêmeras novas. As mensagens da sala seguem cifradas com
   ChaCha20-Poly1305 e nonces sequenciais: quadros alterados, repetidos ou
@@ -74,8 +92,10 @@ versionadas por `sync2gether_relay::VERSION` (independente do protocolo da sala)
 | Dados do anfitrião | `Accept { room, secret, ticket }` | `Paired` e bytes do convidado |
 | Dados do convidado | `Join { room }` | `Paired` e bytes do anfitrião, ou `Unknown`, `Away`, `Limited` |
 
-O segredo do anfitrião tem 128 bits aleatórios. Sem ele, ninguém assume o
-número nem aceita entradas na sala.
+O segredo do anfitrião tem 128 bits aleatórios e trafega protegido pelo TLS
+entre cliente e relay. Sem ele, ninguém assume o número nem aceita entradas na
+sala. Quando o TLS nativo está ativo no relay, o handshake TLS tem timeout de
+5 s antes do primeiro quadro de controle para evitar esgotamento de vagas.
 
 Limites padrão: 4096 conexões, 32 por IP, 10 000 salas, 8 salas por IP, 4
 entradas pendentes e 2 conexões pareadas por sala, 256 KiB/s por sentido e
@@ -84,29 +104,70 @@ agregados a cada hora, sem números de sala nem endereços.
 
 ## Executar localmente
 
+Sem certificados (TCP puro, padrão para `127.0.0.1` e `localhost`):
+
 ```sh
 cargo run --locked -p sync2gether-relay -- --listen 127.0.0.1:7843
 cargo run --locked -- --internet --relay 127.0.0.1:7843
 cargo run --locked -- --code 4821-gato-lua --relay 127.0.0.1:7843
 ```
 
+Com TLS nativo no relay (`--tls-cert` e `--tls-key`, ou `RELAY_TLS_CERT` e
+`RELAY_TLS_KEY`; informar apenas um dos dois encerra com erro):
+
+```sh
+cargo run --locked -p sync2gether-relay -- \
+  --listen 0.0.0.0:7843 \
+  --tls-cert /caminho/para/fullchain.pem \
+  --tls-key /caminho/para/privkey.pem
+```
+
+Para forçar TLS ou TCP explicitamente no cliente, use `tls://host:7843` ou
+`tcp://host:7843`.
+
 Abrir janelas segue as regras do [guia de desenvolvimento](desenvolvimento.md).
 
 ## Publicar com Docker e Coolify
 
 A imagem usa um binário estático em `FROM scratch`, rodando como usuário sem
-privilégios:
+privilégios (`65534:65534`):
 
 ```sh
 docker build -f relay/Dockerfile -t sync2gether-relay .
-docker run --rm -p 7843:7843 sync2gether-relay
 ```
+
+Há duas formas suportadas de terminar TLS em produção:
+
+1. **TLS nativo no `sync2gether-relay`**: monte os arquivos PEM do certificado
+   e da chave privada no container (legíveis pelo UID `65534`) e configure
+   `RELAY_TLS_CERT` e `RELAY_TLS_KEY` (ou `--tls-cert` / `--tls-key`),
+   publicando a porta `7843:7843`:
+
+   ```sh
+   docker run --rm -p 7843:7843 \
+     -v /etc/certs:/certs:ro \
+     -e RELAY_TLS_CERT=/certs/fullchain.pem \
+     -e RELAY_TLS_KEY=/certs/privkey.pem \
+     sync2gether-relay
+   ```
+
+2. **Proxy com terminação TLS TCP (Coolify / Traefik / Caddy)**: omita
+   `RELAY_TLS_CERT` e `RELAY_TLS_KEY` para que o `sync2gether-relay` escute em
+   TCP puro na rede interna, enquanto o proxy termina TLS na porta `7843`
+   (por exemplo, um router TCP com TLS/ACME no Traefik ou o módulo `layer4`
+   do Caddy) e encaminha o fluxo TCP para o container do relay:
+
+   ```sh
+   docker run --rm -p 127.0.0.1:7843:7843 sync2gether-relay
+   ```
 
 No Coolify, a aplicação usa este repositório com o build pack Dockerfile:
 
 - base directory `/` e Dockerfile `/relay/Dockerfile`;
-- porta publicada `7843:7843`, fora do proxy HTTP, porque o tráfego é TCP puro;
-- sem domínio HTTP e sem health check HTTP.
+- sem proxy HTTP e sem health check HTTP (o protocolo não é HTTP);
+- ou exponha `7843:7843` diretamente com TLS nativo (`RELAY_TLS_CERT` e
+  `RELAY_TLS_KEY`), ou configure um router TCP com terminação TLS (Traefik/Caddy)
+  na porta `7843` apontando para o serviço interno em TCP puro.
 
 O registro DNS do relay precisa apontar direto para o servidor. Com Cloudflare,
 use o modo **somente DNS** (nuvem cinza): o proxy da Cloudflare só repassa HTTP.

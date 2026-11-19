@@ -3,18 +3,20 @@ use std::{
     collections::HashMap,
     io,
     net::IpAddr,
+    pin::Pin,
     sync::{Arc, Mutex},
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::{
-        TcpListener, TcpStream,
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-    },
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
+    net::{TcpListener, TcpStream},
     sync::{mpsc, oneshot},
     time::{sleep, timeout},
 };
+use tokio_rustls::TlsAcceptor;
+
+pub mod tls;
 
 pub const VERSION: u32 = 1;
 pub const PORT: u16 = 7843;
@@ -127,6 +129,51 @@ impl Default for Limits {
     }
 }
 
+enum RelayStream {
+    Plain(TcpStream),
+    Tls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for RelayStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for RelayStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_flush(cx),
+            Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+}
+
 struct Room {
     secret: String,
     owner: IpAddr,
@@ -136,7 +183,7 @@ struct Room {
 }
 struct Ticket {
     room: String,
-    deliver: oneshot::Sender<(TcpStream, Admission)>,
+    deliver: oneshot::Sender<(RelayStream, Admission)>,
 }
 #[derive(Default)]
 struct State {
@@ -149,6 +196,7 @@ struct State {
 }
 struct Server {
     limits: Limits,
+    tls: Option<TlsAcceptor>,
     state: Mutex<State>,
 }
 
@@ -191,8 +239,31 @@ pub async fn serve_with_stats(
     limits: Limits,
     report: impl Fn(Stats) + Send + 'static,
 ) {
+    serve_inner(listener, limits, None, report).await
+}
+
+pub async fn serve_tls(listener: TcpListener, limits: Limits, tls: TlsAcceptor) {
+    serve_tls_with_stats(listener, limits, tls, |_| {}).await
+}
+
+pub async fn serve_tls_with_stats(
+    listener: TcpListener,
+    limits: Limits,
+    tls: TlsAcceptor,
+    report: impl Fn(Stats) + Send + 'static,
+) {
+    serve_inner(listener, limits, Some(tls), report).await
+}
+
+async fn serve_inner(
+    listener: TcpListener,
+    limits: Limits,
+    tls: Option<TlsAcceptor>,
+    report: impl Fn(Stats) + Send + 'static,
+) {
     let server = Arc::new(Server {
         limits,
+        tls,
         state: Mutex::new(State::default()),
     });
     let reporting = server.clone();
@@ -245,13 +316,26 @@ impl Server {
         })
     }
 
-    async fn handle(
+    async fn handle(self: Arc<Self>, tcp: TcpStream, admission: Admission) -> io::Result<()> {
+        self.handle_with_timeout(tcp, admission, FIRST_REQUEST)
+            .await
+    }
+
+    async fn handle_with_timeout(
         self: Arc<Self>,
-        mut stream: TcpStream,
+        tcp: TcpStream,
         admission: Admission,
+        first_request: Duration,
     ) -> io::Result<()> {
-        let _ = stream.set_nodelay(true);
-        let request: Request = timeout(FIRST_REQUEST, read_frame(&mut stream)).await??;
+        let _ = tcp.set_nodelay(true);
+        let mut stream = match &self.tls {
+            Some(acceptor) => {
+                let tls = timeout(first_request, acceptor.accept(tcp)).await??;
+                RelayStream::Tls(Box::new(tls))
+            }
+            None => RelayStream::Plain(tcp),
+        };
+        let request: Request = timeout(first_request, read_frame(&mut stream)).await??;
         let version = match &request {
             Request::Host { version, .. }
             | Request::Accept { version, .. }
@@ -292,12 +376,11 @@ impl Server {
 
     async fn host(
         self: Arc<Self>,
-        stream: TcpStream,
+        mut stream: RelayStream,
         admission: Admission,
         requested: Option<String>,
         secret: String,
     ) -> io::Result<()> {
-        let mut stream = stream;
         if !valid_secret(&secret) || requested.as_deref().is_some_and(|room| !valid_room(room)) {
             return reply(&mut stream, &Reply::Unknown).await;
         }
@@ -366,7 +449,7 @@ impl Server {
         {
             End::Lost
         } else {
-            let (mut reader, mut writer) = stream.into_split();
+            let (mut reader, mut writer) = tokio::io::split(stream);
             let reading = async {
                 loop {
                     match timeout(CONTROL_SILENCE, read_frame::<_, Request>(&mut reader)).await {
@@ -437,7 +520,7 @@ impl Server {
         }
     }
 
-    async fn join(self: Arc<Self>, mut stream: TcpStream, room: String) -> io::Result<()> {
+    async fn join(self: Arc<Self>, mut stream: RelayStream, room: String) -> io::Result<()> {
         if !valid_room(&room) {
             return reply(&mut stream, &Reply::Unknown).await;
         }
@@ -497,8 +580,8 @@ impl Server {
                 existing.pipes += 1;
             }
         }
-        let (guest_read, guest_write) = stream.into_split();
-        let (host_read, host_write) = host.into_split();
+        let (guest_read, guest_write) = tokio::io::split(stream);
+        let (host_read, host_write) = tokio::io::split(host);
         let limits = self.limits.clone();
         tokio::select! {
             _ = pump(guest_read, host_write, &limits) => {}
@@ -517,7 +600,7 @@ impl Server {
 
     async fn accept(
         self: Arc<Self>,
-        mut stream: TcpStream,
+        mut stream: RelayStream,
         admission: Admission,
         room: String,
         secret: String,
@@ -550,11 +633,15 @@ impl Server {
     }
 }
 
-async fn reply(stream: &mut TcpStream, message: &Reply) -> io::Result<()> {
+async fn reply(stream: &mut RelayStream, message: &Reply) -> io::Result<()> {
     timeout(WRITE, write_frame(stream, message)).await?
 }
 
-async fn pump(mut from: OwnedReadHalf, mut to: OwnedWriteHalf, limits: &Limits) -> io::Result<()> {
+async fn pump<R, W>(mut from: R, mut to: W, limits: &Limits) -> io::Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut buffer = vec![0; 16 * 1024];
     let rate = limits.bytes_per_second.max(1) as f64;
     let mut allowance = rate;
@@ -571,7 +658,11 @@ async fn pump(mut from: OwnedReadHalf, mut to: OwnedWriteHalf, limits: &Limits) 
         if allowance < 0.0 {
             sleep(Duration::from_secs_f64(-allowance / rate)).await;
         }
-        timeout(limits.idle, to.write_all(&buffer[..read])).await??;
+        timeout(limits.idle, async {
+            to.write_all(&buffer[..read]).await?;
+            to.flush().await
+        })
+        .await??;
     }
 }
 
@@ -617,5 +708,32 @@ mod tests {
         );
         a.write_u32(MAX_CONTROL as u32 + 1).await.unwrap();
         assert!(read_frame::<_, Request>(&mut b).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn stalled_tls_handshake_times_out_and_releases_connection_slot() {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let acceptor = tls::acceptor_from_pem(
+            cert.cert.pem().as_bytes(),
+            cert.signing_key.serialize_pem().as_bytes(),
+        )
+        .unwrap();
+        let server = Arc::new(Server {
+            limits: Limits::default(),
+            tls: Some(acceptor),
+            state: Mutex::new(State::default()),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _stalled_client = TcpStream::connect(addr).await.unwrap();
+        let (tcp, peer) = listener.accept().await.unwrap();
+        let admission = server.admit(peer.ip().to_canonical()).unwrap();
+        assert_eq!(server.stats().connections, 1);
+        let result = server
+            .clone()
+            .handle_with_timeout(tcp, admission, Duration::from_millis(50))
+            .await;
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert_eq!(server.stats().connections, 0);
     }
 }

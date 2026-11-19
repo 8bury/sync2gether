@@ -2,24 +2,28 @@ use super::{
     Event, exchange,
     secure::{self, Channel, INTRO_PAKE, INTRO_RESUME, Key},
 };
+use rustls::pki_types::{CertificateDer, ServerName};
 use std::{
-    fmt, io,
+    fmt,
+    io::{self, Cursor},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
+    pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU32, Ordering},
     },
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use sync2gether_relay::{self as wire, Reply, Request};
 use tokio::{
-    net::{
-        TcpStream,
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-    },
+    io::{AsyncRead, AsyncWrite, ReadBuf, ReadHalf, WriteHalf},
+    net::TcpStream,
     sync::{Semaphore, mpsc},
     task::JoinSet,
     time::{sleep, timeout},
 };
+use tokio_rustls::TlsConnector;
 
 pub const DEFAULT_RELAY: &str = "relay.pedrosales.dev:7843";
 pub const MAX_WRONG_CODES: u32 = 3;
@@ -29,6 +33,7 @@ const JOIN_REPLY: Duration = Duration::from_secs(15);
 const FIRST_ENTRY: Duration = Duration::from_secs(30);
 const GONE: Duration = Duration::from_secs(45);
 const OUTDATED: &str = "O servidor exige outra versão do sync2gether. Atualize o aplicativo.";
+const TLS_ERROR: &str = "Não foi possível verificar o certificado de segurança do servidor.";
 
 const WORDS: [&str; 256] = [
     "agua", "alho", "amora", "anel", "anjo", "arco", "areia", "arroz", "asa", "aveia", "azul",
@@ -114,43 +119,266 @@ fn fold(c: char) -> char {
     }
 }
 
-pub fn relay_address(input: &str) -> Result<String, String> {
-    let input = input.trim();
-    if input.parse::<std::net::SocketAddr>().is_ok() {
-        return Ok(input.to_owned());
+#[derive(Clone)]
+pub struct ClientTls(Arc<rustls::ClientConfig>);
+
+impl ClientTls {
+    pub fn webpki() -> Self {
+        Self(default_tls_config())
     }
-    let invalid =
-        || "Informe o servidor como nome:porta, por exemplo relay.exemplo.com:7843.".to_owned();
-    let (host, port) = match input.rsplit_once(':') {
-        Some((host, port)) => (
-            host,
-            port.parse::<u16>()
-                .ok()
-                .filter(|port| *port != 0)
-                .ok_or_else(invalid)?,
-        ),
-        None => (input, wire::PORT),
-    };
-    if host.is_empty()
-        || host.len() > 253
-        || host.starts_with(['.', '-'])
-        || !host
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-    {
-        return Err(invalid());
+
+    pub fn from_roots(roots: rustls::RootCertStore) -> io::Result<Self> {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        Ok(Self(Arc::new(config)))
     }
-    Ok(format!("{host}:{port}"))
+
+    pub fn from_pem(ca_pem: &[u8]) -> io::Result<Self> {
+        let mut reader = Cursor::new(ca_pem);
+        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
+            .collect::<Result<_, _>>()
+            .map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Certificado CA inválido: {error}"),
+                )
+            })?;
+        if certs.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Nenhum certificado CA encontrado no PEM",
+            ));
+        }
+        let mut roots = rustls::RootCertStore::empty();
+        let (added, _) = roots.add_parsable_certificates(certs);
+        if added == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Nenhum certificado CA válido encontrado",
+            ));
+        }
+        Self::from_roots(roots)
+    }
 }
 
-async fn connect(relay: &str) -> io::Result<TcpStream> {
-    let stream = timeout(CONNECT, TcpStream::connect(relay)).await??;
+impl Default for ClientTls {
+    fn default() -> Self {
+        Self::webpki()
+    }
+}
+
+fn default_tls_config() -> Arc<rustls::ClientConfig> {
+    static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            Arc::new(
+                rustls::ClientConfig::builder_with_provider(provider)
+                    .with_safe_default_protocol_versions()
+                    .expect("versões TLS padrão")
+                    .with_root_certificates(roots)
+                    .with_no_client_auth(),
+            )
+        })
+        .clone()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Endpoint {
+    host: String,
+    port: u16,
+    tls: bool,
+    scheme: Option<&'static str>,
+}
+
+impl Endpoint {
+    fn parse(input: &str) -> Result<Self, String> {
+        let input = input.trim();
+        let invalid =
+            || "Informe o servidor como nome:porta, por exemplo relay.exemplo.com:7843.".to_owned();
+        let (scheme, rest) = match input.split_once("://") {
+            Some((scheme, rest)) => {
+                let scheme = if scheme.eq_ignore_ascii_case("tls") {
+                    "tls"
+                } else if scheme.eq_ignore_ascii_case("tcp") {
+                    "tcp"
+                } else {
+                    return Err(invalid());
+                };
+                (Some(scheme), rest)
+            }
+            None => (None, input),
+        };
+        let (host, port, is_ip) = if let Ok(addr) = rest.parse::<SocketAddr>() {
+            if addr.port() == 0 {
+                return Err(invalid());
+            }
+            (addr.ip().to_string(), addr.port(), true)
+        } else if let Ok(ip) = rest.parse::<IpAddr>() {
+            (ip.to_string(), wire::PORT, true)
+        } else if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            let ip = inner.parse::<Ipv6Addr>().map_err(|_| invalid())?;
+            (ip.to_string(), wire::PORT, true)
+        } else {
+            let (host, port) = match rest.rsplit_once(':') {
+                Some((host, port)) => (
+                    host,
+                    port.parse::<u16>()
+                        .ok()
+                        .filter(|port| *port != 0)
+                        .ok_or_else(invalid)?,
+                ),
+                None => (rest, wire::PORT),
+            };
+            if host.is_empty()
+                || host.len() > 253
+                || host.starts_with(['.', '-'])
+                || !host
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+                || ServerName::try_from(host.to_owned()).is_err()
+            {
+                return Err(invalid());
+            }
+            (host.to_owned(), port, false)
+        };
+        let is_localhost = host.trim_end_matches('.').eq_ignore_ascii_case("localhost");
+        let tls = match scheme {
+            Some("tls") => true,
+            Some("tcp") => false,
+            _ => !is_ip && !is_localhost,
+        };
+        Ok(Self {
+            host,
+            port,
+            tls,
+            scheme,
+        })
+    }
+
+    fn authority(&self) -> String {
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+
+    fn canonical(&self) -> String {
+        let authority = self.authority();
+        match self.scheme {
+            Some(scheme) => format!("{scheme}://{authority}"),
+            None => authority,
+        }
+    }
+
+    fn server_name(&self) -> io::Result<ServerName<'static>> {
+        ServerName::try_from(self.host.clone()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "Nome de servidor TLS inválido")
+        })
+    }
+}
+
+pub fn relay_address(input: &str) -> Result<String, String> {
+    Endpoint::parse(input).map(|endpoint| endpoint.canonical())
+}
+
+enum RelayStream {
+    Plain(TcpStream),
+    Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for RelayStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for RelayStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_flush(cx),
+            Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+}
+
+enum ConnectError {
+    Certificate,
+    Transient,
+}
+
+fn is_certificate_error(error: &io::Error) -> bool {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = error
+        .get_ref()
+        .map(|err| err as &(dyn std::error::Error + 'static));
+    while let Some(err) = current {
+        if matches!(
+            err.downcast_ref::<rustls::Error>(),
+            Some(rustls::Error::InvalidCertificate(_))
+        ) {
+            return true;
+        }
+        current = err.source();
+    }
+    false
+}
+
+async fn connect(endpoint: &Endpoint, tls: &ClientTls) -> Result<RelayStream, ConnectError> {
+    let addr = endpoint.authority();
+    let stream = timeout(CONNECT, TcpStream::connect(&addr))
+        .await
+        .map_err(|_| ConnectError::Transient)?
+        .map_err(|_| ConnectError::Transient)?;
     let _ = stream.set_nodelay(true);
-    Ok(stream)
+    if !endpoint.tls {
+        return Ok(RelayStream::Plain(stream));
+    }
+    let name = endpoint
+        .server_name()
+        .map_err(|_| ConnectError::Certificate)?;
+    let connector = TlsConnector::from(tls.0.clone());
+    match timeout(CONNECT, connector.connect(name, stream)).await {
+        Ok(Ok(stream)) => Ok(RelayStream::Tls(Box::new(stream))),
+        Ok(Err(error)) if is_certificate_error(&error) => Err(ConnectError::Certificate),
+        Ok(Err(_)) | Err(_) => Err(ConnectError::Transient),
+    }
 }
 
 struct Host {
-    relay: String,
+    endpoint: Endpoint,
+    tls: ClientTls,
     secret: String,
     words: [&'static str; 2],
     name: String,
@@ -161,15 +389,32 @@ struct Host {
     wrong: AtomicU32,
 }
 enum Opened {
-    Room(TcpStream, String),
+    Room(RelayStream, String),
     Taken,
     Retry,
     Fatal(String),
 }
 
 pub async fn host(relay: String, events: mpsc::Sender<Event>, origin: Instant) {
+    host_with_tls(relay, ClientTls::webpki(), events, origin).await
+}
+
+pub async fn host_with_tls(
+    relay: String,
+    tls: ClientTls,
+    events: mpsc::Sender<Event>,
+    origin: Instant,
+) {
+    let endpoint = match Endpoint::parse(&relay) {
+        Ok(endpoint) => endpoint,
+        Err(error) => {
+            let _ = events.send(Event::Rejected(error)).await;
+            return;
+        }
+    };
     let host = Arc::new(Host {
-        relay,
+        endpoint,
+        tls,
         secret: format!("{:032x}", rand::random::<u128>()),
         words: random_words(),
         name: crate::discovery::local_name(),
@@ -220,8 +465,12 @@ pub async fn host(relay: String, events: mpsc::Sender<Event>, origin: Instant) {
 }
 
 async fn open(host: &Host, room: Option<&str>) -> Opened {
+    let mut stream = match connect(&host.endpoint, &host.tls).await {
+        Ok(stream) => stream,
+        Err(ConnectError::Certificate) => return Opened::Fatal(TLS_ERROR.into()),
+        Err(ConnectError::Transient) => return Opened::Retry,
+    };
     let result = async {
-        let mut stream = connect(&host.relay).await?;
         wire::write_frame(
             &mut stream,
             &Request::Host {
@@ -245,8 +494,8 @@ async fn open(host: &Host, room: Option<&str>) -> Opened {
     }
 }
 
-async fn control(stream: TcpStream, host: &Arc<Host>, room: &str, tasks: &mut JoinSet<()>) {
-    let (mut reader, mut writer) = stream.into_split();
+async fn control(stream: RelayStream, host: &Arc<Host>, room: &str, tasks: &mut JoinSet<()>) {
+    let (mut reader, mut writer) = tokio::io::split(stream);
     let (tickets, mut incoming) = mpsc::channel(8);
     let reading = async move {
         loop {
@@ -295,7 +544,9 @@ async fn control(stream: TcpStream, host: &Arc<Host>, room: &str, tasks: &mut Jo
 }
 
 async fn admit(host: &Host, room: &str, ticket: u64) -> io::Result<()> {
-    let mut stream = connect(&host.relay).await?;
+    let mut stream = connect(&host.endpoint, &host.tls)
+        .await
+        .map_err(|_| io::Error::other("Falha ao conectar ao servidor"))?;
     wire::write_frame(
         &mut stream,
         &Request::Accept {
@@ -313,7 +564,7 @@ async fn admit(host: &Host, room: &str, ticket: u64) -> io::Result<()> {
     let Ok(_slot) = host.slot.clone().try_acquire_owned() else {
         return Ok(());
     };
-    let (mut reader, mut writer) = stream.into_split();
+    let (mut reader, mut writer) = tokio::io::split(stream);
     let intro = timeout(STEP, secure::read_frame(&mut reader)).await??;
     let (psk, pake) = match intro.split_first() {
         Some((&INTRO_PAKE, message)) => {
@@ -370,6 +621,7 @@ enum Failure {
     WrongKey,
     Outdated,
     Limited,
+    Certificate,
     Retry,
 }
 fn retry<T>(_: T) -> Failure {
@@ -377,12 +629,16 @@ fn retry<T>(_: T) -> Failure {
 }
 
 async fn enter(
-    relay: &str,
+    endpoint: &Endpoint,
+    tls: &ClientTls,
     code: &Code,
     resume: Option<&Key>,
     name: &str,
-) -> Result<(Key, Channel<OwnedReadHalf, OwnedWriteHalf>), Failure> {
-    let mut stream = connect(relay).await.map_err(retry)?;
+) -> Result<(Key, Channel<ReadHalf<RelayStream>, WriteHalf<RelayStream>>), Failure> {
+    let mut stream = connect(endpoint, tls).await.map_err(|error| match error {
+        ConnectError::Certificate => Failure::Certificate,
+        ConnectError::Transient => Failure::Retry,
+    })?;
     wire::write_frame(
         &mut stream,
         &Request::Join {
@@ -404,7 +660,7 @@ async fn enter(
         Reply::Outdated { .. } => return Err(Failure::Outdated),
         _ => return Err(Failure::Retry),
     }
-    let (mut reader, mut writer) = stream.into_split();
+    let (mut reader, mut writer) = tokio::io::split(stream);
     let key = match resume {
         Some(key) => {
             secure::write_frame(&mut writer, &[INTRO_RESUME])
@@ -439,10 +695,27 @@ async fn enter(
 }
 
 pub async fn guest(relay: String, code: Code, events: mpsc::Sender<Event>, origin: Instant) {
+    guest_with_tls(relay, code, ClientTls::webpki(), events, origin).await
+}
+
+pub async fn guest_with_tls(
+    relay: String,
+    code: Code,
+    tls: ClientTls,
+    events: mpsc::Sender<Event>,
+    origin: Instant,
+) {
+    let endpoint = match Endpoint::parse(&relay) {
+        Ok(endpoint) => endpoint,
+        Err(error) => {
+            let _ = events.send(Event::Rejected(error)).await;
+            return;
+        }
+    };
     let name = crate::discovery::local_name();
     let started = Instant::now();
     let key = loop {
-        match enter(&relay, &code, None, &name).await {
+        match enter(&endpoint, &tls, &code, None, &name).await {
             Ok((key, channel)) => {
                 let _ = events.send(Event::PeerName(channel.peer)).await;
                 exchange(channel.reader, channel.writer, &events, origin).await;
@@ -460,6 +733,7 @@ pub async fn guest(relay: String, code: Code, events: mpsc::Sender<Event>, origi
                     Failure::Limited => {
                         Some("O servidor está ocupado. Tente de novo em alguns minutos.")
                     }
+                    Failure::Certificate => Some(TLS_ERROR),
                     Failure::Away | Failure::Retry if started.elapsed() > FIRST_ENTRY => Some(
                         "Não foi possível falar com o anfitrião. Confira a internet e se a sala continua aberta.",
                     ),
@@ -476,7 +750,7 @@ pub async fn guest(relay: String, code: Code, events: mpsc::Sender<Event>, origi
     let mut gone: Option<Instant> = None;
     loop {
         sleep(Duration::from_secs(1)).await;
-        match enter(&relay, &code, Some(&key), &name).await {
+        match enter(&endpoint, &tls, &code, Some(&key), &name).await {
             Ok((_, channel)) => {
                 gone = None;
                 let _ = events.send(Event::PeerName(channel.peer)).await;
@@ -492,6 +766,10 @@ pub async fn guest(relay: String, code: Code, events: mpsc::Sender<Event>, origi
             }
             Err(Failure::Outdated) => {
                 let _ = events.send(Event::Rejected(OUTDATED.into())).await;
+                return;
+            }
+            Err(Failure::Certificate) => {
+                let _ = events.send(Event::Rejected(TLS_ERROR.into())).await;
                 return;
             }
             Err(Failure::Unknown) if gone.get_or_insert_with(Instant::now).elapsed() > GONE => {
@@ -567,7 +845,35 @@ mod tests {
         );
         assert_eq!(relay_address("10.0.0.2").unwrap(), "10.0.0.2:7843");
         assert_eq!(relay_address("[::1]:7843").unwrap(), "[::1]:7843");
+        assert_eq!(relay_address("[::1]").unwrap(), "[::1]:7843");
+        assert_eq!(relay_address("::1").unwrap(), "[::1]:7843");
+        assert_eq!(relay_address("localhost").unwrap(), "localhost:7843");
         assert_eq!(relay_address(DEFAULT_RELAY).unwrap(), DEFAULT_RELAY);
+        assert_eq!(
+            relay_address("tls://relay.example.com").unwrap(),
+            "tls://relay.example.com:7843"
+        );
+        assert_eq!(
+            relay_address("TLS://relay.example.com:9443").unwrap(),
+            "tls://relay.example.com:9443"
+        );
+        assert_eq!(
+            relay_address("tls://127.0.0.1:7843").unwrap(),
+            "tls://127.0.0.1:7843"
+        );
+        assert_eq!(relay_address("tls://[::1]").unwrap(), "tls://[::1]:7843");
+        assert_eq!(
+            relay_address("tcp://relay.example.com").unwrap(),
+            "tcp://relay.example.com:7843"
+        );
+        assert_eq!(
+            relay_address("TCP://relay.example.com:9000").unwrap(),
+            "tcp://relay.example.com:9000"
+        );
+        assert_eq!(
+            relay_address("tcp://127.0.0.1:7843").unwrap(),
+            "tcp://127.0.0.1:7843"
+        );
         for invalid in [
             "",
             "relay:0",
@@ -575,8 +881,59 @@ mod tests {
             "re lay",
             "-relay",
             "relay/x:7843",
+            "127.0.0.1:0",
+            "[::1]:0",
+            "http://relay.example.com:7843",
+            "https://relay.example.com:7843",
+            "://relay.example.com:7843",
+            "tls://",
+            "tcp://",
+            "tls://relay:0",
+            "tcp://127.0.0.1:0",
+            "tls://relay.example.com/path",
+            "relay..example.com:7843",
         ] {
-            assert!(relay_address(invalid).is_err(), "{invalid}");
+            let error = relay_address(invalid).expect_err(invalid);
+            assert!(error.contains("Informe o servidor"), "{invalid}: {error}");
         }
+    }
+
+    #[test]
+    fn bare_hostnames_default_to_tls_while_ips_and_localhost_default_to_tcp() {
+        for tls_input in [
+            DEFAULT_RELAY,
+            "relay.pedrosales.dev",
+            "relay.example.com:9443",
+            "tls://relay.example.com",
+            "tls://localhost:7843",
+            "tls://127.0.0.1:7843",
+            "tls://[::1]:7843",
+        ] {
+            assert!(Endpoint::parse(tls_input).unwrap().tls, "{tls_input}");
+        }
+        for tcp_input in [
+            "127.0.0.1:7843",
+            "127.0.0.1",
+            "10.0.0.2",
+            "[::1]:7843",
+            "[::1]",
+            "::1",
+            "localhost",
+            "LOCALHOST:7843",
+            "localhost.:7843",
+            "tcp://relay.pedrosales.dev:7843",
+            "tcp://relay.example.com",
+            "tcp://127.0.0.1:7843",
+        ] {
+            assert!(!Endpoint::parse(tcp_input).unwrap().tls, "{tcp_input}");
+        }
+    }
+
+    #[test]
+    fn client_tls_rejects_empty_or_invalid_pem() {
+        assert!(ClientTls::from_pem(b"").is_err());
+        assert!(ClientTls::from_pem(b"not a cert").is_err());
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        assert!(ClientTls::from_pem(cert.cert.pem().as_bytes()).is_ok());
     }
 }

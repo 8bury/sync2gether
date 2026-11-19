@@ -24,6 +24,8 @@ image = { version = "0.25", optional = true, default-features = false, features 
 libloading = "0.9.0"
 rand = "0.10.3"
 rfd = "0.17.2"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2.2.0"
 snow = "0.10.0"
 spake2 = "0.4.0"
 sync2gether-relay = { path = "relay" }
@@ -31,6 +33,11 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 socket2 = { version = "0.6", features = ["all"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "sync", "time", "io-util", "macros"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1.0.12"
+
+[dev-dependencies]
+rcgen = "0.14.10"
 
 [features]
 default = []

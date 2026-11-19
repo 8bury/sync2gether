@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-import subprocess
 import sys
 from pathlib import Path
+
+SOURCE_DIRS = ("src", "relay/src", "tests", "examples")
 
 
 def comments(src):
@@ -91,9 +92,12 @@ def strip(src, spans):
 
 def main():
     fix = "--fix" in sys.argv[1:]
-    files = subprocess.run(
-        ["git", "ls-files", "*.rs"], capture_output=True, text=True, check=True
-    ).stdout.split()
+    files = sorted(
+        path.as_posix()
+        for root in SOURCE_DIRS
+        if Path(root).is_dir()
+        for path in Path(root).rglob("*.rs")
+    )
     found = False
     for name in files:
         path = Path(name)

@@ -73,9 +73,14 @@ vídeo, GPU ou sincronização entre PCs.
   `player/gl.rs` renderiza no contexto OpenGL do eframe, sem executar comandos
   síncronos de reprodução. `player/tracks.rs` copia a lista de faixas do mpv.
 - `player_ui.rs` desenha os controles sobre o vídeo e devolve comandos à aplicação.
-- `ui/entry.rs` desenha início, lista de salas e espera de conexão ou aprovação,
-  sem I/O. `ui.rs` escolhe a etapa usando os estados confirmados pelo runtime;
-  a aprovação leva o convidado à preparação dos arquivos.
+- `ui.rs` coordena o estado das telas (`Screen`, `Inputs`) e o fluxo principal
+  com os dados do runtime; a aprovação leva o convidado à preparação dos arquivos.
+  `ui/theme.rs` reúne paleta, tema e componentes compartilhados; `ui/settings.rs`
+  desenha o cabeçalho, o progresso de etapas e o menu de configurações;
+  `ui/room.rs` desenha o painel da sala, confirmação de saída e detalhes da
+  conexão; `ui/demo.rs` monta a barra e os estados fictícios do modo demo.
+  `ui/entry.rs` desenha início, lista de salas e espera de conexão ou aprovação,
+  sem I/O.
 - `ui/preparation.rs` reúne os arquivos locais e remotos numa lista, com menus
   de nome completo e cópia. Seleção, cancelamento da verificação, aprovação e
   início continuam retornando comandos ao runtime; a UI não lê mídia.
@@ -96,8 +101,12 @@ vídeo, GPU ou sincronização entre PCs.
 - `protocol.rs` define as mensagens Serde e a versão do protocolo.
 - `session.rs` ordena comandos no anfitrião e controla prontidão e pausa.
 - `sync.rs` estima a diferença entre relógios por ping e calcula correções.
-- `runtime.rs` conecta esses módulos por comandos e eventos. A UI só apresenta
-  os dados e devolve ações.
+- `runtime.rs` define a interface pública (`Runtime`, `Command`, `View`) e o
+  loop principal do worker, dividido entre `runtime/rooms.rs` (salas, descoberta
+  e eventos de rede), `runtime/files.rs` (seleção e verificação de arquivos),
+  `runtime/sync.rs` (controle de reprodução, snapshots e correção de desvio) e
+  `runtime/view.rs` (projeção do estado para a UI). A UI só apresenta os dados e
+  devolve ações.
 
 ### Salas pela internet
 

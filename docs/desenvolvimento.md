@@ -104,7 +104,8 @@ Execute as mesmas verificações usadas no CI:
 bash scripts/check.sh
 ```
 
-O script verifica formatação, Clippy, testes e documentação, incluindo a
+O script verifica formatação, comentários, limite de tamanho dos arquivos de
+código (`scripts/check-file-size.py`), Clippy, testes e documentação, incluindo a
 feature `demo`. O teste de layout exercita a tela inicial e todos os cenários em três dimensões
 de janela e nos temas claro e escuro, com e sem a feature `demo`. O CI está configurado para Ubuntu 24.04
 e um container Arch Linux. No Ubuntu, também captura a janela demo usando Xvfb.

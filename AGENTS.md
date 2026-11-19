@@ -18,10 +18,12 @@ funcionalidades reais.
 - `src/main.rs`: argumentos e inicialização da janela.
 - `src/app.rs`: estado da aplicação e aplicação das ações após desenhar a tela.
 - `src/model.rs`: estados da sessão e ações da interface.
-- `src/ui.rs`: desenho das telas. Retorna ações, sem realizar I/O.
+- `src/ui.rs` e `src/ui/`: desenho das telas, tema, cabeçalho/configurações, painel
+  da sala e cenários demo. Retorna ações, sem realizar I/O.
 - `src/demo.rs`: cenários fictícios e captura de screenshots, apenas com a
   feature `demo`.
-- `src/runtime.rs`: comandos/eventos entre UI e trabalho em segundo plano.
+- `src/runtime.rs` e `src/runtime/`: comandos/eventos entre UI e trabalho em
+  segundo plano (salas, arquivos, sincronização e projeção da `View`).
 - `src/player.rs`: FFI libmpv e thread de controle.
 - `src/player/gl.rs`: renderização no contexto OpenGL da janela.
 - `src/player_ui.rs`: controles sobre o vídeo, sem I/O.
@@ -66,6 +68,9 @@ O teste de layout não verifica áudio, vídeo, GPU ou sincronização real.
 O código Rust não tem comentários: nomes, tipos e testes expressam a
 intenção. A única exceção é `// SAFETY:` em blocos `unsafe`, exigido pelo
 clippy. `scripts/check-comments.py` verifica isso e `--fix` remove os demais.
+`scripts/check-file-size.py` limita o tamanho dos arquivos em `src/` e
+`relay/src/` (desconsiderando blocos `#[cfg(test)] mod tests`) para evitar
+módulos monolíticos.
 
 Antes de concluir mudanças de código, execute `bash scripts/check.sh`. Acrescente
 testes para comportamentos que podem regredir, especialmente sincronização,

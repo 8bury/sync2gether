@@ -1,5 +1,3 @@
-//! Reprodução local, salas sincronizadas e cenários offline do sync2gether.
-
 pub mod app;
 #[cfg(feature = "demo")]
 pub mod demo;

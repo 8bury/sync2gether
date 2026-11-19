@@ -1,4 +1,3 @@
-//! Integração real libmpv/TCP. Execute com scripts/test-mvp.sh.
 use std::{
     path::PathBuf,
     sync::{
@@ -42,13 +41,6 @@ fn wait(runtime: &Runtime, predicate: impl Fn(&View) -> bool) -> View {
 fn send(runtime: &Runtime, command: Command) {
     runtime.commands.blocking_send(command).unwrap();
 }
-/// Abre um arquivo em cada player, um de cada vez.
-///
-/// Os testes rodam dois libmpv no mesmo processo; o app tem um só. Nos
-/// containers Arch, onde o mpv tenta o PipeWire antes do PulseAudio, os dois
-/// iniciando o áudio no mesmo instante às vezes deixavam um deles sem terminar
-/// de carregar. Carregar em sequência evita essa disputa sem mudar o que é
-/// testado depois.
 fn open_both(host: &Runtime, host_file: PathBuf, guest: &Runtime, guest_file: PathBuf) {
     send(host, Command::OpenPath(host_file));
     wait(host, |v| v.player.loaded);
@@ -58,7 +50,6 @@ fn open_both(host: &Runtime, host_file: PathBuf, guest: &Runtime, guest_file: Pa
 fn shutdown(mut runtime: Runtime) {
     runtime.shutdown();
     runtime.shutdown();
-    // O retorno deve ocorrer depois de liberar o player e fechar os eventos.
     while runtime.views.try_recv().is_ok() {}
     assert!(matches!(
         runtime.views.try_recv(),
@@ -151,14 +142,11 @@ fn two_players_sync_mismatch_disconnect_and_resume() {
     shutdown(guest);
 }
 
-/// Enlace simulado entre os dois apps. A ordem é preservada, como no TCP.
 #[derive(Clone)]
 struct Link {
-    /// Atraso por direção: `min_ms` mais um jitter de até `jitter_ms`.
     min_ms: u64,
     jitter_ms: u64,
     hold_prepared: Arc<AtomicBool>,
-    /// Retém tudo nas duas direções, como uma retransmissão após perda.
     stalled: Arc<AtomicBool>,
 }
 impl Link {
@@ -172,8 +160,6 @@ impl Link {
     }
 }
 
-/// Cada mensagem sai `atraso` depois de chegar, nunca antes da anterior. O
-/// atraso não se acumula entre mensagens, então o enlace suporta qualquer taxa.
 async fn delayed_forward<R, W>(mut read: R, mut write: W, link: Link, mut seed: u64)
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -186,7 +172,6 @@ where
     let receive = async move {
         let mut release = Instant::now();
         while let Ok(message) = read_message(&mut read).await {
-            // Gerador congruente: jitter determinístico e sem viés por direção.
             seed = seed
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
@@ -214,7 +199,6 @@ where
     tokio::select! { _ = receive => {}, _ = deliver => {} }
 }
 
-/// Proxy TCP sem privilégios na frente do anfitrião. Aceita reconexões.
 fn proxy(
     io: &tokio::runtime::Runtime,
     host: std::net::SocketAddr,
@@ -262,7 +246,6 @@ fn schedules_two_real_players_under_network_delay_and_jitter() {
     wait(&host, |v| v.ready);
     wait(&guest, |v| v.ready);
     send(&guest, Command::Control(Control::Play));
-    // Captura a fase agendada: nenhum player deve tocar antes do seu deadline.
     let scheduled = wait(&host, |v| v.scheduled);
     assert!(scheduled.player.paused);
     let h = wait(&host, |v| v.last_start_id.is_some());
@@ -293,8 +276,6 @@ fn schedules_two_real_players_under_network_delay_and_jitter() {
     });
     let g2 = wait(&guest, |v| v.last_start_id == h2.last_start_id);
     assert!((h2.last_start_ms.unwrap() - g2.last_start_ms.unwrap()).abs() < 100.0);
-    // Retém Prepared para observar a preparação entre views de 200 ms.
-    // Depois da pausa, entrega a confirmação atrasada e verifica que não reinicia.
     hold_prepared.store(true, Ordering::SeqCst);
     send(&guest, Command::Control(Control::Seek(10.0)));
     wait(&host, |v| v.preparing);
@@ -315,7 +296,6 @@ fn schedules_two_real_players_under_network_delay_and_jitter() {
     proxy.abort();
 }
 
-/// Consome as views até `until`, exigindo `holds` em cada uma delas.
 #[track_caller]
 fn hold(runtime: &Runtime, holds: impl Fn(&View) -> bool, until: impl Fn(&View) -> bool) -> View {
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -339,9 +319,6 @@ fn hold(runtime: &Runtime, holds: impl Fn(&View) -> bool, until: impl Fn(&View) 
     panic!("condition timed out");
 }
 
-/// Inglaterra e Brasil por um relay na Alemanha: cerca de 120 ms por direção.
-/// Uma retenção curta não pode interromper o filme; a perda do enlace pausa os
-/// dois lados e a sala volta a ficar pronta depois da reconexão.
 #[test]
 #[ignore = "requer libmpv e vídeo sintético gerado por scripts/test-mvp.sh"]
 fn intercontinental_delay_survives_stalls_and_pauses_when_the_link_is_lost() {
@@ -374,7 +351,6 @@ fn intercontinental_delay_survives_stalls_and_pauses_when_the_link_is_lost() {
     wait(&host, |v| !v.player.paused && v.player.position > 1.0);
     wait(&guest, |v| !v.player.paused && v.player.position > 1.0);
 
-    // Dois segundos sem tráfego, como retransmissões seguidas numa rota longa.
     stalled.store(true, Ordering::SeqCst);
     std::thread::sleep(Duration::from_secs(2));
     stalled.store(false, Ordering::SeqCst);
@@ -397,7 +373,6 @@ fn intercontinental_delay_survives_stalls_and_pauses_when_the_link_is_lost() {
         g.peer_drift.unwrap() * 1000.0
     );
 
-    // Sem tráfego além do limite do heartbeat, os dois lados pausam.
     stalled.store(true, Ordering::SeqCst);
     wait(&guest, |v| !v.connected && v.player.paused);
     stalled.store(false, Ordering::SeqCst);
@@ -516,7 +491,6 @@ fn automatic_host_and_live_discovery_work_without_a_vpn() {
     shutdown(guest);
 }
 
-/// Atrasa bytes opacos, como o tráfego cifrado pelo relay, preservando a ordem.
 async fn delayed_bytes<R, W>(mut read: R, mut write: W, min_ms: u64, jitter_ms: u64, mut seed: u64)
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -566,7 +540,6 @@ fn internet_room_syncs_two_real_players_through_the_relay_with_intercontinental_
         listener,
         sync2gether_relay::Limits::default(),
     ));
-    // Convidado a ~110 ms do relay em cada sentido, como Brasil–Alemanha.
     let entry = io
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .unwrap();

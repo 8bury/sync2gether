@@ -1,5 +1,3 @@
-//! A API render do mpv roda somente com o contexto GL da janela corrente.
-//! Nenhum comando síncrono de controle é executado nesta thread.
 use super::{Core, Event, Param};
 use crate::diagnostics::{self, Stage};
 use eframe::{
@@ -79,7 +77,9 @@ unsafe extern "C" fn wake(data: *mut c_void) {
 unsafe extern "C" fn get_proc_address(data: *mut c_void, name: *const c_char) -> *mut c_void {
     // SAFETY: o Box com o loader e o nome C vivem durante as chamadas de libmpv.
     let loader = unsafe { &*data.cast::<ProcAddress>() };
-    loader(unsafe { CStr::from_ptr(name) }).cast_mut()
+    // SAFETY: libmpv passa um nome terminado em NUL, válido durante a chamada.
+    let name = unsafe { CStr::from_ptr(name) };
+    loader(name).cast_mut()
 }
 struct Target {
     fbo: glow::Framebuffer,
@@ -98,8 +98,6 @@ struct State {
     failed: bool,
     destroyed: bool,
 }
-/// Renderiza direto na GPU. Liberar com `destroy` em `eframe::App::on_exit`.
-/// Criação, pintura e liberação usam exclusivamente a thread GL do eframe.
 pub struct GlRenderer {
     state: Arc<Mutex<State>>,
 }
@@ -139,8 +137,6 @@ impl GlRenderer {
             bridge,
         ))
     }
-    /// Inicializa o mpv com GL corrente, mesmo nas telas sem área de vídeo.
-    /// Não renderiza frames nem cria um framebuffer para o filme.
     pub fn prepare(&self, ui: &egui::Ui) {
         let state = self.state.clone();
         ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
@@ -190,10 +186,6 @@ impl State {
             get_proc_address,
             ctx: (&mut *self.loader as *mut ProcAddress).cast(),
         };
-        // eframe pode suspender a pintura de janelas ocultas/minimizadas.
-        // ADVANCED_CONTROL exige atender update mesmo sem frames; habilitá-lo
-        // aqui pode bloquear o core enquanto não houver callback de pintura.
-        // O padrão mantém a decodificação independente das atualizações GL.
         let mut params = [
             Param::new(1, c"opengl".as_ptr().cast_mut()),
             Param::new(2, &mut init),
@@ -216,6 +208,7 @@ impl State {
             ));
             return;
         }
+        // SAFETY: contexto recém-criado; o Box de Wake vive até destroy remover o callback.
         unsafe {
             (api.callback)(context, Some(wake), (&mut *self.wake as *mut Wake).cast());
         }
@@ -244,7 +237,7 @@ impl State {
                 let _ = events.try_send(Event::Unavailable(error));
             }
         }
-        // egui restaura programa/VAO/blend depois do callback; o destino é nosso.
+        // SAFETY: GL corrente na thread de pintura; destination veio do próprio egui.
         unsafe {
             self.gl.bind_framebuffer(glow::FRAMEBUFFER, destination);
         }
@@ -255,6 +248,7 @@ impl State {
         info: egui::PaintCallbackInfo,
         destination: Option<glow::Framebuffer>,
     ) -> Result<(), String> {
+        // SAFETY: o chamador garante GL corrente; os objetos GL usados pertencem a self.
         unsafe {
             let resized = self.target.as_ref().is_none_or(|t| t.size != size);
             if resized {
@@ -311,7 +305,6 @@ impl State {
                     return Err("Erro ao renderizar o vídeo por OpenGL".into());
                 }
             }
-            // Mantém a imagem na GPU entre frames e reapresenta ao desenhar menus.
             diagnostics::mark(Stage::GlBlit);
             self.gl
                 .bind_framebuffer(glow::READ_FRAMEBUFFER, Some(target.fbo));
@@ -343,6 +336,7 @@ impl State {
     }
     unsafe fn free_target(&mut self) {
         if let Some(target) = self.target.take() {
+            // SAFETY: GL corrente garantido pelo chamador; o alvo saiu de self e não é reutilizado.
             unsafe {
                 self.gl.delete_renderbuffer(target.color);
                 self.gl.delete_framebuffer(target.fbo);
@@ -371,7 +365,7 @@ impl State {
     }
 }
 unsafe fn reset_gl(gl: &glow::Context) {
-    // Estado padrão exigido por render_gl.h. egui restaura o próprio estado depois.
+    // SAFETY: o chamador garante GL corrente; só altera estado global do contexto.
     unsafe {
         gl.disable(glow::SCISSOR_TEST);
         gl.disable(glow::BLEND);

@@ -1,8 +1,3 @@
-//! Salas pela internet. O anfitrião mantém uma conexão de controle com o relay
-//! e aceita cada entrada numa conexão de dados própria, cifrada por `secure`.
-//!
-//! O código da sala tem o número atribuído pelo relay e duas palavras sorteadas
-//! pelo anfitrião. As palavras nunca saem deste computador: só entram no SPAKE2.
 use super::{
     Event, exchange,
     secure::{self, Channel, INTRO_PAKE, INTRO_RESUME, Key},
@@ -26,21 +21,15 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-/// Relay usado quando nenhum outro é configurado.
 pub const DEFAULT_RELAY: &str = "relay.pedrosales.dev:7843";
-/// Tentativas com código errado antes de o anfitrião fechar a sala.
 pub const MAX_WRONG_CODES: u32 = 3;
 const CONNECT: Duration = Duration::from_secs(5);
 const STEP: Duration = Duration::from_secs(10);
-/// O relay espera até 10 s o anfitrião aceitar a entrada antes de responder.
 const JOIN_REPLY: Duration = Duration::from_secs(15);
-/// Tempo máximo da primeira entrada enquanto o anfitrião não responde.
 const FIRST_ENTRY: Duration = Duration::from_secs(30);
-/// Depois de um reinício do relay, o anfitrião leva alguns segundos para retomar a sala.
 const GONE: Duration = Duration::from_secs(45);
 const OUTDATED: &str = "O servidor exige outra versão do sync2gether. Atualize o aplicativo.";
 
-/// Palavras curtas, sem acentos e distintas entre si.
 const WORDS: [&str; 256] = [
     "agua", "alho", "amora", "anel", "anjo", "arco", "areia", "arroz", "asa", "aveia", "azul",
     "bala", "balde", "banco", "barco", "bico", "bolo", "bola", "bota", "brisa", "cabra", "cacau",
@@ -69,7 +58,6 @@ const WORDS: [&str; 256] = [
     "galho", "girassol", "iogurte", "lagarto", "lagoa", "marfim",
 ];
 
-/// Código completo da sala, como `4821-gato-lua`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Code {
     room: String,
@@ -83,7 +71,6 @@ impl Code {
             words: random_words(),
         }
     }
-    /// Aceita maiúsculas, acentos e espaços no lugar dos hífens.
     pub fn parse(input: &str) -> Option<Self> {
         let folded: String = input.trim().chars().map(fold).collect();
         let parts: Vec<&str> = folded
@@ -127,7 +114,6 @@ fn fold(c: char) -> char {
     }
 }
 
-/// Normaliza `nome[:porta]` ou `IP:porta`; sem porta, usa a do relay.
 pub fn relay_address(input: &str) -> Result<String, String> {
     let input = input.trim();
     if input.parse::<std::net::SocketAddr>().is_ok() {
@@ -170,9 +156,7 @@ struct Host {
     name: String,
     events: mpsc::Sender<Event>,
     origin: Instant,
-    /// Uma pessoa por vez, como na rede local.
     slot: Arc<Semaphore>,
-    /// Chave da última entrada confirmada, usada nas reconexões.
     key: Mutex<Option<Key>>,
     wrong: AtomicU32,
 }
@@ -183,7 +167,6 @@ enum Opened {
     Fatal(String),
 }
 
-/// Abre a sala no relay e a mantém, reconectando e retomando o mesmo número.
 pub async fn host(relay: String, events: mpsc::Sender<Event>, origin: Instant) {
     let host = Arc::new(Host {
         relay,
@@ -197,7 +180,6 @@ pub async fn host(relay: String, events: mpsc::Sender<Event>, origin: Instant) {
         wrong: AtomicU32::new(0),
     });
     let mut room: Option<String> = None;
-    // Entradas continuam ativas enquanto a conexão de controle é refeita.
     let mut tasks = JoinSet::new();
     let mut backoff = Duration::from_secs(1);
     loop {
@@ -312,7 +294,6 @@ async fn control(stream: TcpStream, host: &Arc<Host>, room: &str, tasks: &mut Jo
     tokio::select! { _ = reading => {}, _ = writing => {}, _ = accepting => {} }
 }
 
-/// Aceita uma entrada anunciada pelo relay e conduz a sala por ela.
 async fn admit(host: &Host, room: &str, ticket: u64) -> io::Result<()> {
     let mut stream = connect(&host.relay).await?;
     wire::write_frame(
@@ -349,7 +330,6 @@ async fn admit(host: &Host, room: &str, ticket: u64) -> io::Result<()> {
             secure::write_frame(&mut writer, &answer).await?;
             (secure::pake_finish(state, message)?, true)
         }
-        // Sem entrada confirmada, a chave aleatória faz o handshake recusar a retomada.
         Some((&INTRO_RESUME, [])) => (
             host.key.lock().unwrap().unwrap_or_else(rand::random::<Key>),
             false,
@@ -458,7 +438,6 @@ async fn enter(
     }
 }
 
-/// Entra com o código e depois reconecta sozinho com a chave da sala.
 pub async fn guest(relay: String, code: Code, events: mpsc::Sender<Event>, origin: Instant) {
     let name = crate::discovery::local_name();
     let started = Instant::now();

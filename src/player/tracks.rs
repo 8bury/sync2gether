@@ -1,4 +1,3 @@
-//! Leitura da lista de faixas via MPV_FORMAT_NODE, com cópia dos textos públicos.
 use super::Api;
 use std::ffi::{CStr, c_char, c_int, c_void};
 

@@ -1,4 +1,3 @@
-//! Estado da janela. Ações são aplicadas depois do desenho.
 use crate::{
     diagnostics::{self, Stage},
     model::{Action, SessionState},
@@ -48,7 +47,6 @@ impl App {
     pub fn with_commands(commands: Vec<crate::runtime::Command>) -> Self {
         Self::default().queue_commands(commands)
     }
-    /// Relay das salas pela internet, de `--relay` ou `SYNC2GETHER_RELAY`.
     pub fn with_relay(mut self, relay: String) -> Self {
         self.inputs.relay = relay;
         self

@@ -1,4 +1,3 @@
-//! Protocolo de sala, sem caminhos locais ou conteúdo do vídeo.
 use serde::{Deserialize, Serialize};
 
 pub const VERSION: u32 = 4;
@@ -11,7 +10,6 @@ pub struct Media {
     pub bytes: u64,
 }
 
-/// Metadados de apresentação da sala, separados da identidade do conteúdo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verification {
     pub bytes: u64,
@@ -39,7 +37,6 @@ pub fn valid_file_name(name: &str) -> bool {
         })
 }
 
-/// Posição medida no instante host_ms do relógio monotônico do anfitrião.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Playback {
     pub position: f64,
@@ -111,7 +108,6 @@ impl Control {
     }
 }
 
-/// Preparação é confirmada por operação. start_at_ms só existe após ambos prontos.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transition {
     pub id: u64,

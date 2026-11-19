@@ -1,4 +1,3 @@
-//! Descoberta IPv4 por multicast e broadcast, sem depender de um provedor de VPN.
 use crate::{network, protocol::VERSION};
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -52,7 +51,6 @@ struct Announcement {
     port: u16,
     available: bool,
 }
-/// Socket e interfaces são criados apenas no trabalho em segundo plano.
 pub struct Lan {
     receiver: UdpSocket,
     senders: Vec<(UdpSocket, Option<Ipv4Addr>)>,
@@ -71,7 +69,6 @@ impl Lan {
             .collect::<Vec<_>>();
         Self::on_interfaces(DISCOVERY_PORT, &interfaces)
     }
-    /// Permite isolar portas e interfaces nos testes de sockets reais.
     pub fn on_interfaces(
         port: u16,
         interfaces: &[(Ipv4Addr, Option<Ipv4Addr>)],
@@ -84,7 +81,6 @@ impl Lan {
         socket.set_nonblocking(true)?;
         let mut senders = Vec::new();
         for &(ip, broadcast) in interfaces {
-            // Algumas redes virtuais aceitam broadcast sem multicast.
             let _ = socket.join_multicast_v4(&GROUP, &ip);
             let sender = (|| -> io::Result<UdpSocket> {
                 let sender = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -190,7 +186,6 @@ impl Lan {
             .collect()
     }
 }
-/// Somente respostas válidas do sync2gether viram salas, sem carregar mídias.
 pub async fn find_rooms(peers: Vec<Room>) -> Vec<Room> {
     let mut peers = peers.into_iter();
     let mut tasks = JoinSet::new();

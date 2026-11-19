@@ -63,6 +63,10 @@ Para revisar a interface, use os cenários do modo demo. Nunca use filmes ou
 arquivos pessoais como fixtures. Capturas vão em `.cache/`, fora do Git.
 O teste de layout não verifica áudio, vídeo, GPU ou sincronização real.
 
+O código Rust não tem comentários: nomes, tipos e testes expressam a
+intenção. A única exceção é `// SAFETY:` em blocos `unsafe`, exigido pelo
+clippy. `scripts/check-comments.py` verifica isso e `--fix` remove os demais.
+
 Antes de concluir mudanças de código, execute `bash scripts/check.sh`. Acrescente
 testes para comportamentos que podem regredir, especialmente sincronização,
 reconexão e comandos simultâneos quando esses recursos existirem. Não enfraqueça

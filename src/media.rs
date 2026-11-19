@@ -1,4 +1,3 @@
-//! Identidade do arquivo calculada fora da UI, sem expor o caminho à rede.
 use crate::protocol::Media;
 use std::{
     fs::File,
@@ -10,7 +9,6 @@ pub fn identify(path: &Path) -> io::Result<Media> {
     identify_with_progress(path, |_, _| Ok(()))
 }
 
-/// O callback permite cancelar entre blocos; nenhuma leitura passa pela UI.
 pub fn identify_with_progress(
     path: &Path,
     mut progress: impl FnMut(u64, u64) -> io::Result<()>,
@@ -46,7 +44,6 @@ pub fn identify_with_progress(
     })
 }
 
-/// Compartilha apenas o nome escolhido, nunca os diretórios.
 pub fn display_name(path: &Path) -> String {
     let raw = path.file_name().unwrap_or_default().to_string_lossy();
     let mut name = String::new();

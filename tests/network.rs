@@ -1,4 +1,3 @@
-//! Dois clientes TCP reais em localhost, sem Tailscale ou vídeos pessoais.
 use std::time::{Duration, Instant};
 use sync2gether::{
     network::{self, Event},
@@ -185,7 +184,6 @@ async fn heartbeat_timeout_detects_a_silent_peer() {
     let silence = Instant::now();
     let event = timeout(network::SILENCE_TIMEOUT + Duration::from_secs(2), rx.recv()).await;
     assert!(matches!(event, Ok(Some(Event::Disconnected))));
-    // Uma retenção curta da rede não derruba a sala.
     assert!(silence.elapsed() >= network::SILENCE_TIMEOUT);
     host.abort();
 }
@@ -301,7 +299,6 @@ async fn discovered_rooms_require_approval_and_reconnect_with_private_tokens() {
     drop(stream);
     assert!(matches!(next(&mut rx).await, Event::Disconnected));
     drop(keep);
-    // Um token inventado nunca abre a sessão.
     let mut unauthorized = TcpStream::connect(address).await.unwrap();
     network::write_message(
         &mut unauthorized,
@@ -383,7 +380,6 @@ async fn approved_guest_reconnects_without_another_approval() {
     drop(host_out);
     assert!(matches!(next(&mut rx).await, Event::Disconnected));
     assert!(matches!(next(&mut guest_rx).await, Event::Disconnected));
-    // connected() ignoraria pedidos: verifique que o primeiro evento já é a conexão.
     assert!(matches!(next(&mut rx).await, Event::Connected(_)));
     assert!(matches!(next(&mut guest_rx).await, Event::Connected(_)));
     host.abort();

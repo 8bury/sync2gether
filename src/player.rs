@@ -1,5 +1,3 @@
-//! libmpv carregada em execução. Controle separado do renderizador da janela.
-//! A FFI abaixo segue client.h e render.h, ABI libmpv >= 2.
 pub(crate) mod gl;
 pub use gl::GlRenderer;
 mod tracks;
@@ -235,7 +233,6 @@ fn renderer(
         let changed = Arc::new(AtomicBool::new(true));
         (api.callback)(context, Some(wake), Arc::as_ptr(&changed).cast_mut().cast());
         let _ = ready.send(Ok(()));
-        // u32 garante o alinhamento exigido por rgb0.
         let mut pixels = vec![0_u32; WIDTH * HEIGHT];
         while !stop.load(Ordering::Acquire) {
             if changed.swap(false, Ordering::AcqRel) && (api.update)(context) & 1 != 0 {
@@ -267,7 +264,6 @@ fn renderer(
     }
 }
 
-// O último proprietário libera o core somente depois de liberar o renderer.
 struct Core {
     api: Arc<Api>,
     handle: usize,
@@ -371,24 +367,21 @@ fn run(
             }
         }
         if gl.is_none() {
-            // Os testes por software usam dois players em runners pequenos.
-            // Evita que cada decoder crie threads para todos os CPUs do host.
-            // A janela mantém o paralelismo automático do libmpv.
             // SAFETY: opção C estática, handle válido e ainda não inicializado.
             if unsafe { (api.option)(handle, c"vd-lavc-threads".as_ptr(), c"2".as_ptr()) } < 0 {
                 return Err("Erro de configuração do decoder por software".into());
             }
         }
-        // libmpv 0.37, API 2.2 do Ubuntu 24.04, produziu vídeo preto com
-        // rgba16f em Mesa/llvmpipe. RGBA16 inteiro passou pelos mesmos testes.
-        // APIs novas continuam usando a escolha automática do mpv.
-        // SAFETY: função sem argumentos e opção C estática; core não inicializado.
+        // SAFETY: função sem argumentos, sem estado compartilhado.
+        let old_render_api = unsafe { (api.version)() } < ((2 << 16) | 3);
         if gl.is_some()
-            && unsafe { (api.version)() } < ((2 << 16) | 3)
+            && old_render_api
+            // SAFETY: opção C estática, handle válido e ainda não inicializado.
             && unsafe { (api.option)(handle, c"fbo-format".as_ptr(), c"rgba16".as_ptr()) } < 0
         {
             return Err("Erro de configuração do framebuffer compatível".into());
         }
+        // SAFETY: handle criado por mpv_create e inicializado uma única vez.
         if unsafe { (api.initialize)(handle) } < 0 {
             return Err("Erro ao inicializar libmpv".into());
         }
@@ -518,6 +511,7 @@ fn run(
                     loaded = true;
                 }
                 if event.id == 7 && !event.data.is_null() {
+                    // SAFETY: MPV_EVENT_END_FILE traz mpv_event_end_file, válido até o próximo wait.
                     let end = unsafe { &*event.data.cast::<EndFile>() };
                     if end.error < 0 {
                         loaded = false;

@@ -1,4 +1,3 @@
-//! Início, entrada por código, descoberta e solicitação de entrada. Apenas retorna comandos.
 use super::{
     Inputs, Palette, Screen, card, feedback, kit, quiet, secondary, strong, title, visuals,
 };
@@ -13,7 +12,6 @@ pub(super) fn home(
     inputs: &mut Inputs,
     actions: &mut Vec<Command>,
 ) {
-    // Entrando com um código: o início continua na tela, com o progresso no botão.
     let joining = inputs.joining && view.role == crate::runtime::Role::Guest && !view.connected;
     let compact = ui.available_height() < 400.0;
     ui.vertical_centered(|ui| {
@@ -40,7 +38,6 @@ pub(super) fn home(
             );
         }
         ui.add_space(if compact { 6.0 } else { 18.0 });
-        // Erros da sala recém-criada; os do código aparecem na linha do campo.
         if !inputs.code_entry {
             feedback(ui, view);
         }
@@ -122,7 +119,6 @@ pub(super) fn home(
     });
 }
 
-/// Linha fina com um rótulo no meio, separando as duas formas de começar.
 fn divider(ui: &mut egui::Ui, colors: Palette, text: &str) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
@@ -142,8 +138,6 @@ fn divider(ui: &mut egui::Ui, colors: Palette, text: &str) {
         .galley(rect.center() - galley.size() * 0.5, galley, colors.faint);
 }
 
-/// Campo do código e botão Entrar. O resultado da tentativa fica na linha
-/// abaixo do campo, que sempre existe, para nada se mover quando ele chega.
 fn code_entry(
     ui: &mut egui::Ui,
     colors: Palette,
@@ -209,10 +203,8 @@ fn code_entry(
             .inner
         });
         let field = field.inner;
-        // Valide após desenhar o campo para aceitar a edição e Enter no mesmo frame.
         let valid = crate::network::relay::Code::parse(&inputs.code).is_some();
         if field.changed() {
-            // Editar o código apaga o erro da tentativa anterior.
             inputs.code_edited = true;
         }
         if button.enabled(valid && !joining).show(ui, colors).clicked()
@@ -407,7 +399,6 @@ pub(super) fn browse(
                         )
                         .labelled_by(address_label.id)
                         .on_hover_text("Endereço do anfitrião: IP ou IP:porta");
-                    // Valide após desenhar o campo para aceitar a edição e Enter no mesmo frame.
                     let valid = crate::runtime::parse_address(&inputs.address).is_ok();
                     let button = if wide { button } else { button.fill_width(ui) };
                     if button.enabled(valid).show(ui, colors).clicked()
@@ -588,7 +579,6 @@ pub(super) fn connecting(
     });
 }
 
-/// Etapa confirmada (marcada) ou em andamento (indicador animado).
 fn step(ui: &mut egui::Ui, colors: Palette, done: bool, text: &str) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;

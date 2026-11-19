@@ -1,25 +1,16 @@
-//! Componentes desenhados da interface: botões, ícones e indicadores.
-//!
-//! Tudo aqui apenas pinta e devolve `Response`; nenhuma função realiza I/O.
 use super::{Palette, strong};
 use eframe::egui::{
     self, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, Vec2, epaint, vec2,
 };
 
-/// Estilo visual de um botão.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
-    /// Ação principal da tela, com preenchimento em gradiente.
     Primary,
-    /// Ação alternativa, com superfície e borda.
     Secondary,
-    /// Ação discreta, apenas texto com fundo ao passar o mouse.
     Ghost,
-    /// Ação textual na cor de destaque.
     Link,
 }
 
-/// Altura do botão.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Size {
     Large,
@@ -58,7 +49,6 @@ impl Size {
     }
 }
 
-/// Ícones vetoriais simples, desenhados sem imagens.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Glyph {
     Plus,
@@ -74,14 +64,12 @@ pub(crate) enum Glyph {
     Info,
     People,
     Spinner,
-    /// Pasta aberta: escolher um arquivo.
     Folder,
 }
 
 const GLYPH: f32 = 16.0;
 const GLYPH_GAP: f32 = 8.0;
 
-/// Botão desenhado com rótulo acessível igual ao texto visível.
 pub(super) struct Button<'a> {
     label: &'a str,
     kind: Kind,
@@ -116,7 +104,6 @@ impl<'a> Button<'a> {
         self.glyph = glyph;
         self
     }
-    /// Ocupa toda a largura disponível.
     pub fn fill_width(mut self, ui: &egui::Ui) -> Self {
         self.width = Some(ui.available_width());
         self
@@ -125,7 +112,6 @@ impl<'a> Button<'a> {
         self.enabled = enabled;
         self
     }
-    /// Mostra um indicador de progresso no lugar do ícone e ignora cliques.
     pub fn busy(mut self, busy: bool) -> Self {
         self.busy = busy;
         self
@@ -140,7 +126,6 @@ impl<'a> Button<'a> {
         text.size(self.size.font()).color(color)
     }
 
-    /// Largura natural do botão, sem limite de espaço.
     pub fn natural_width(&self, ui: &egui::Ui) -> f32 {
         let galley = egui::WidgetText::from(self.text(ui, Color32::WHITE)).into_galley(
             ui,
@@ -204,7 +189,6 @@ impl<'a> Button<'a> {
         let painter = ui.painter();
         let (text_color, glyph_color) = match self.kind {
             Kind::Primary if enabled || self.busy => (Color32::WHITE, Color32::WHITE),
-            // Desativado, o botão ainda diz o que falta: o texto continua legível.
             Kind::Primary | Kind::Secondary if !enabled => (colors.muted, colors.faint),
             Kind::Primary | Kind::Secondary => (colors.text, colors.accent),
             Kind::Ghost if !enabled => (colors.faint, colors.faint),
@@ -241,7 +225,6 @@ impl<'a> Button<'a> {
                     (top, bottom)
                 };
                 gradient_rect(painter, rect, radius, top, bottom);
-                // Brilho superior sutil, como em superfícies elevadas.
                 painter.rect_stroke(
                     rect.shrink(0.5),
                     radius,
@@ -322,7 +305,6 @@ impl<'a> Button<'a> {
     }
 }
 
-/// Botão quadrado só com ícone; o rótulo fica no leitor de tela e na dica.
 pub(super) fn icon_button(
     ui: &mut egui::Ui,
     colors: Palette,
@@ -360,7 +342,6 @@ pub(super) fn icon_button(
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// Linha de botões centralizada, medindo a largura antes de desenhar.
 pub(super) fn centered_row<R>(
     ui: &mut egui::Ui,
     widths: &[f32],
@@ -375,7 +356,6 @@ pub(super) fn centered_row<R>(
     .inner
 }
 
-/// Círculo com a inicial do nome. Não usa fotos nem dados além do nome exibido.
 pub(super) fn avatar(ui: &mut egui::Ui, colors: Palette, name: &str, size: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     paint_avatar(ui.painter(), colors, rect.center(), size, name);
@@ -428,7 +408,6 @@ pub(super) fn paint_avatar(
     );
 }
 
-/// Indicador de estado: ponto ou ícone e texto na mesma cor.
 pub(super) fn status(ui: &mut egui::Ui, glyph: Option<Glyph>, text: &str, color: Color32) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -454,7 +433,6 @@ pub(super) fn status(ui: &mut egui::Ui, glyph: Option<Glyph>, text: &str, color:
     });
 }
 
-/// Barra fina com porcentagem à direita.
 pub(super) fn progress(ui: &mut egui::Ui, colors: Palette, fraction: f32, width: f32) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
@@ -491,7 +469,6 @@ fn rounded_points(rect: Rect, radius: u8) -> Vec<Pos2> {
     points
 }
 
-/// Retângulo arredondado com gradiente vertical e borda suavizada.
 pub(super) fn gradient_rect(
     painter: &egui::Painter,
     rect: Rect,
@@ -504,7 +481,6 @@ pub(super) fn gradient_rect(
     });
 }
 
-/// Retângulo arredondado com gradiente horizontal.
 pub(super) fn gradient_rect_h(
     painter: &egui::Painter,
     rect: Rect,
@@ -532,14 +508,12 @@ fn gradient_mesh(painter: &egui::Painter, rect: Rect, radius: u8, color: impl Fn
         mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
     }
     painter.add(Shape::mesh(mesh));
-    // A malha não tem antisserrilhado: uma borda fina na cor média suaviza o contorno.
     painter.add(Shape::closed_line(
         points,
         Stroke::new(1.0, color(rect.center())),
     ));
 }
 
-/// Desenha um ícone centrado em `center`, cabendo em `size`.
 pub(crate) fn draw(
     painter: &egui::Painter,
     glyph: Glyph,

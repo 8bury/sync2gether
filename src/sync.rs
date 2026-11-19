@@ -1,10 +1,6 @@
-//! Relógio monotônico filtrado e correções proporcionais com histerese.
 use crate::protocol::Snapshot;
 use std::collections::VecDeque;
 
-/// Validade de uma medição. Dois relógios monotônicos divergem menos de
-/// 0,1 ms por segundo, então a estimativa segue útil durante uma retenção da
-/// rede. Quem decide que o parceiro sumiu é o tempo limite da conexão.
 pub const MAX_SAMPLE_AGE_MS: f64 = 10_000.0;
 
 #[derive(Default, Debug)]
@@ -24,7 +20,6 @@ impl Clock {
             ..Default::default()
         }
     }
-    /// t1/t4 são locais; t2/t3 são recepção/envio do anfitrião.
     pub fn sample(&mut self, t1: f64, t2: f64, t3: f64, t4: f64) {
         if [t1, t2, t3, t4].iter().any(|t| !t.is_finite())
             || t4 < t1
@@ -151,7 +146,6 @@ mod tests {
     #[test]
     fn removes_server_processing_time_and_requires_warmup() {
         let mut c = Clock::default();
-        // 100 ms de rede e 200 ms de processamento remoto.
         for n in 0..3 {
             let t = n as f64 * 500.0;
             c.sample(t, t + 4050.0, t + 4250.0, t + 300.0);
@@ -159,7 +153,6 @@ mod tests {
         assert_eq!(c.offset_ms, Some(4000.0));
         assert_eq!(c.rtt_ms, 100.0);
         assert!(c.ready(1300.0));
-        // Uma retenção curta da rede não invalida o relógio; o silêncio longo, sim.
         assert!(c.ready(1300.0 + MAX_SAMPLE_AGE_MS));
         assert!(!c.ready(1301.0 + MAX_SAMPLE_AGE_MS));
         c.sample(2000.0, 0.0, -1.0, 2100.0);

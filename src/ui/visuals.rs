@@ -1,8 +1,6 @@
-//! Desenhos vetoriais da identidade visual, sem imagens ou I/O.
 use super::{Palette, kit};
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 
-/// Ícone do aplicativo: duas telas sobre um bloco com gradiente.
 pub(super) fn app_icon(painter: &egui::Painter, rect: egui::Rect, colors: Palette) {
     let side = rect.width().min(rect.height());
     let tile = egui::Rect::from_center_size(rect.center(), Vec2::splat(side));
@@ -53,7 +51,6 @@ pub(super) fn glow(painter: &egui::Painter, center: Pos2, radius: Vec2, color: C
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// Marca com duas telas. Não representa mídia ou participantes reais.
 pub(super) fn screens(painter: &egui::Painter, rect: egui::Rect, accent: Color32, fill: Color32) {
     let scale = (rect.width() / 120.0).min(rect.height() / 88.0);
     let c = rect.center();
@@ -76,7 +73,6 @@ pub(super) fn screens(painter: &egui::Painter, rect: egui::Rect, accent: Color32
     ));
 }
 
-/// Fundo ilustrativo do player no modo demo; não é um quadro de vídeo.
 pub(super) fn demo_video(painter: &egui::Painter, rect: egui::Rect) {
     painter.rect_filled(rect, 0, Color32::from_rgb(8, 10, 20));
     glow(
@@ -117,7 +113,6 @@ fn person(painter: &egui::Painter, center: Pos2, scale: f32, color: Color32) {
     ));
 }
 
-/// Dois participantes ligados por pontos animados durante a conexão.
 pub(super) fn connection(painter: &egui::Painter, rect: egui::Rect, colors: Palette, time: f64) {
     let scale = (rect.height() / 66.0).min(rect.width() / 190.0);
     let c = rect.center();
@@ -139,7 +134,6 @@ pub(super) fn connection(painter: &egui::Painter, rect: egui::Rect, colors: Pale
     }
 }
 
-/// Ícone abstrato de arquivo; não usa miniaturas da mídia.
 pub(super) fn file(ui: &mut egui::Ui, color: Color32, size: f32, tile: bool) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
     if tile {
@@ -170,7 +164,6 @@ pub(super) fn file(ui: &mut egui::Ui, color: Color32, size: f32, tile: bool) {
         vec![offset(3.0, -13.0), offset(3.0, -6.0), offset(10.0, -6.0)],
         stroke,
     ));
-    // Pequeno triângulo de play: o arquivo é um vídeo.
     ui.painter().add(egui::Shape::convex_polygon(
         vec![offset(-3.0, 0.0), offset(4.0, 4.0), offset(-3.0, 8.0)],
         color,

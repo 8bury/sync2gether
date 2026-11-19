@@ -1,4 +1,3 @@
-//! Checkpoints sem I/O na UI; uma thread própria grava amostras de diagnóstico.
 use std::{
     fs::{File, create_dir_all},
     io::{self, Write},
@@ -123,7 +122,6 @@ pub(crate) fn callback(active: bool) {
     }
 }
 
-/// Mantém a thread de diagnóstico viva até o encerramento do processo.
 pub struct Guard {
     stop: mpsc::Sender<()>,
     join: Option<thread::JoinHandle<()>>,
@@ -136,7 +134,6 @@ impl Drop for Guard {
         }
     }
 }
-/// Ativação explícita antes da janela. Não registra argumentos ou dados da mídia.
 pub fn start() -> io::Result<(Guard, PathBuf)> {
     let path = PathBuf::from(format!(
         ".cache/sync2gether-diagnostics-{}.log",
@@ -162,7 +159,6 @@ pub fn start() -> io::Result<(Guard, PathBuf)> {
     let join = thread::Builder::new()
         .name("diagnostics".into())
         .spawn(move || {
-            // Limite de uma hora para evitar arquivos sem limite de tamanho.
             for _ in 0..3600 {
                 if state.sample(&mut file).and_then(|()| file.flush()).is_err() {
                     eprintln!("Não foi possível continuar gravando o diagnóstico");

@@ -1,4 +1,3 @@
-//! Controles do player: apenas estado egui e comandos devolvidos à aplicação.
 use crate::ui::kit::{self, Glyph};
 use crate::{
     player::TrackKind,
@@ -7,7 +6,6 @@ use crate::{
 };
 use eframe::egui::{self, Color32, RichText, Stroke};
 
-/// Destaque do player, igual nos dois temas porque fica sobre o vídeo.
 const ACCENT: Color32 = Color32::from_rgb(122, 156, 255);
 
 pub enum Video<'a> {
@@ -137,7 +135,6 @@ pub(crate) fn draw(
             }
         });
     }
-    // Escape também funciona com um controle focado; um menu aberto consome primeiro.
     if inputs.player.fullscreen
         && !egui::Popup::is_any_open(ui.ctx())
         && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
@@ -184,7 +181,6 @@ pub(crate) fn draw(
                 (inputs.player.last_activity + 3.0 - now).max(0.01),
             ));
     }
-    // A queda da conexão aparece só no selo da sala, sem um segundo aviso.
     let has_notice = view.error.is_some()
         || view.preparing
         || view.scheduled
@@ -214,7 +210,6 @@ pub(crate) fn draw(
     ui.scope_builder(egui::UiBuilder::new().max_rect(top), |ui| {
         ui.visuals_mut().override_text_color = Some(Color32::WHITE);
         ui.horizontal(|ui| {
-            // Sair do player fica no mesmo canto que a seta das outras telas.
             let back = crate::ui::preparation_leave_label(view.role);
             if glass_icon(ui, Glyph::ArrowLeft, back).clicked() {
                 crate::ui::request_leave(view, inputs, &mut actions);
@@ -310,7 +305,6 @@ pub(crate) fn draw(
     ui.scope_builder(
         egui::UiBuilder::new().max_rect(controls_rect.shrink2(egui::vec2(16.0, 8.0))),
         |ui| {
-            // Controles claros sobre o vídeo, também no tema claro da janela.
             *ui.visuals_mut() = egui::Visuals::dark();
             ui.visuals_mut().override_text_color = Some(Color32::WHITE);
             ui.visuals_mut().selection.bg_fill = ACCENT;
@@ -323,7 +317,6 @@ pub(crate) fn draw(
             ui.spacing_mut().interact_size.y = 18.0;
             ui.visuals_mut().handle_shape = egui::style::HandleShape::Circle;
             let mut seek = inputs.seek.unwrap_or(view.player.position);
-            // O slider do egui cuida da interação e da acessibilidade; a aparência é desenhada abaixo.
             let response = ui
                 .scope(|ui| {
                     let visuals = ui.visuals_mut();
@@ -529,7 +522,6 @@ fn gradient(painter: &egui::Painter, rect: egui::Rect, top: bool) {
     mesh.add_triangle(0, 2, 3);
     painter.add(egui::Shape::mesh(mesh));
 }
-/// Barra de progresso desenhada sobre o slider transparente.
 fn seek_bar(ui: &egui::Ui, response: &egui::Response, seek: f64, duration: f64, enabled: bool) {
     let rect = response.rect;
     let active = enabled && (response.hovered() || response.dragged());
@@ -585,11 +577,9 @@ fn seek_bar(ui: &egui::Ui, response: &egui::Response, seek: f64, duration: f64, 
     }
 }
 
-/// O estado da sala num único selo, sempre no mesmo lugar sobre o vídeo.
 struct Pill {
     label: String,
     glyph: Option<Glyph>,
-    /// Sem conexão com a outra pessoa: o selo fica âmbar.
     warning: bool,
 }
 
@@ -623,7 +613,6 @@ fn room_pill(view: &View) -> Pill {
     }
 }
 
-/// Botão redondo translúcido só com ícone; o rótulo fica no leitor de tela e na dica.
 fn glass_icon(ui: &mut egui::Ui, glyph: Glyph, label: &str) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
@@ -663,7 +652,6 @@ fn glass_width(ui: &egui::Ui, label: &str) -> f32 {
     (galley.size().x + 12.0 + 20.0 + 8.0 + 14.0).min(PILL_MAX)
 }
 
-/// Selo translúcido sobre o vídeo, legível sobre imagens claras ou escuras.
 fn glass(ui: &mut egui::Ui, pill: &Pill, selected: bool) -> egui::Response {
     let width = glass_width(ui, &pill.label);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::click());
@@ -720,7 +708,6 @@ fn glass(ui: &mut egui::Ui, pill: &Pill, selected: bool) -> egui::Response {
                 ui.ctx().request_repaint();
             }
         }
-        // Conectados: um ponto verde, como numa chamada em andamento.
         None => {
             let green = Color32::from_rgb(92, 214, 164);
             painter.circle_filled(slot, 7.0, green.gamma_multiply(0.22));

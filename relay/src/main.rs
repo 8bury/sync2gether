@@ -1,4 +1,3 @@
-//! Executa o relay. Endereço por `--listen ENDEREÇO` ou `RELAY_LISTEN`.
 use std::net::SocketAddr;
 
 fn listen_address() -> Result<SocketAddr, String> {

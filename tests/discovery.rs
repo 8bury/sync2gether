@@ -1,4 +1,3 @@
-//! Descoberta com sockets UDP multicast e TCP reais, sem VPN.
 use std::{
     net::{Ipv4Addr, UdpSocket},
     time::{Duration, Instant},
@@ -64,7 +63,6 @@ async fn multicast_finds_custom_ports_and_hides_pending_and_closed_rooms() {
         .unwrap()
         .unwrap();
     assert!(matches!(approval, network::Event::ApprovalRequested { .. }));
-    // Mesmo com anúncio antigo de vaga, a confirmação TCP elimina a sala ocupada.
     assert!(browser.scan(Duration::from_millis(100)).await.is_empty());
     drop(approval);
     drop(guest);
@@ -91,7 +89,6 @@ async fn unavailable_and_expired_announcements_are_removed() {
     assert!(browser.scan(Duration::from_millis(100)).await.is_empty());
     announcer.announce("host", port, true).await;
     assert_eq!(browser.scan(Duration::from_millis(100)).await.len(), 1);
-    // O TCP continua disponível; a remoção depende da expiração do anúncio.
     assert!(browser.scan(Duration::from_millis(5200)).await.is_empty());
     host.abort();
 }

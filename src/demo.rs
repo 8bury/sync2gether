@@ -1,5 +1,3 @@
-//! Cenários e captura da interface, sem leitura de mídia ou acesso à rede.
-
 use std::{
     path::PathBuf,
     time::{Duration, Instant},

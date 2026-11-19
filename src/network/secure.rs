@@ -1,9 +1,3 @@
-//! Canal cifrado das salas pela internet.
-//!
-//! Na primeira entrada, SPAKE2 transforma o código da sala numa chave forte: quem
-//! observa ou controla o caminho não aprende o código e só pode testar um palpite
-//! por conexão. Cada conexão faz então um handshake Noise NNpsk0 com essa chave,
-//! com chaves efêmeras novas. Reconexões repetem só o Noise com a chave guardada.
 use super::{Inbound, Outbound};
 use crate::protocol::{MAX_MESSAGE, Message};
 use serde::{Deserialize, Serialize};
@@ -16,13 +10,10 @@ pub type Key = [u8; 32];
 const NOISE: &str = "Noise_NNpsk0_25519_ChaChaPoly_BLAKE2s";
 const PROLOGUE: &[u8] = b"sync2gether relay 1";
 const TAG: usize = 16;
-/// Mensagens de handshake e mensagens da sala cifradas.
 const MAX_FRAME: usize = MAX_MESSAGE + 256;
 
-/// Primeiro byte enviado por quem entra: SPAKE2 com o código ou retomada com a chave.
 pub const INTRO_PAKE: u8 = 1;
 pub const INTRO_RESUME: u8 = 2;
-/// Enviado pelo anfitrião antes de fechar quando a chave não confere.
 const WRONG_KEY: u8 = 0xff;
 
 #[derive(Serialize, Deserialize)]
@@ -55,14 +46,12 @@ fn noise(error: snow::Error) -> io::Error {
     io::Error::other(error)
 }
 
-/// Inicia o SPAKE2 simétrico. O número da sala separa o domínio de cada sala.
 pub fn pake_start(room: &str, password: &str) -> (Spake2<Ed25519Group>, Vec<u8>) {
     Spake2::<Ed25519Group>::start_symmetric(
         &Password::new(password.as_bytes()),
         &Identity::new(format!("sync2gether/{room}").as_bytes()),
     )
 }
-/// A chave só confere com o mesmo código dos dois lados; o Noise confirma isso.
 pub fn pake_finish(state: Spake2<Ed25519Group>, inbound: &[u8]) -> io::Result<Key> {
     let key = state
         .finish(inbound)
@@ -89,7 +78,6 @@ fn peer_name(payload: &[u8]) -> io::Result<String> {
 pub struct Channel<R, W> {
     pub reader: SecureReader<R>,
     pub writer: SecureWriter<W>,
-    /// Nome do outro computador, enviado já cifrado no handshake.
     pub peer: String,
 }
 
@@ -115,7 +103,6 @@ fn channel<R, W>(
     })
 }
 
-/// Lado de quem entra na sala. Erro `PermissionDenied` indica chave diferente.
 pub async fn initiate<R, W>(
     mut reader: R,
     mut writer: W,
@@ -143,7 +130,6 @@ where
     channel(reader, writer, state, peer)
 }
 
-/// Lado do anfitrião. Avisa quem entrou quando a chave não confere.
 pub async fn respond<R, W>(
     mut reader: R,
     mut writer: W,
@@ -187,7 +173,6 @@ impl<R: AsyncRead + Unpin + Send> Inbound for SecureReader<R> {
     async fn recv(&mut self) -> io::Result<Message> {
         let frame = read_frame(&mut self.inner).await?;
         let mut plain = vec![0; frame.len()];
-        // Nonces sequenciais: quadros repetidos, removidos ou reordenados falham.
         let read = self
             .transport
             .read_message(self.nonce, &frame, &mut plain)
@@ -281,7 +266,6 @@ mod tests {
             respond(br, bw, &host_key, "b")
         );
         let (mut guest, host) = (guest.unwrap(), host.unwrap());
-        // Captura um quadro legítimo e o entrega duas vezes ao anfitrião.
         let (mut capture, mut source) = tokio::io::duplex(64 * 1024);
         let mut writer = SecureWriter {
             inner: &mut source,

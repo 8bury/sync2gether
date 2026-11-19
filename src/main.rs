@@ -6,39 +6,29 @@ use sync2gether::diagnostics::{self, Stage};
 #[command(version, about)]
 struct Args {
     #[arg(long)]
-    /// Grava checkpoints de diagnóstico em .cache/, sem dados da mídia ou sala.
     diagnostics: bool,
     #[arg(long, value_name = "ARQUIVO")]
-    /// Abre uma cópia local, inicialmente pausada.
     file: Option<std::path::PathBuf>,
     #[arg(long, conflicts_with_all = ["host", "join", "code"])]
-    /// Cria uma sala pela internet e mostra o código para convidar.
     internet: bool,
     #[arg(long, value_name = "CÓDIGO", conflicts_with_all = ["host", "join"])]
-    /// Entra numa sala pela internet com o código, como 4821-gato-lua.
     code: Option<String>,
     #[arg(long, value_name = "NOME[:PORTA]", env = "SYNC2GETHER_RELAY", default_value = sync2gether::network::relay::DEFAULT_RELAY)]
-    /// Servidor das salas pela internet.
     relay: String,
     #[arg(long, value_name = "IP[:PORTA]", conflicts_with = "join", num_args = 0..=1, default_missing_value = "auto")]
-    /// Hospeda na rede local automaticamente, ou no endereço informado.
     host: Option<String>,
     #[arg(long, requires = "host", default_value_t = sync2gether::protocol::PORT)]
-    /// Porta para hospedagem automática.
     port: u16,
     #[arg(long, value_name = "IP[:PORTA]")]
-    /// Entra na sala do anfitrião na rede local.
     join: Option<String>,
     #[cfg(feature = "demo")]
     #[arg(long, conflicts_with_all = ["file", "host", "join", "internet", "code"])]
-    /// Abre cenários fictícios sem player ou conexão.
     demo: bool,
     #[cfg(feature = "demo")]
     #[arg(long, value_enum, requires = "demo", default_value = "waiting")]
     demo_state: sync2gether::demo::Scenario,
     #[cfg(feature = "demo")]
     #[arg(long, requires = "demo", value_name = "PNG")]
-    /// Salva uma captura PNG da janela e encerra. Requer um display.
     demo_shot: Option<std::path::PathBuf>,
     #[cfg(feature = "demo")]
     #[arg(long, requires = "demo")]

@@ -46,7 +46,6 @@ fn layout_fits_supported_window_sizes_in_both_themes() {
                             "redundant copy {removed:?} in {state:?}, light={light}"
                         );
                     }
-                    // Sem renderer neste teste: descarte explicitamente os uploads de texturas.
                     output.textures_delta.clear();
                 }
             }
@@ -210,7 +209,6 @@ fn dragging_progress_commits_once_without_toggling_playback() {
         ..Default::default()
     };
     player_frame(&ctx, &view, &mut inputs, 0.0, vec![]);
-    // Linha de progresso na faixa inferior do player de 640 × 360.
     let start = egui::pos2(96.0, 272.0);
     let end = egui::pos2(280.0, 272.0);
     let pointer_button = |pos, pressed| egui::Event::PointerButton {
@@ -531,7 +529,6 @@ fn room_buttons_return_commands_and_play_is_disabled_until_both_are_ready() {
         click_label(&ctx, &view, &mut inputs, "Criar sala").as_slice(),
         [Command::HostInternet(relay)] if relay == sync2gether::network::relay::DEFAULT_RELAY
     ));
-    // O código é digitado no próprio início, sem uma tela só para ele.
     assert!(text.contains("ou entre com um código"));
     assert_eq!(inputs.screen, ui::Screen::Home);
     inputs.lan = true;
@@ -559,7 +556,6 @@ fn room_buttons_return_commands_and_play_is_disabled_until_both_are_ready() {
     ));
     view.join_request = None;
     view.connected = true;
-    // Desativado, o botão principal diz o que falta.
     assert!(click_label(&ctx, &view, &mut inputs, "Escolha seu arquivo para começar").is_empty());
     view.file = Some("Filme.mkv".into());
     view.ready = true;
@@ -840,7 +836,6 @@ fn player_shows_actionable_notices_and_omits_routine_status() {
             let text = visible_text(&output.shapes);
             assert!(!text.contains("Assistindo juntos"));
             assert!(!text.contains("Sessão pausada"));
-            // A queda da conexão aparece só no selo da sala, sem um segundo aviso.
             assert_eq!(
                 text.contains("Esperando a outra pessoa voltar"),
                 disconnected
@@ -1431,14 +1426,12 @@ fn code_entry_validates_joins_and_returns_to_the_code_after_a_refusal() {
             [Command::JoinCode { relay, code }]
                 if relay == sync2gether::network::relay::DEFAULT_RELAY && code == " 4821 Gato LUA "
         ));
-        // Enquanto a sala responde, o início continua na tela com o progresso no botão.
         view.role = Role::Guest;
         view.internet = true;
         let text = preparation_text_of(&ctx, &view, &mut inputs);
         assert_eq!(inputs.screen, ui::Screen::Home);
         assert!(text.contains("Entrando"));
         assert!(!text.contains("Conectando pela internet"));
-        // A recusa mostra o erro sob o código digitado.
         view = View {
             error: Some("Código incorreto. Confira as palavras ou peça um código novo.".into()),
             ..Default::default()
@@ -1543,7 +1536,6 @@ fn mismatch_says_it_once_and_the_main_button_changes_the_local_file() {
         let text = preparation_frame(&view, [960.0, 800.0], light);
         assert!(text.contains("Os arquivos não batem"));
         assert_eq!(text.matches("Os arquivos são diferentes").count(), 1);
-        // Nenhum cartão diz "Conferido" ao lado do aviso de diferença.
         assert!(!text.contains("Conferido"));
         assert!(!text.contains("Começar a assistir"));
         assert!(matches!(
@@ -1574,11 +1566,9 @@ fn host_room_shows_the_invite_until_someone_joins_then_the_film_step() {
     let text = preparation_frame(&view, [960.0, 640.0], false);
     assert!(text.contains("Escolham o mesmo filme"));
     assert!(!text.contains("Esperando alguém entrar"));
-    // A etapa atual e o código ficam no cabeçalho.
     assert!(text.contains("Filme") && text.contains("4821-gato-lua"));
 }
 
-/// Clica num controle pelo nome acessível e devolve os comandos do clique.
 fn click_accessible(
     ctx: &egui::Context,
     view: &sync2gether::runtime::View,
@@ -1652,7 +1642,6 @@ fn back_arrow_leaves_the_room_and_asks_first_when_someone_is_there() {
             let ctx = egui::Context::default();
             ui::configure_theme(&ctx, light);
             let mut inputs = ui::Inputs::default();
-            // Sozinho na sala: a seta sai na hora.
             let mut view = View {
                 role: Role::Host,
                 internet: true,
@@ -1663,7 +1652,6 @@ fn back_arrow_leaves_the_room_and_asks_first_when_someone_is_there() {
                 click_accessible(&ctx, &view, &mut inputs, "Encerrar sala", size).as_slice(),
                 [Command::Leave]
             ));
-            // Com a outra pessoa conectada, pergunta antes de desconectá-la.
             view.connected = true;
             view.peer_name = Some("Ana".into());
             assert!(click_accessible(&ctx, &view, &mut inputs, "Encerrar sala", size).is_empty());
@@ -1676,7 +1664,6 @@ fn back_arrow_leaves_the_room_and_asks_first_when_someone_is_there() {
                 click_label_at_size(&ctx, &view, &mut inputs, "Continuar na sala", size).is_empty()
             );
             assert!(!inputs.confirm_leave);
-            // Esc faz o mesmo que a seta.
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
@@ -1692,7 +1679,6 @@ fn back_arrow_leaves_the_room_and_asks_first_when_someone_is_there() {
                 [Command::Leave]
             ));
             assert!(!inputs.confirm_leave);
-            // O convidado vê "Sair da sala", também no player.
             view.role = Role::Guest;
             view.watching = true;
             view.player = Status {

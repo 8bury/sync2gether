@@ -6,6 +6,9 @@ rust-version = "1.98"
 description = "Servidor intermediário do sync2gether: pareia duas conexões e repassa bytes cifrados"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 rand = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }

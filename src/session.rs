@@ -1,4 +1,3 @@
-//! O anfitrião ordena operações e só agenda play após os dois seeks concluírem.
 use crate::protocol::{Control, Presence, Snapshot, Transition};
 
 pub const PREPARE_TIMEOUT_MS: f64 = 10_000.0;
@@ -163,7 +162,6 @@ impl Session {
             self.apply(Control::Pause, now);
         }
     }
-    /// Retorna true quando uma operação expirou. O chamador publica a pausa.
     pub fn advance(&mut self, now: f64) -> bool {
         if let Some(t) = self.state.transition.clone() {
             if !self.matched() {

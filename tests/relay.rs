@@ -1,4 +1,3 @@
-//! Salas pela internet com um relay real em localhost, sem servidor externo.
 use std::{
     net::SocketAddr,
     time::{Duration, Instant},
@@ -18,7 +17,6 @@ use tokio::{
     time::timeout,
 };
 
-/// O relay roda num runtime próprio para que o teste possa derrubá-lo inteiro.
 struct Relay(Option<tokio::runtime::Runtime>);
 impl Relay {
     fn stop(mut self) {
@@ -109,7 +107,6 @@ fn wrong_words(code: &str) -> String {
     format!("{room}-{replacement}")
 }
 
-/// Proxy TCP que o teste corta para simular a queda da internet de um lado.
 struct Link {
     address: SocketAddr,
     connections: std::sync::Arc<tokio::sync::Mutex<JoinSet<()>>>,
@@ -173,7 +170,6 @@ async fn code_opens_an_encrypted_room_that_survives_a_dropped_link() {
         exchanged(&host_out, &mut guest_rx, n as f64 + 0.5).await;
     }
 
-    // A queda do lado do convidado derruba a conexão; ele volta sem o código.
     link.cut().await;
     let (host_out, _) = connected(&mut host_rx).await;
     let (guest_out, _) = connected(&mut guest_rx).await;
@@ -245,7 +241,6 @@ async fn unknown_rooms_and_incompatible_versions_are_reported() {
     let reply: Reply = sync2gether_relay::read_frame(&mut stream).await.unwrap();
     assert_eq!(reply, Reply::Outdated { version: VERSION });
 
-    // Sem o segredo do anfitrião, ninguém aceita entradas nem assume o número.
     let (host_tx, mut host_rx) = mpsc::channel(64);
     let host = tokio::spawn(network::relay::host(
         relay.to_string(),
@@ -340,7 +335,6 @@ async fn leaving_host_closes_the_room_for_new_entries() {
     let code = room_code(&mut host_rx).await;
     host.abort();
     let _ = host.await;
-    // O fechamento chega ao relay como fim da conexão de controle.
     tokio::time::sleep(Duration::from_millis(200)).await;
     let (guest_tx, mut guest_rx) = mpsc::channel(64);
     let guest = tokio::spawn(network::relay::guest(
@@ -353,7 +347,6 @@ async fn leaving_host_closes_the_room_for_new_entries() {
     guest.abort();
 }
 
-/// Contra um relay publicado: `SYNC2GETHER_RELAY_E2E=nome:porta`.
 #[tokio::test]
 #[ignore = "usa a internet e um relay publicado"]
 async fn published_relay_pairs_two_apps() {

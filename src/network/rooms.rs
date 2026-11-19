@@ -1,4 +1,3 @@
-//! Descoberta e entrada aprovada pelo anfitrião. Tokens ficam apenas na memória.
 use super::{Event, allowed_address, connection, read_message, write_message};
 use crate::{
     discovery::{Lan, device_name},
@@ -43,7 +42,6 @@ pub async fn host(
         events,
         origin,
     });
-    // JoinSet aborta conexões e solicitações pendentes quando a sala é fechada.
     let mut tasks = JoinSet::new();
     let advertised = state.clone();
     tasks.spawn(async move {
@@ -126,7 +124,6 @@ async fn handle(
             {
                 return Ok(());
             }
-            // EOF ou qualquer mensagem inesperada cancela a solicitação antes da aprovação.
             let approved = tokio::select! {
                 result = timeout(Duration::from_secs(60), decision) => matches!(result, Ok(Ok(true))),
                 _ = read_message(&mut stream) => false,
@@ -227,7 +224,6 @@ pub async fn guest(address: SocketAddr, events: mpsc::Sender<Event>, origin: Ins
         }
     };
     connection(stream, &events, origin).await;
-    // Só participantes já aprovados reconectam automaticamente.
     loop {
         sleep(Duration::from_secs(1)).await;
         let result = timeout(Duration::from_secs(3), async {

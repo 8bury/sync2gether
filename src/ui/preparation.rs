@@ -1,4 +1,3 @@
-//! Sala do anfitrião, preparação e comparação dos dois arquivos, sem I/O.
 use super::{Palette, connection_details, feedback, kit, strong, title, visuals};
 use crate::{
     protocol::Control,
@@ -6,7 +5,6 @@ use crate::{
 };
 use eframe::egui::{self, Color32, RichText, Stroke};
 
-/// Cor e ícone de uma linha de estado.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tone {
     Muted,
@@ -35,7 +33,6 @@ impl Tone {
     }
 }
 
-/// O que o botão principal faz. Desativado, ele diz o que falta.
 enum Main {
     Start,
     Cancel,
@@ -43,7 +40,6 @@ enum Main {
     Waiting(String),
 }
 
-/// A situação da preparação, dita uma vez: uma frase e o botão principal.
 struct Readiness {
     note: String,
     tone: Tone,
@@ -54,7 +50,6 @@ fn peer_name(view: &View) -> &str {
     view.peer_name.as_deref().unwrap_or("a outra pessoa")
 }
 
-/// Os dois arquivos foram conferidos e o conteúdo é diferente.
 fn mismatch(view: &View) -> bool {
     view.role != Role::Local
         && view.connected
@@ -74,7 +69,6 @@ fn start_enabled(view: &View) -> bool {
                 && !view.player.blocked)
 }
 
-/// Explica a condição que impede o play, sem usar o nome como identidade.
 fn readiness(view: &View) -> Readiness {
     let waiting = |note: &str, tone, button: &str| Readiness {
         note: note.into(),
@@ -117,7 +111,6 @@ fn readiness(view: &View) -> Readiness {
             "Escolha seu arquivo para começar",
         );
     }
-    // Pronto vem da sala: os dois arquivos já foram conferidos.
     if view.ready && !view.player.blocked && !view.peer_blocked {
         return Readiness {
             note: "Os arquivos são iguais.".into(),
@@ -178,7 +171,6 @@ fn readiness(view: &View) -> Readiness {
     waiting("Preparando os arquivos…", Tone::Busy, "Preparando…")
 }
 
-/// Título da tela segundo o estado, no lugar de um título fixo.
 fn heading(view: &View) -> &'static str {
     if start_enabled(view) {
         "Tudo pronto"
@@ -197,7 +189,6 @@ fn heading(view: &View) -> &'static str {
     }
 }
 
-/// Uma frase de estado, centralizada, com o ícone quando cabe numa linha.
 fn note(ui: &mut egui::Ui, colors: Palette, text: &str, tone: Tone) {
     let color = tone.color(colors);
     let font = egui::FontId::proportional(14.0);
@@ -236,7 +227,6 @@ fn note(ui: &mut egui::Ui, colors: Palette, text: &str, tone: Tone) {
     }
 }
 
-/// A frase de estado e o botão principal, que carrega a próxima ação.
 pub(super) fn action(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
     let state = readiness(view);
     ui.vertical_centered(|ui| {
@@ -267,7 +257,6 @@ pub(super) fn action(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &
     });
 }
 
-/// Como os dois arquivos se comparam, desenhado na emenda entre os cartões.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Compare {
     Waiting,
@@ -323,7 +312,6 @@ fn seam(ui: &egui::Ui, colors: Palette, center: egui::Pos2, state: Compare) {
 const CARD: f32 = 118.0;
 const GAP: f32 = 16.0;
 
-/// As duas cópias lado a lado (ou empilhadas numa janela estreita), como iguais.
 fn pair(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
     let width = ui.available_width();
     if view.role == Role::Local {
@@ -368,7 +356,6 @@ fn pair(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Comma
     seam(ui, colors, center, compare(view));
 }
 
-/// Um cartão: quem, o arquivo e o estado dele. Ações só no seu.
 fn copy_card(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -446,7 +433,6 @@ fn copy_card(
     let inner = rect.shrink(16.0);
     ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(8.0, 12.0);
-        // Quem: avatar e nome; à direita, as ações do arquivo.
         ui.horizontal(|ui| {
             ui.set_height(24.0);
             let who = if local {
@@ -501,7 +487,6 @@ fn copy_card(
                 }
             });
         });
-        // O arquivo: ícone, nome e estado, ou o botão para escolher.
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
             let icon = match tone {
@@ -582,7 +567,6 @@ pub(super) fn draw(
     }
 }
 
-/// Detalhes da conexão, discretos, no pé da tela. A saída fica na seta do cabeçalho.
 fn footer(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
     ui.vertical_centered(|ui| {
         let details = kit::Button::new(kit::Kind::Ghost, "Detalhes da sala")
@@ -609,7 +593,6 @@ fn footer(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Com
     });
 }
 
-/// Primeira etapa do anfitrião: o convite é a tela, com o código em destaque.
 pub(super) fn room(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
     if let Some(request) = &view.join_request {
         approval(ui, colors, request, actions);
@@ -647,7 +630,6 @@ pub(super) fn room(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mu
         presence(ui, colors);
         ui.add_space(14.0);
         ui.set_max_width(ui.available_width().min(340.0));
-        // Dá para escolher o filme enquanto espera; a ação é secundária até a outra pessoa entrar.
         if view.loading {
             if let Some(progress) = view.verification.filter(|_| view.pending_file.is_some()) {
                 ui.label(
@@ -690,7 +672,6 @@ pub(super) fn room(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mu
     });
 }
 
-/// Você e o lugar vazio de quem vai entrar.
 fn presence(ui: &mut egui::Ui, colors: Palette) {
     let text = "Esperando alguém entrar…";
     let width = ui
@@ -715,7 +696,6 @@ fn presence(ui: &mut egui::Ui, colors: Palette) {
         let time = ui.input(|i| i.time) as f32;
         ui.painter()
             .circle_stroke(seat.center(), 13.0, Stroke::new(1.5, colors.border_strong));
-        // Um arco que gira: a vaga foi oferecida e ainda não foi aceita.
         let arc: Vec<egui::Pos2> = (0..=12)
             .map(|i| {
                 let a = time * 2.4 + i as f32 / 12.0 * 1.4;
@@ -731,7 +711,6 @@ fn presence(ui: &mut egui::Ui, colors: Palette) {
     });
 }
 
-/// Um valor para enviar em destaque, com o botão de copiar ao lado.
 fn invite_box(ui: &mut egui::Ui, colors: Palette, value: &str, size: f32, copy: &str) {
     egui::Frame::new()
         .fill(colors.surface)
@@ -769,7 +748,6 @@ fn invite_box(ui: &mut egui::Ui, colors: Palette, value: &str, size: f32, copy: 
         });
 }
 
-/// Convite pela internet: o código é tudo que a outra pessoa precisa.
 fn invite_code(ui: &mut egui::Ui, colors: Palette, view: &View) {
     match &view.room_code {
         Some(code) => {
@@ -805,7 +783,6 @@ pub(super) fn copy_button(ui: &mut egui::Ui, label: &str, value: &str) {
     copy_button_with(ui, kit::Kind::Secondary, kit::Size::Small, label, value);
 }
 
-/// Copia `value`; por dois segundos o próprio botão diz Copiado.
 pub(super) fn copy_button_with(
     ui: &mut egui::Ui,
     kind: kit::Kind,

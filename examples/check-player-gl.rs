@@ -1,4 +1,3 @@
-//! Verificação com janela real e fixture sintética de scripts/test-player-gl.sh.
 use eframe::egui;
 use std::{
     sync::{Arc, Mutex},
@@ -47,7 +46,6 @@ impl Check {
         let rect = self.inputs.player.video_rect.unwrap();
         let scale = image.size[0] as f32 / screen_width;
         let mut pixels = Vec::new();
-        // Só vídeo no centro: texto e botões não podem fazer esta verificação passar.
         for y in ((rect.top() + rect.height() * 0.35) * scale) as usize
             ..((rect.top() + rect.height() * 0.55) * scale) as usize
         {
@@ -77,7 +75,6 @@ impl Check {
 }
 impl eframe::App for Check {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // A troca de faixas com vídeo pausado não garante um callback de novo frame.
         ui.ctx().request_repaint_after(Duration::from_millis(50));
         if self.started.elapsed() > Duration::from_secs(25) {
             self.finish(
@@ -105,8 +102,6 @@ impl eframe::App for Check {
             ui,
             &self.view,
             &mut self.inputs,
-            // Simula uma janela oculta: nenhum callback GL atende o mpv,
-            // enquanto a interface e o controle continuam sendo exercitados.
             if matches!(self.stage, 5 | 6) {
                 None
             } else {
@@ -169,7 +164,6 @@ impl eframe::App for Check {
                 self.previous_generation = self.view.player.generation;
                 self.send(Command::OpenPath(fixture()));
             } else if self.stage == 8 {
-                // Fecha também com um seek em andamento para exercitar a liberação.
                 self.send(Command::Control(Control::Seek(8.0)));
                 self.finish(ui.ctx(), Ok(()));
             }
@@ -226,8 +220,6 @@ impl eframe::App for Check {
             {
                 self.screenshot(ui.ctx())
             }
-            // Alguns compositores restauram o tamanho anterior ao confirmar a
-            // saída de tela cheia. Peça o resize depois dessa confirmação também.
             4 if ui.input(|i| {
                 i.viewport().fullscreen != Some(true) && i.content_rect().width() >= 700.0
             }) =>

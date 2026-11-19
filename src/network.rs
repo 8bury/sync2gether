@@ -1,5 +1,3 @@
-//! TCP enquadrado e limitado. Pela internet, o relay e o canal de `secure`
-//! cifram as mensagens; na rede local, a proteção depende da rede ou VPN.
 use crate::protocol::{MAX_MESSAGE, Message, VERSION};
 use std::{
     io,
@@ -17,11 +15,7 @@ pub mod relay;
 pub mod rooms;
 pub mod secure;
 
-/// Silêncio tolerado numa conexão estabelecida. Cada lado envia algo a cada
-/// 200 ms; numa rota longa, retransmissões seguidas seguram o TCP por alguns
-/// segundos sem que o parceiro tenha saído.
 pub const SILENCE_TIMEOUT: Duration = Duration::from_secs(5);
-/// Fila de saída: comporta as mensagens de um silêncio inteiro, a 10 por segundo.
 const OUTGOING: usize = 64;
 
 pub enum Event {
@@ -37,13 +31,9 @@ pub enum Event {
     WaitingApproval,
     Rejected(String),
 
-    /// Código da sala pela internet, emitido de novo quando o relay volta.
     RoomCode(String),
-    /// Sem contato com o relay; a sala tenta reconectar sozinha.
     RelayOffline,
-    /// Alguém tentou entrar com um código errado.
     WrongCode,
-    /// Nome do outro computador, recebido pelo canal cifrado.
     PeerName(String),
 
     Connected(mpsc::Sender<Message>),
@@ -83,11 +73,9 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Me
     reader.read_exact(&mut bytes).await?;
     serde_json::from_slice(&bytes).map_err(io::Error::other)
 }
-/// Origem das mensagens de uma conexão estabelecida, aberta ou cifrada.
 pub(crate) trait Inbound: Send {
     fn recv(&mut self) -> impl Future<Output = io::Result<Message>> + Send;
 }
-/// Destino das mensagens de uma conexão estabelecida, aberta ou cifrada.
 pub(crate) trait Outbound: Send {
     fn send(&mut self, message: &Message) -> impl Future<Output = io::Result<()>> + Send;
 }
@@ -108,7 +96,6 @@ async fn connection(stream: TcpStream, events: &mpsc::Sender<Event>, origin: Ins
     let (reader, writer) = stream.into_split();
     exchange(Plain(reader), Plain(writer), events, origin).await
 }
-/// Troca mensagens da sala até silêncio, erro ou despedida do outro lado.
 async fn exchange(
     mut reader: impl Inbound,
     mut writer: impl Outbound,

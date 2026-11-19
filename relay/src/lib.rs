@@ -1,9 +1,3 @@
-//! Relay do sync2gether: pareia o anfitrião de uma sala com quem informa o
-//! número dela e repassa bytes opacos entre os dois.
-//!
-//! Os aplicativos cifram tudo de ponta a ponta com uma chave derivada do código
-//! completo da sala. O relay só conhece o número, nunca as palavras do código,
-//! as chaves ou o conteúdo das mensagens. Os registros têm apenas contadores.
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::HashMap,
@@ -22,67 +16,47 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-/// Versão do protocolo entre aplicativo e relay, independente do protocolo da sala.
 pub const VERSION: u32 = 1;
 pub const PORT: u16 = 7843;
-/// Mensagens de controle são pequenas; depois do pareamento o relay só repassa bytes.
 pub const MAX_CONTROL: usize = 1024;
-/// Intervalo das mensagens de vida na conexão de controle do anfitrião.
 pub const KEEPALIVE: Duration = Duration::from_secs(15);
-/// Silêncio tolerado na conexão de controle antes de considerá-la perdida.
 pub const CONTROL_SILENCE: Duration = Duration::from_secs(45);
 const FIRST_REQUEST: Duration = Duration::from_secs(5);
 const WRITE: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Request {
-    /// Abre a sala, ou retoma `room` com o mesmo `secret` depois de uma queda
-    /// da conexão ou de um reinício do relay.
     Host {
         version: u32,
         room: Option<String>,
         secret: String,
     },
-    /// Mantém viva a conexão de controle do anfitrião.
     Alive,
-    /// Conexão de dados do anfitrião para o convidado anunciado por `Incoming`.
     Accept {
         version: u32,
         room: String,
         secret: String,
         ticket: u64,
     },
-    /// Conexão de dados de quem quer entrar na sala.
-    Join { version: u32, room: String },
+    Join {
+        version: u32,
+        room: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Reply {
-    Hosting {
-        room: String,
-    },
-    /// Alguém pediu para entrar; o anfitrião responde com `Accept` numa nova conexão.
-    Incoming {
-        ticket: u64,
-    },
+    Hosting { room: String },
+    Incoming { ticket: u64 },
     Alive,
-    /// A partir daqui a conexão repassa bytes até o outro lado.
     Paired,
-    /// A sala não existe ou a solicitação expirou.
     Unknown,
-    /// O anfitrião está temporariamente sem conexão com o relay.
     Away,
-    /// O número pertence a outra sala.
     Taken,
-    /// Limite de uso atingido; tente mais tarde.
     Limited,
-    /// Versão de protocolo incompatível.
-    Outdated {
-        version: u32,
-    },
+    Outdated { version: u32 },
 }
 
-/// Números de sala têm de 4 a 8 dígitos e não começam por zero.
 pub fn valid_room(room: &str) -> bool {
     (4..=8).contains(&room.len())
         && room.bytes().all(|b| b.is_ascii_digit())
@@ -99,7 +73,6 @@ fn same_secret(a: &str, b: &str) -> bool {
             == 0
 }
 
-/// Mensagem de controle em JSON, precedida pelo tamanho em 32 bits.
 pub async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     message: &T,
@@ -126,19 +99,13 @@ pub async fn read_frame<R: AsyncRead + Unpin, T: DeserializeOwned>(
 
 #[derive(Clone, Debug)]
 pub struct Limits {
-    /// Conexões simultâneas no relay.
     pub connections: usize,
-    /// Conexões simultâneas vindas do mesmo IP.
     pub per_address: usize,
     pub rooms: usize,
     pub rooms_per_address: usize,
-    /// Tempo que uma sala espera o anfitrião voltar depois de perder a conexão.
     pub grace: Duration,
-    /// Tempo para o anfitrião aceitar um convidado anunciado.
     pub accept: Duration,
-    /// Silêncio tolerado numa conexão pareada. O app envia algo a cada 200 ms.
     pub idle: Duration,
-    /// Banda máxima por sentido de cada conexão pareada.
     pub bytes_per_second: usize,
     pub pending_per_room: usize,
     pub pipes_per_room: usize,
@@ -185,7 +152,6 @@ struct Server {
     state: Mutex<State>,
 }
 
-/// Conta a conexão enquanto ela existir.
 struct Admission {
     server: Arc<Server>,
     address: IpAddr,
@@ -204,15 +170,11 @@ impl Drop for Admission {
 }
 
 enum End {
-    /// O anfitrião fechou a conexão: a sala termina.
     Closed,
-    /// A conexão caiu: a sala espera o anfitrião voltar.
     Lost,
-    /// Outra conexão de controle assumiu a sala.
     Replaced,
 }
 
-/// Contadores agregados, sem números de sala nem endereços.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stats {
     pub connections: usize,
@@ -220,12 +182,10 @@ pub struct Stats {
     pub pipes: usize,
 }
 
-/// Aceita conexões indefinidamente.
 pub async fn serve(listener: TcpListener, limits: Limits) {
     serve_with_stats(listener, limits, |_| {}).await
 }
 
-/// Como `serve`, chamando `report` a cada hora com os contadores do relay.
 pub async fn serve_with_stats(
     listener: TcpListener,
     limits: Limits,
@@ -248,7 +208,6 @@ pub async fn serve_with_stats(
         let (stream, address) = match listener.accept().await {
             Ok(accepted) => accepted,
             Err(_) => {
-                // Sem descritores livres, por exemplo: espere em vez de girar.
                 sleep(Duration::from_millis(100)).await;
                 continue;
             }
@@ -466,7 +425,6 @@ impl Server {
                 tokio::spawn(async move {
                     sleep(grace).await;
                     let mut state = server.state.lock().unwrap();
-                    // Remove apenas se nenhum anfitrião retomou a sala desde a queda.
                     if state
                         .rooms
                         .get(&room)
@@ -582,7 +540,6 @@ impl Server {
         };
         match ticket {
             Some(ticket) => {
-                // Quem pediu a entrada assume a conexão e responde `Paired` aos dois.
                 if let Err((mut stream, _)) = ticket.deliver.send((stream, admission)) {
                     return reply(&mut stream, &Reply::Unknown).await;
                 }
@@ -597,7 +554,6 @@ async fn reply(stream: &mut TcpStream, message: &Reply) -> io::Result<()> {
     timeout(WRITE, write_frame(stream, message)).await?
 }
 
-/// Repassa bytes num sentido, com limite de banda e de silêncio.
 async fn pump(mut from: OwnedReadHalf, mut to: OwnedWriteHalf, limits: &Limits) -> io::Result<()> {
     let mut buffer = vec![0; 16 * 1024];
     let rate = limits.bytes_per_second.max(1) as f64;

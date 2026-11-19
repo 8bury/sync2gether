@@ -1,5 +1,3 @@
-//! Telas sem acesso a arquivos, ao player ou à rede.
-
 use eframe::egui::{self, Color32, RichText, Stroke};
 
 use crate::model::{Action, SessionState};
@@ -82,7 +80,6 @@ impl Palette {
     }
 }
 
-/// Aplica o tema também usado pelos testes de layout.
 pub fn configure_theme(ctx: &egui::Context, light: bool) {
     let mut fonts = egui::FontDefinitions::default();
     for (name, data) in [
@@ -207,10 +204,8 @@ pub fn configure_theme(ctx: &egui::Context, light: bool) {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Screen {
-    /// Início: criar sala, entrar com código ou abrir um filme sozinho.
     #[default]
     Home,
-    /// Salas da rede local, nas opções avançadas.
     Browse,
     Preparation,
     Watching,
@@ -218,19 +213,12 @@ pub enum Screen {
 pub struct Inputs {
     pub address: String,
     pub port: u16,
-    /// Código digitado para entrar numa sala pela internet.
     pub code: String,
-    /// Relay das salas pela internet, `nome:porta`.
     pub relay: String,
-    /// Mostra salas na rede local e entrada por endereço.
     pub lan: bool,
-    /// A última entrada foi por código: uma recusa mostra o erro sob o campo.
     pub code_entry: bool,
-    /// O código foi editado depois da última tentativa, cujo erro some.
     pub code_edited: bool,
-    /// Entrando numa sala pela internet: o início mostra o progresso no botão.
     pub joining: bool,
-    /// Pede confirmação antes de sair de uma sala com a outra pessoa conectada.
     pub confirm_leave: bool,
     pub screen: Screen,
     pub room_panel: bool,
@@ -377,7 +365,6 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
     view.peer_file = view
         .connected
         .then(|| "Filme.de.demonstração.1080p.mkv".into());
-    // A aprovação de entrada só existe nas salas da rede local.
     if state == SessionState::Approval {
         view.room_address = Some("192.168.1.10:7842".parse().unwrap());
     } else {
@@ -459,7 +446,6 @@ fn card(colors: Palette) -> egui::Frame {
             color: Color32::from_black_alpha(if colors.dark { 40 } else { 10 }),
         })
 }
-/// Família semibold quando as fontes já foram carregadas; senão, a padrão.
 fn semibold_family(ctx: &egui::Context) -> egui::FontFamily {
     let family = egui::FontFamily::Name("sans-semibold".into());
     if ctx.fonts(|fonts| fonts.families().contains(&family)) {
@@ -473,7 +459,6 @@ pub(crate) fn strong(ui: &egui::Ui, text: impl Into<String>) -> RichText {
         .strong()
         .family(semibold_family(ui.ctx()))
 }
-/// Título de tela, com espaçamento entre letras levemente reduzido.
 fn title(ui: &egui::Ui, text: impl Into<String>, size: f32) -> RichText {
     strong(ui, text)
         .size(size)
@@ -545,7 +530,6 @@ fn draw_flow(
     let colors = Palette::new(ui.visuals().dark_mode);
     let sticky_preparation = ui.ctx().content_rect().height() < 600.0;
     if inputs.last_role != Role::Local && view.role == Role::Local {
-        // Um código recusado volta ao início, com o erro sob o código digitado.
         inputs.screen = Screen::Home;
         inputs.joining = false;
         inputs.confirm_leave = false;
@@ -619,7 +603,6 @@ fn draw_flow(
             });
     } else {
         inputs.player.video_rect = None;
-        // Entrando com código, o início continua na tela até a sala responder.
         let joining = inputs.joining && view.role == Role::Guest && !view.connected;
         let body = if inputs.screen == Screen::Home || joining {
             Body::Home
@@ -647,7 +630,6 @@ fn draw_flow(
             )
             .show(ui, |ui| {
                 header(ui, colors, inputs, view, step, body, &mut actions);
-                // Sem etapa nem sala, o cabeçalho faz parte da página: sem linha.
                 if step.is_some() {
                     let rect = ui.clip_rect();
                     ui.painter().hline(
@@ -657,7 +639,6 @@ fn draw_flow(
                     );
                 }
             });
-        // Esc faz o mesmo que a seta do cabeçalho, fora de campos de texto e menus.
         if back_label(view, body).is_some()
             && !inputs.confirm_leave
             && !egui::Popup::is_any_open(ui.ctx())
@@ -699,7 +680,6 @@ fn draw_flow(
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        // Telas curtas ficam um pouco acima do centro, não presas ao topo.
                         let height = match body {
                             Body::Home => 430.0,
                             Body::Room => 400.0,
@@ -751,7 +731,6 @@ fn draw_flow(
     actions
 }
 
-/// O rótulo da seta de voltar, ou nada quando a tela já é o começo.
 fn back_label(view: &crate::runtime::View, body: Body) -> Option<&'static str> {
     match body {
         Body::Home | Body::Browse => None,
@@ -759,7 +738,6 @@ fn back_label(view: &crate::runtime::View, body: Body) -> Option<&'static str> {
     }
 }
 
-/// Sai da sala; com a outra pessoa conectada, pergunta antes.
 pub(crate) fn request_leave(
     view: &crate::runtime::View,
     inputs: &mut Inputs,
@@ -782,7 +760,6 @@ fn confirm_leave(
     actions: &mut Vec<crate::runtime::Command>,
 ) {
     use crate::runtime::Role;
-    // A outra pessoa saiu enquanto a pergunta estava aberta: não há mais o que confirmar.
     if view.role == Role::Local || !view.connected {
         inputs.confirm_leave = false;
         return;
@@ -862,19 +839,15 @@ fn secondary(ui: &mut egui::Ui, colors: Palette, text: &str, enabled: bool) -> e
         .enabled(enabled)
         .show(ui, colors)
 }
-/// O que ocupa o centro da janela fora do player.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Body {
     Home,
     Browse,
-    /// Anfitrião esperando alguém entrar: o convite é a tela.
     Room,
-    /// Convidado conectando à sala da rede local ou reconectando.
     Connecting,
     Preparation,
 }
 
-/// Etapas do fluxo, mostradas no cabeçalho no lugar de um título por estado.
 const STEPS: [&str; 3] = ["Sala", "Filme", "Assistir"];
 
 fn header(
@@ -890,7 +863,6 @@ fn header(
         ui.set_min_height(36.0);
         ui.spacing_mut().item_spacing.x = 10.0;
         let wide = ui.available_width() >= 600.0;
-        // Voltar fica sempre no mesmo canto; nas salas, voltar é sair delas.
         if let Some(label) = back_label(view, body)
             && kit::icon_button(ui, colors, kit::Glyph::ArrowLeft, label, 36.0).clicked()
         {
@@ -914,7 +886,6 @@ fn header(
     });
 }
 
-/// Três etapas numeradas; a atual acesa, as anteriores marcadas.
 fn steps(ui: &mut egui::Ui, colors: Palette, current: usize, labels: bool) {
     ui.spacing_mut().item_spacing.x = 8.0;
     for (index, name) in STEPS.iter().enumerate() {
@@ -973,7 +944,6 @@ fn steps(ui: &mut egui::Ui, colors: Palette, current: usize, labels: bool) {
     }
 }
 
-/// O código da sala, sempre à vista; um clique copia.
 fn room_chip(ui: &mut egui::Ui, colors: Palette, code: &str, connected: bool) {
     let prefix = RichText::new("Sala ").size(12.5).color(colors.muted);
     let font = egui::FontId::new(12.5, semibold_family(ui.ctx()));
@@ -1252,12 +1222,10 @@ fn room_contents(
         }
     });
 }
-/// Rótulo da saída para o papel atual, usado também pela seta do player.
 pub(crate) fn preparation_leave_label(role: crate::runtime::Role) -> &'static str {
     preparation::leave_label(role)
 }
 
-/// O título preserva o nome do usuário, omitindo apenas a extensão de vídeo.
 pub(crate) fn media_title(file: &str) -> &str {
     if let Some((name, extension)) = file.rsplit_once('.')
         && [

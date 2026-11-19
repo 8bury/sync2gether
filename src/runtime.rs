@@ -1,4 +1,3 @@
-//! Comandos e eventos ligam a UI à preparação, agendamento e correção dos players.
 use crate::{
     discovery, network, player,
     protocol::{Control, Media, Message, PORT, Playback, Presence, Snapshot, Verification},
@@ -67,10 +66,8 @@ pub struct View {
     pub drift: f64,
     pub peer_drift: Option<f64>,
     pub room_key: String,
-    /// Sala pela internet, com código em vez de endereço.
     pub internet: bool,
     pub room_code: Option<String>,
-    /// O anfitrião está sem contato com o relay e tenta reconectar.
     pub relay_offline: bool,
     pub preparing: bool,
     pub scheduled: bool,
@@ -88,18 +85,10 @@ pub enum Command {
     Discover,
     CancelDiscovery,
     RequestJoin(String),
-    Approve {
-        id: u64,
-        accept: bool,
-    },
+    Approve { id: u64, accept: bool },
     Join(String, String),
-    /// Cria uma sala pela internet no relay informado.
     HostInternet(String),
-    /// Entra numa sala pela internet com o código.
-    JoinCode {
-        relay: String,
-        code: String,
-    },
+    JoinCode { relay: String, code: String },
     Leave,
     Control(Control),
     Volume(f64),
@@ -117,16 +106,13 @@ pub struct Runtime {
     join: Option<std::thread::JoinHandle<()>>,
 }
 impl Runtime {
-    /// Interpola a posição para a barra de progresso entre eventos do player.
     pub fn position_now(&self, view: &View) -> f64 {
         view.player
             .position_at(self.origin.elapsed().as_secs_f64() * 1000.0)
     }
-    /// Renderização por software, também usada pelos testes sem janela.
     pub fn start() -> Self {
         Self::start_with_renderer(None)
     }
-    /// Player com renderização OpenGL no contexto da janela.
     pub fn start_gl(
         cc: &eframe::CreationContext<'_>,
     ) -> Result<(Self, player::GlRenderer), String> {
@@ -166,9 +152,6 @@ impl Runtime {
         }
     }
 
-    /// Encerra rede e player e aguarda a liberação das threads nativas.
-    /// Chame fora de um runtime Tokio, após destruir o renderizador OpenGL.
-    /// Esta espera é somente para o encerramento, nunca para ações da UI.
     pub fn shutdown(&mut self) {
         if let Some(join) = self.join.take() {
             let _ = self.commands.blocking_send(Command::Shutdown);
@@ -1145,7 +1128,6 @@ impl Worker {
         };
     }
 }
-/// Orientação mostrada quando o código digitado não tem o formato esperado.
 pub const CODE_HINT: &str =
     "Digite o código completo, com o número e as duas palavras, como 4821-gato-lua.";
 

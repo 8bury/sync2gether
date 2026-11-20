@@ -44,6 +44,7 @@ pub struct ChunkCache {
     chunks_total: u32,
     hashes: Arc<Vec<[u8; 32]>>,
     state: Mutex<State>,
+    bitmap_io: tokio::sync::Mutex<()>,
     chunk_ready: Notify,
     work_available: Notify,
 }
@@ -216,6 +217,7 @@ impl ChunkCache {
                 cursor_chunk: 0,
                 closed: None,
             }),
+            bitmap_io: tokio::sync::Mutex::new(()),
             chunk_ready: Notify::new(),
             work_available: Notify::new(),
         })
@@ -332,8 +334,26 @@ impl ChunkCache {
         }
     }
 
+    async fn persist_bitmap_byte(&self, byte_idx: usize) -> io::Result<()> {
+        let _guard = self.bitmap_io.lock().await;
+        let val = self.state.lock().unwrap().bitmap[byte_idx];
+        let bitmap_file = self.bitmap_file.clone();
+        tokio::task::spawn_blocking(move || bitmap_file.write_all_at(&[val], byte_idx as u64))
+            .await
+            .map_err(io::Error::other)?
+    }
+
+    async fn flush_bitmap(&self) -> io::Result<()> {
+        let _guard = self.bitmap_io.lock().await;
+        let bitmap = self.state.lock().unwrap().bitmap.clone();
+        let bitmap_file = self.bitmap_file.clone();
+        tokio::task::spawn_blocking(move || bitmap_file.write_all_at(&bitmap, 0))
+            .await
+            .map_err(io::Error::other)?
+    }
+
     async fn invalidate_corrupt_chunk(&self, idx: u32) {
-        let byte_info = {
+        let byte_idx = {
             let mut state = self.state.lock().unwrap();
             let byte_idx = (idx / 8) as usize;
             let mask = 1 << (idx % 8);
@@ -347,15 +367,13 @@ impl ChunkCache {
                 if !state.urgent.contains(&idx) {
                     state.urgent.push_front(idx);
                 }
-                Some((byte_idx as u64, state.bitmap[byte_idx]))
+                Some(byte_idx)
             } else {
                 None
             }
         };
-        if let Some((offset, val)) = byte_info {
-            let bitmap_file = self.bitmap_file.clone();
-            let _ =
-                tokio::task::spawn_blocking(move || bitmap_file.write_all_at(&[val], offset)).await;
+        if let Some(byte_idx) = byte_idx {
+            let _ = self.persist_bitmap_byte(byte_idx).await;
         }
         self.work_available.notify_waiters();
     }
@@ -434,7 +452,7 @@ impl ChunkCache {
             .await
             .map_err(io::Error::other)??;
 
-        let bitmap_write = {
+        let byte_idx = {
             let mut state = self.state.lock().unwrap();
             state.in_flight.remove(&idx);
             state.failures.remove(&idx);
@@ -445,16 +463,13 @@ impl ChunkCache {
                 state.bitmap[byte_idx] |= mask;
                 state.chunks_cached += 1;
                 state.cached_bytes += data_len;
-                Some((byte_idx as u64, state.bitmap[byte_idx]))
+                Some(byte_idx)
             } else {
                 None
             }
         };
-        if let Some((byte_offset, val)) = bitmap_write {
-            let bitmap_file = self.bitmap_file.clone();
-            let _ =
-                tokio::task::spawn_blocking(move || bitmap_file.write_all_at(&[val], byte_offset))
-                    .await;
+        if let Some(byte_idx) = byte_idx {
+            self.persist_bitmap_byte(byte_idx).await?;
         }
         self.chunk_ready.notify_waiters();
         self.work_available.notify_waiters();
@@ -481,6 +496,7 @@ impl ChunkCache {
     }
 
     pub async fn verify_full_file_hash(&self) -> io::Result<bool> {
+        self.flush_bitmap().await?;
         let path = self.dir.join("data.bin");
         let expected = self.file_hash.clone();
         let file_size = self.file_size;
@@ -718,6 +734,59 @@ mod tests {
         assert_eq!(cache.next_chunk_to_fetch().await, Some(9));
         assert_eq!(cache.next_chunk_to_fetch().await, Some(3));
         assert_eq!(cache.next_chunk_to_fetch().await, Some(4));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_completions_in_same_bitmap_byte_persist_all_bits() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".cache/stream-bitmap-race-test");
+        let chunk_size = 4096u32;
+        let data: Vec<u8> = (0..(chunk_size as usize * 8))
+            .map(|i| ((i * 17) ^ (i >> 3)) as u8)
+            .collect();
+        let (hash, index) = make_hashes(&data, chunk_size);
+        let hashes = Arc::new(index.hashes.clone());
+
+        for _ in 0..16 {
+            let _ = fs::remove_dir_all(&dir);
+            let cache = Arc::new(
+                ChunkCache::open(
+                    &dir,
+                    &hash,
+                    &index.digest,
+                    data.len() as u64,
+                    chunk_size,
+                    hashes.clone(),
+                )
+                .unwrap(),
+            );
+            let mut tasks = tokio::task::JoinSet::new();
+            for idx in 0..8u32 {
+                let cache = cache.clone();
+                let start = idx as usize * chunk_size as usize;
+                let chunk = data[start..start + chunk_size as usize].to_vec();
+                tasks.spawn(async move {
+                    cache.complete_chunk(idx, chunk).await.unwrap();
+                });
+            }
+            while let Some(res) = tasks.join_next().await {
+                res.unwrap();
+            }
+            drop(cache);
+
+            let resumed = ChunkCache::open(
+                &dir,
+                &hash,
+                &index.digest,
+                data.len() as u64,
+                chunk_size,
+                hashes.clone(),
+            )
+            .unwrap();
+            assert!(resumed.is_complete());
+            assert_eq!(resumed.stats().cached_bytes, data.len() as u64);
+        }
+
         let _ = fs::remove_dir_all(&dir);
     }
 }

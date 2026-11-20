@@ -4,7 +4,14 @@ use crate::{
     protocol::{Control, Message, StreamAnswer, StreamOffer},
     stream::{StreamEvent, StreamPhase, StreamTelemetry, guest, host},
 };
-use tokio::task::JoinHandle;
+use std::time::{Duration, Instant};
+
+const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(15);
+const STREAM_REQUEST_COOLDOWN: Duration = Duration::from_secs(3);
+
+fn next_stream_id() -> u64 {
+    rand::random::<u64>().max(1)
+}
 
 pub(super) enum StreamPrepResult {
     HostReady {
@@ -15,7 +22,7 @@ pub(super) enum StreamPrepResult {
     GuestReady {
         id: u64,
         answer: Box<StreamAnswer>,
-        task: JoinHandle<()>,
+        pending: Box<guest::GuestPending>,
     },
     Failed {
         id: u64,
@@ -28,11 +35,12 @@ impl Worker {
         let active_id = self.stream_id;
         let was_active =
             self.stream_task.is_some() || self.stream_pending.is_some() || self.view.stream.active;
-        self.stream_id = self.stream_id.wrapping_add(1);
+        self.stream_id = next_stream_id();
         if let Some(task) = self.stream_task.take() {
             task.abort();
         }
         self.stream_pending = None;
+        self.stream_waiting_since = None;
         self.view.stream = StreamTelemetry::default();
         self.presence.streaming = false;
         if notify_peer && was_active && self.view.connected {
@@ -57,6 +65,7 @@ impl Worker {
                 let id = self.stream_id;
                 let duration = self.presence.duration;
                 let stun = self.view.internet;
+                self.stream_waiting_since = Some(Instant::now());
                 self.view.stream = StreamTelemetry {
                     active: true,
                     is_sender: true,
@@ -91,6 +100,7 @@ impl Worker {
             }
             Role::Guest => {
                 self.stop_stream(false);
+                self.stream_waiting_since = Some(Instant::now());
                 self.view.stream = StreamTelemetry {
                     active: true,
                     is_sender: false,
@@ -104,9 +114,20 @@ impl Worker {
     }
 
     pub(super) fn handle_stream_request(&mut self) {
-        if self.view.role == Role::Host && self.local_media.is_some() {
-            self.start_stream();
+        if self.view.role != Role::Host || self.local_media.is_none() {
+            return;
         }
+        if self.view.stream.active {
+            return;
+        }
+        if self
+            .last_stream_request
+            .is_some_and(|at| at.elapsed() < STREAM_REQUEST_COOLDOWN)
+        {
+            return;
+        }
+        self.last_stream_request = Some(Instant::now());
+        self.start_stream();
     }
 
     pub(super) fn handle_stream_offer(&mut self, offer: StreamOffer) {
@@ -117,6 +138,7 @@ impl Worker {
         self.stream_id = offer.id;
         let id = offer.id;
         let stun = self.view.internet;
+        self.stream_waiting_since = None;
         self.view.stream = StreamTelemetry {
             active: true,
             is_sender: false,
@@ -124,16 +146,15 @@ impl Worker {
             total_bytes: offer.media.bytes,
             ..Default::default()
         };
-        let events = self.stream_tx.clone();
         let prep_tx = self.stream_prep_tx.clone();
         tokio::spawn(async move {
-            match guest::start(offer, stun, None, events).await {
-                Ok((answer, task)) => {
+            match guest::prepare(offer, stun, None).await {
+                Ok((answer, pending)) => {
                     let _ = prep_tx
                         .send(StreamPrepResult::GuestReady {
                             id,
                             answer: Box::new(answer),
-                            task,
+                            pending: Box::new(pending),
                         })
                         .await;
                 }
@@ -155,6 +176,7 @@ impl Worker {
         }
         if let Some(pending) = self.stream_pending.take() {
             if pending.id == answer.id {
+                self.stream_waiting_since = None;
                 let task = pending.accept(answer, self.stream_tx.clone());
                 self.stream_task = Some(task);
             } else {
@@ -169,18 +191,34 @@ impl Worker {
         }
     }
 
+    pub(super) fn check_stream_timeout(&mut self) {
+        if let Some(since) = self.stream_waiting_since
+            && since.elapsed() >= NEGOTIATION_TIMEOUT
+        {
+            self.stop_stream(true);
+            let error =
+                "O parceiro não respondeu à negociação de streaming P2P a tempo.".to_owned();
+            self.view.stream.phase = StreamPhase::Error(error.clone());
+            self.view.notice = Some(error);
+        }
+    }
+
     pub(super) fn stream_prep_event(&mut self, result: StreamPrepResult) {
         match result {
             StreamPrepResult::HostReady { id, offer, pending } if id == self.stream_id => {
                 self.stream_pending = Some(*pending);
                 self.send(Message::StreamOffer(offer));
             }
-            StreamPrepResult::GuestReady { id, answer, task } if id == self.stream_id => {
-                self.stream_task = Some(task);
+            StreamPrepResult::GuestReady {
+                id,
+                answer,
+                pending,
+            } if id == self.stream_id => {
                 self.send(Message::StreamAnswer(answer));
+                self.stream_task = Some(pending.connect(self.stream_tx.clone()));
             }
             StreamPrepResult::Failed { id, error } if id == self.stream_id => {
-                self.stop_stream(false);
+                self.stop_stream(true);
                 self.view.stream.phase = StreamPhase::Error(error.clone());
                 self.view.notice = Some(error);
             }
@@ -219,8 +257,11 @@ impl Worker {
                 self.view.notice = None;
                 self.player(player::Command::LoadUrl(url, self.generation));
             }
-            StreamEvent::Failed { id, error } if id == self.stream_id => {
+            StreamEvent::Ended { id } if id == self.stream_id => {
                 self.stop_stream(false);
+            }
+            StreamEvent::Failed { id, error } if id == self.stream_id => {
+                self.stop_stream(true);
                 self.view.stream.phase = StreamPhase::Error(error.clone());
                 self.view.notice = Some(error);
             }

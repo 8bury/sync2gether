@@ -117,6 +117,7 @@ pub enum StreamPhase {
     Connecting,
     Probing,
     Streaming,
+    Complete,
     Error(String),
 }
 
@@ -217,6 +218,9 @@ pub enum StreamEvent {
         media: Media,
         file_name: String,
         telemetry: StreamTelemetry,
+    },
+    Ended {
+        id: u64,
     },
     Failed {
         id: u64,

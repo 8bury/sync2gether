@@ -133,6 +133,7 @@ fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Ve
             },
             false,
         ),
+        StreamPhase::Complete => ("Filme 100% em cache local (P2P verificado)", false),
         StreamPhase::Idle | StreamPhase::Error(_) => ("Streaming P2P", false),
     };
     egui::Frame::new()
@@ -164,7 +165,12 @@ fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Ve
             if s.total_bytes > 0 {
                 kit::progress(ui, colors, s.cache_fraction(), ui.available_width());
                 let pct = (s.cache_fraction() * 100.0).round() as u32;
-                let mut metrics = vec![format!("{pct}% em cache")];
+                let progress_label = if s.is_sender {
+                    format!("{pct}% enviados")
+                } else {
+                    format!("{pct}% em cache")
+                };
+                let mut metrics = vec![progress_label];
                 if let Some(secs) = s.buffered_seconds() {
                     metrics.push(format!("{secs:.0}s à frente"));
                 }

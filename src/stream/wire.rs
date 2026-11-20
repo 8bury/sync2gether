@@ -8,7 +8,7 @@ pub const OP_PROBE: u8 = 3;
 pub const STATUS_OK: u8 = 0;
 pub const STATUS_ERR: u8 = 1;
 
-pub const MAX_PROBE_BYTES: u32 = 2 * 1024 * 1024;
+pub const MAX_PROBE_BYTES: u32 = 1024 * 1024;
 pub const MAX_HASH_TABLE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +61,22 @@ pub async fn write_ok_payload<W: AsyncWrite + Unpin>(
     writer.write_u8(STATUS_OK).await?;
     writer.write_u32(data.len() as u32).await?;
     writer.write_all(data).await?;
+    writer.flush().await
+}
+
+pub async fn write_ok_probe<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    total_bytes: u32,
+) -> io::Result<()> {
+    writer.write_u8(STATUS_OK).await?;
+    writer.write_u32(total_bytes).await?;
+    let block = [0xA5u8; 64 * 1024];
+    let mut remaining = total_bytes as usize;
+    while remaining > 0 {
+        let n = remaining.min(block.len());
+        writer.write_all(&block[..n]).await?;
+        remaining -= n;
+    }
     writer.flush().await
 }
 

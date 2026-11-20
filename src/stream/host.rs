@@ -4,21 +4,33 @@ use super::{
 };
 use crate::protocol::{Media, StreamAnswer, StreamOffer};
 use std::{
+    collections::HashSet,
     fs::File,
     io,
-    net::{SocketAddr, UdpSocket},
+    net::UdpSocket,
     os::unix::fs::FileExt,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::mpsc,
+    task::{JoinHandle, JoinSet},
+};
 
-const ACCEPT_TIMEOUT: Duration = Duration::from_secs(12);
+const ACCEPT_TIMEOUT: Duration = Duration::from_secs(14);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(4);
 const PUNCH_INTERVAL: Duration = Duration::from_millis(200);
+
+struct EndpointGuard(quinn::Endpoint);
+impl Drop for EndpointGuard {
+    fn drop(&mut self) {
+        self.0.close(0u32.into(), b"stop");
+    }
+}
 
 pub struct HostPending {
     pub id: u64,
@@ -27,6 +39,7 @@ pub struct HostPending {
     path: PathBuf,
     index: Arc<ChunkIndex>,
     duration: f64,
+    stun_enabled: bool,
 }
 
 pub async fn prepare(
@@ -60,20 +73,22 @@ pub async fn prepare(
             path,
             index,
             duration,
+            stun_enabled,
         },
     ))
 }
 
 impl HostPending {
     pub fn accept(self, answer: StreamAnswer, events: mpsc::Sender<StreamEvent>) -> JoinHandle<()> {
+        let id = self.id;
         tokio::spawn(async move {
-            if let Err(error) = run_host(self, answer, events.clone()).await {
-                let _ = events
-                    .send(StreamEvent::Failed {
-                        id: error.0,
-                        error: error.1,
-                    })
-                    .await;
+            match run_host(self, answer, events.clone()).await {
+                Ok(()) => {
+                    let _ = events.send(StreamEvent::Ended { id }).await;
+                }
+                Err(error) => {
+                    let _ = events.send(StreamEvent::Failed { id, error }).await;
+                }
             }
         })
     }
@@ -83,24 +98,20 @@ async fn run_host(
     pending: HostPending,
     answer: StreamAnswer,
     events: mpsc::Sender<StreamEvent>,
-) -> Result<(), (u64, String)> {
+) -> Result<(), String> {
     let id = pending.id;
-    let remote_candidates: Vec<SocketAddr> = answer
-        .candidates
-        .iter()
-        .filter_map(|c| c.parse::<SocketAddr>().ok())
-        .filter(|a| crate::network::allowed_address(*a))
-        .collect();
+    let remote_candidates =
+        nat::filter_remote_candidates(&answer.candidates, !pending.stun_enabled);
     if remote_candidates.is_empty() {
-        return Err((id, "Parceiro não enviou endereços P2P válidos.".into()));
+        return Err("Parceiro não enviou endereços P2P válidos.".into());
     }
 
     let punch_sock = pending
         .socket
         .try_clone()
-        .map_err(|_| (id, "Falha ao preparar socket UDP para streaming.".into()))?;
+        .map_err(|_| "Falha ao preparar socket UDP para streaming.".to_owned())?;
     let server_config = tls::server_config(&pending.identity, &answer.cert_fingerprint)
-        .map_err(|e| (id, format!("Falha ao configurar TLS P2P: {e}")))?;
+        .map_err(|e| format!("Falha ao configurar TLS P2P: {e}"))?;
 
     let endpoint = quinn::Endpoint::new(
         quinn::EndpointConfig::default(),
@@ -108,7 +119,8 @@ async fn run_host(
         pending.socket,
         Arc::new(quinn::TokioRuntime),
     )
-    .map_err(|e| (id, format!("Falha ao abrir endpoint QUIC: {e}")))?;
+    .map_err(|e| format!("Falha ao abrir endpoint QUIC: {e}"))?;
+    let _endpoint_guard = EndpointGuard(endpoint.clone());
 
     let file_bitrate = file_bitrate_bps(pending.index.file_size, pending.duration);
     let _ = events
@@ -126,51 +138,34 @@ async fn run_host(
         })
         .await;
 
-    let puncher = tokio::spawn(async move {
+    let mut children = JoinSet::new();
+    children.spawn(async move {
         let mut interval = tokio::time::interval(PUNCH_INTERVAL);
-        for _ in 0..60 {
+        for _ in 0..70 {
             interval.tick().await;
             nat::send_hole_punches(&punch_sock, &remote_candidates);
         }
     });
 
-    let conn = match tokio::time::timeout(ACCEPT_TIMEOUT, endpoint.accept()).await {
-        Ok(Some(incoming)) => {
-            puncher.abort();
-            incoming.await.map_err(|_| {
-                (
-                    id,
-                    "Handshake P2P direto falhou. Verifique firewall ou NAT.".into(),
-                )
-            })?
-        }
-        _ => {
-            puncher.abort();
-            return Err((
-                id,
-                "Não foi possível abrir túnel P2P direto (NAT restrito). Tente na rede local, IPv6 ou VPN."
-                    .into(),
-            ));
-        }
-    };
+    let (conn, first_bi) = accept_authenticated(&endpoint).await?;
+    children.abort_all();
 
     let peer_addr = conn.remote_address();
-    let file = Arc::new(File::open(&pending.path).map_err(|_| {
-        (
-            id,
-            "Não foi possível abrir o arquivo para streaming.".into(),
-        )
-    })?);
+    let file = Arc::new(
+        File::open(&pending.path)
+            .map_err(|_| "Não foi possível abrir o arquivo para streaming.".to_owned())?,
+    );
     let hash_table = Arc::new(pending.index.serialize_hashes());
     let bytes_sent = Arc::new(AtomicU64::new(0));
-    let chunks_sent = Arc::new(AtomicU64::new(0));
+    let unique_chunks = Arc::new(Mutex::new(HashSet::<u32>::new()));
 
     let telemetry_events = events.clone();
     let telemetry_bytes = bytes_sent.clone();
-    let telemetry_chunks = chunks_sent.clone();
+    let telemetry_chunks = unique_chunks.clone();
     let total_bytes = pending.index.file_size;
+    let chunk_size = pending.index.chunk_size;
     let chunks_total = pending.index.hashes.len() as u64;
-    let telemetry_task = tokio::spawn(async move {
+    children.spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(500));
         let mut prev_bytes = 0u64;
         let mut prev_at = Instant::now();
@@ -182,7 +177,11 @@ async fn run_host(
             let bps = ((cur_bytes.saturating_sub(prev_bytes) as f64 * 8.0) / dt) as u64;
             prev_bytes = cur_bytes;
             prev_at = now;
-            let _ = telemetry_events
+            let unique_count = telemetry_chunks.lock().unwrap().len() as u64;
+            let unique_bytes = unique_count
+                .saturating_mul(u64::from(chunk_size))
+                .min(total_bytes);
+            if telemetry_events
                 .send(StreamEvent::Telemetry {
                     id,
                     telemetry: StreamTelemetry {
@@ -192,24 +191,36 @@ async fn run_host(
                         peer_addr: Some(peer_addr),
                         file_bitrate_bps: file_bitrate,
                         transfer_bps: bps,
-                        cached_bytes: cur_bytes.min(total_bytes),
+                        cached_bytes: unique_bytes,
                         total_bytes,
-                        chunks_cached: telemetry_chunks.load(Ordering::Relaxed).min(chunks_total),
+                        chunks_cached: unique_count.min(chunks_total),
                         chunks_total,
                         ..Default::default()
                     },
                 })
-                .await;
+                .await
+                .is_err()
+            {
+                break;
+            }
         }
     });
 
-    while let Ok((mut send, mut recv)) = conn.accept_bi().await {
+    let mut next_bi = Some(first_bi);
+    loop {
+        let (mut send, mut recv) = match next_bi.take() {
+            Some(bi) => bi,
+            None => match conn.accept_bi().await {
+                Ok(bi) => bi,
+                Err(_) => break,
+            },
+        };
         let file = file.clone();
         let index = pending.index.clone();
         let hash_table = hash_table.clone();
         let bytes_sent = bytes_sent.clone();
-        let chunks_sent = chunks_sent.clone();
-        tokio::spawn(async move {
+        let unique_chunks = unique_chunks.clone();
+        children.spawn(async move {
             let Ok(request) = wire::read_request(&mut recv).await else {
                 return;
             };
@@ -218,8 +229,7 @@ async fn run_host(
                     let _ = wire::write_ok_payload(&mut send, &hash_table).await;
                 }
                 wire::Request::Probe(size) => {
-                    let probe = vec![0xA5u8; size as usize];
-                    let _ = wire::write_ok_payload(&mut send, &probe).await;
+                    let _ = wire::write_ok_probe(&mut send, size).await;
                 }
                 wire::Request::Chunk(idx) => {
                     if idx as usize >= index.hashes.len() {
@@ -237,7 +247,7 @@ async fn run_host(
                         Ok(Ok(buf)) => {
                             if wire::write_ok_payload(&mut send, &buf).await.is_ok() {
                                 bytes_sent.fetch_add(buf.len() as u64, Ordering::Relaxed);
-                                chunks_sent.fetch_add(1, Ordering::Relaxed);
+                                unique_chunks.lock().unwrap().insert(idx);
                             }
                         }
                         _ => {
@@ -250,7 +260,55 @@ async fn run_host(
         });
     }
 
-    telemetry_task.abort();
-    endpoint.close(0u32.into(), b"done");
+    children.abort_all();
     Ok(())
+}
+
+type BidiStream = (quinn::SendStream, quinn::RecvStream);
+
+async fn accept_authenticated(
+    endpoint: &quinn::Endpoint,
+) -> Result<(quinn::Connection, BidiStream), String> {
+    let deadline = tokio::time::Instant::now() + ACCEPT_TIMEOUT;
+    let mut handshakes = JoinSet::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            handshakes.abort_all();
+            return Err(
+                "Não foi possível abrir túnel P2P direto (NAT restrito). Tente na rede local, IPv6 ou VPN."
+                    .into(),
+            );
+        }
+        tokio::select! {
+            incoming = tokio::time::timeout(remaining, endpoint.accept()) => {
+                match incoming {
+                    Ok(Some(incoming)) => {
+                        handshakes.spawn(async move {
+                            let conn = tokio::time::timeout(HANDSHAKE_TIMEOUT, incoming).await.ok()?.ok()?;
+                            let bi = tokio::time::timeout(HANDSHAKE_TIMEOUT, conn.accept_bi()).await.ok()?.ok()?;
+                            Some((conn, bi))
+                        });
+                    }
+                    Ok(None) => {
+                        handshakes.abort_all();
+                        return Err("Endpoint QUIC encerrado antes da conexão.".into());
+                    }
+                    Err(_) => {
+                        handshakes.abort_all();
+                        return Err(
+                            "Não foi possível abrir túnel P2P direto (NAT restrito). Tente na rede local, IPv6 ou VPN."
+                                .into(),
+                        );
+                    }
+                }
+            }
+            Some(result) = handshakes.join_next(), if !handshakes.is_empty() => {
+                if let Ok(Some(winner)) = result {
+                    handshakes.abort_all();
+                    return Ok(winner);
+                }
+            }
+        }
+    }
 }

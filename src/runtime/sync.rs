@@ -225,6 +225,7 @@ impl Worker {
         if self.view.role == Role::Local {
             return;
         }
+        self.check_stream_timeout();
         self.refresh_presence();
         if self.view.role == Role::Host {
             let before = self.session.state.revision;

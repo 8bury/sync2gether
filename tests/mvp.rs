@@ -627,7 +627,7 @@ fn two_players_sync_via_p2p_streaming_without_guest_local_file() {
     wait(&guest, |v| v.connected && v.can_stream && v.file.is_none());
 
     send(&guest, Command::StartStream);
-    let h = wait(&host, |v| v.ready && v.stream.active);
+    let h = wait(&host, |v| v.ready);
     let g = wait(&guest, |v| v.ready && v.stream.active && v.player.loaded);
     assert_eq!(g.file.as_deref(), Some("mvp-fixture.mkv"));
     assert_eq!(h.peer_file.as_deref(), Some("mvp-fixture.mkv"));

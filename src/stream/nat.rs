@@ -85,8 +85,24 @@ pub async fn gather_candidates(socket: &UdpSocket, stun_enabled: bool) -> Vec<So
         }
     }
 
-    push(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
+    let loopback = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    if (!stun_enabled || out.is_empty())
+        && out.len() < MAX_CANDIDATES
+        && crate::network::allowed_address(loopback)
+        && seen.insert(loopback)
+    {
+        out.push(loopback);
+    }
     out
+}
+
+pub fn filter_remote_candidates(raw: &[String], allow_loopback: bool) -> Vec<SocketAddr> {
+    raw.iter()
+        .filter_map(|c| c.parse::<SocketAddr>().ok())
+        .filter(|a| {
+            crate::network::allowed_address(*a) && (allow_loopback || !a.ip().is_loopback())
+        })
+        .collect()
 }
 
 pub fn send_hole_punches(socket: &UdpSocket, candidates: &[SocketAddr]) {

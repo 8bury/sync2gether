@@ -28,12 +28,14 @@ pub struct StreamOffer {
 }
 impl StreamOffer {
     pub fn valid(&self) -> bool {
+        let max_chunks = (crate::stream::wire::MAX_HASH_TABLE_BYTES / 32) as u64;
         self.media.valid()
             && self.media.bytes > 0
             && valid_file_name(&self.file_name)
             && self.duration.is_finite()
             && self.duration >= 0.0
             && (4096..=4 * 1024 * 1024).contains(&self.chunk_size)
+            && self.media.bytes.div_ceil(u64::from(self.chunk_size)) <= max_chunks
             && valid_hex_64(&self.hash_table_digest)
             && valid_hex_64(&self.cert_fingerprint)
             && !self.candidates.is_empty()

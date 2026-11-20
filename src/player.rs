@@ -71,6 +71,7 @@ pub enum Event {
 }
 pub enum Command {
     Load(PathBuf, u64),
+    LoadUrl(String, u64),
     Pause(bool),
     Seek(f64),
     Prepare { id: u64, position: f64 },
@@ -435,6 +436,15 @@ fn run(
                             Some(path) => api.command(handle, &["loadfile", path, "replace"]),
                             None => Err("O nome do arquivo não é UTF-8".into()),
                         }
+                    }
+                    Command::LoadUrl(url, id) => {
+                        scheduled = None;
+                        preparation = None;
+                        prepared = None;
+                        generation = id;
+                        loaded = false;
+                        let _ = api.command(handle, &["set", "pause", "yes"]);
+                        api.command(handle, &["loadfile", &url, "replace"])
                     }
                     Command::Pause(paused) => {
                         scheduled = None;

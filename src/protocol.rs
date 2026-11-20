@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 pub const PORT: u16 = 7842;
 pub const MAX_MESSAGE: usize = 16 * 1024;
 
@@ -8,6 +8,63 @@ pub const MAX_MESSAGE: usize = 16 * 1024;
 pub struct Media {
     pub hash: String,
     pub bytes: u64,
+}
+impl Media {
+    pub fn valid(&self) -> bool {
+        self.hash.len() == 64 && self.hash.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StreamOffer {
+    pub id: u64,
+    pub media: Media,
+    pub file_name: String,
+    pub duration: f64,
+    pub chunk_size: u32,
+    pub hash_table_digest: String,
+    pub cert_fingerprint: String,
+    pub candidates: Vec<String>,
+}
+impl StreamOffer {
+    pub fn valid(&self) -> bool {
+        self.media.valid()
+            && self.media.bytes > 0
+            && valid_file_name(&self.file_name)
+            && self.duration.is_finite()
+            && self.duration >= 0.0
+            && (4096..=4 * 1024 * 1024).contains(&self.chunk_size)
+            && valid_hex_64(&self.hash_table_digest)
+            && valid_hex_64(&self.cert_fingerprint)
+            && !self.candidates.is_empty()
+            && self.candidates.len() <= 16
+            && self
+                .candidates
+                .iter()
+                .all(|c| c.parse::<std::net::SocketAddr>().is_ok())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamAnswer {
+    pub id: u64,
+    pub cert_fingerprint: String,
+    pub candidates: Vec<String>,
+}
+impl StreamAnswer {
+    pub fn valid(&self) -> bool {
+        valid_hex_64(&self.cert_fingerprint)
+            && !self.candidates.is_empty()
+            && self.candidates.len() <= 16
+            && self
+                .candidates
+                .iter()
+                .all(|c| c.parse::<std::net::SocketAddr>().is_ok())
+    }
+}
+
+fn valid_hex_64(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +134,8 @@ pub struct Presence {
     pub rtt_ms: f64,
     pub uncertainty_ms: f64,
     pub playback: Option<Playback>,
+    #[serde(default)]
+    pub streaming: bool,
 }
 impl Presence {
     pub fn valid(&self) -> bool {
@@ -216,6 +275,12 @@ pub enum Message {
         sent_ms: f64,
         received_ms: f64,
         sent_host_ms: f64,
+    },
+    StreamRequest,
+    StreamOffer(Box<StreamOffer>),
+    StreamAnswer(Box<StreamAnswer>),
+    StreamStop {
+        id: u64,
     },
     Bye,
 }

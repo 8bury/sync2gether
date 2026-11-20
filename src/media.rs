@@ -1,4 +1,7 @@
-use crate::protocol::Media;
+use crate::{
+    protocol::Media,
+    stream::{CHUNK_SIZE, ChunkIndex},
+};
 use std::{
     fs::File,
     io::{self, Read},
@@ -11,24 +14,40 @@ pub fn identify(path: &Path) -> io::Result<Media> {
 
 pub fn identify_with_progress(
     path: &Path,
-    mut progress: impl FnMut(u64, u64) -> io::Result<()>,
+    progress: impl FnMut(u64, u64) -> io::Result<()>,
 ) -> io::Result<Media> {
+    identify_with_chunks_and_progress(path, progress).map(|(media, _)| media)
+}
+
+pub fn identify_with_chunks_and_progress(
+    path: &Path,
+    mut progress: impl FnMut(u64, u64) -> io::Result<()>,
+) -> io::Result<(Media, ChunkIndex)> {
     let mut file = File::open(path)?;
     let before = file.metadata()?;
     if !before.is_file() {
         return Err(io::Error::other("Selecione um arquivo regular"));
     }
     let mut hasher = blake3::Hasher::new();
-    let mut buffer = vec![0; 1024 * 1024];
+    let mut chunk_hashes = Vec::new();
+    let mut buffer = vec![0; CHUNK_SIZE as usize];
     let mut bytes = 0;
     progress(0, before.len())?;
     loop {
-        let n = file.read(&mut buffer)?;
-        if n == 0 {
+        let mut filled = 0;
+        while filled < buffer.len() {
+            let n = file.read(&mut buffer[filled..])?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        if filled == 0 {
             break;
         }
-        bytes += n as u64;
-        hasher.update(&buffer[..n]);
+        bytes += filled as u64;
+        hasher.update(&buffer[..filled]);
+        chunk_hashes.push(*blake3::hash(&buffer[..filled]).as_bytes());
         progress(bytes.min(before.len()), before.len())?;
     }
     let after = file.metadata()?;
@@ -38,10 +57,12 @@ pub fn identify_with_progress(
     {
         return Err(io::Error::other("Arquivo mudou durante a verificação"));
     }
-    Ok(Media {
+    let media = Media {
         hash: hasher.finalize().to_hex().to_string(),
         bytes,
-    })
+    };
+    let index = ChunkIndex::from_hashes(CHUNK_SIZE, bytes, chunk_hashes);
+    Ok((media, index))
 }
 
 pub fn display_name(path: &Path) -> String {
@@ -103,7 +124,10 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             updates,
-            [(0, 3 * 1024 * 1024), (1024 * 1024, 3 * 1024 * 1024)]
+            [
+                (0, 3 * 1024 * 1024),
+                (u64::from(CHUNK_SIZE), 3 * 1024 * 1024)
+            ]
         );
         updates.clear();
         let media = identify_with_progress(&path, |bytes, total| {

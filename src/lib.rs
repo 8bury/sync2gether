@@ -13,6 +13,7 @@ pub mod player;
 pub mod protocol;
 pub mod runtime;
 pub mod session;
+pub mod stream;
 pub mod sync;
 
 pub mod discovery;

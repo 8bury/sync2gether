@@ -15,6 +15,8 @@ impl Worker {
         self.view.peer_verification = None;
         self.view.peer_verified = false;
         self.view.peer_blocked = false;
+        self.view.peer_streaming = false;
+        self.view.can_stream = false;
         self.view.preparing = false;
         self.view.scheduled = false;
         self.view.peer_drift = None;
@@ -31,7 +33,19 @@ impl Worker {
                 self.view.peer_verification = peer.verification;
                 self.view.peer_verified = peer.media.is_some();
                 self.view.peer_blocked = peer.blocked;
+                self.view.peer_streaming = peer.streaming;
             }
+            self.view.can_stream = self.view.connected
+                && !self.view.stream.active
+                && match self.view.role {
+                    Role::Host => {
+                        self.local_media.is_some()
+                            && self.presence.media.is_some()
+                            && !self.view.loading
+                    }
+                    Role::Guest => state.host.media.is_some() && !state.host.loading,
+                    Role::Local => false,
+                };
             self.view.peer_ready = if self.view.role == Role::Host {
                 state.guest.ready
             } else {
@@ -79,6 +93,15 @@ impl Worker {
                 "Conectando ou reconectando, reprodução pausada".into()
             }
             _ if self.view.loading => "Verificando o arquivo".into(),
+            _ if matches!(
+                self.view.stream.phase,
+                crate::stream::StreamPhase::Offering
+                    | crate::stream::StreamPhase::Connecting
+                    | crate::stream::StreamPhase::Probing
+            ) =>
+            {
+                "Conectando streaming P2P direto".into()
+            }
             _ if self.view.preparing => "Preparando os dois players na mesma posição".into(),
             _ if self.view.scheduled => "Início agendado, aguardando o horário comum".into(),
             _ if !self.view.matched && self.presence.media.is_some() && self.view.peer_ready => {

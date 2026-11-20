@@ -7,6 +7,7 @@ pub(crate) mod kit;
 mod preparation;
 mod room;
 mod settings;
+mod stream;
 mod theme;
 mod visuals;
 

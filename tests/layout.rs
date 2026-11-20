@@ -1697,3 +1697,61 @@ fn back_arrow_leaves_the_room_and_asks_first_when_someone_is_there() {
         }
     }
 }
+
+#[test]
+fn p2p_streaming_strip_renders_and_emits_commands_without_overflow() {
+    use sync2gether::{
+        runtime::{Command, Role, View},
+        stream::{BitrateAdvice, StreamPhase, StreamTelemetry},
+    };
+    let mut view = View {
+        role: Role::Guest,
+        connected: true,
+        peer_name: Some("Anfitrião".into()),
+        peer_file: Some("Filme.1080p.mkv".into()),
+        peer_verified: true,
+        peer_ready: true,
+        can_stream: true,
+        ..Default::default()
+    };
+    let _ = preparation_frame(&view, [480.0, 560.0], false);
+    for size in [[640.0, 640.0], [960.0, 720.0]] {
+        let text = preparation_frame(&view, size, false);
+        assert!(text.contains("Assistir por streaming P2P"));
+    }
+    let ctx = egui::Context::default();
+    ui::configure_theme(&ctx, false);
+    let mut inputs = ui::Inputs::default();
+    let actions = click_label_at_size(
+        &ctx,
+        &view,
+        &mut inputs,
+        "Assistir por streaming P2P",
+        [960.0, 720.0],
+    );
+    assert!(matches!(actions.as_slice(), [Command::StartStream]));
+
+    view.can_stream = false;
+    view.file = Some("Filme.1080p.mkv".into());
+    view.stream = StreamTelemetry {
+        active: true,
+        is_sender: false,
+        phase: StreamPhase::Streaming,
+        link_bps: Some(45_000_000),
+        file_bitrate_bps: Some(8_000_000),
+        transfer_bps: 22_000_000,
+        cached_bytes: 500_000_000,
+        total_bytes: 1_000_000_000,
+        buffered_ahead_bytes: 20_000_000,
+        chunks_cached: 2000,
+        chunks_total: 4000,
+        advice: BitrateAdvice::Ready,
+        ..Default::default()
+    };
+    let text = preparation_frame(&view, [960.0, 720.0], true);
+    assert!(text.contains("Recebendo direto (P2P cifrado)"));
+    assert!(text.contains("50% em cache"));
+    assert!(text.contains("Conexão folgada"));
+    let actions = click_label_at_size(&ctx, &view, &mut inputs, "Parar", [960.0, 720.0]);
+    assert!(matches!(actions.as_slice(), [Command::StopStream]));
+}

@@ -2,6 +2,7 @@ use super::Worker;
 use crate::{
     player,
     protocol::{Control, Media, Verification},
+    stream::ChunkIndex,
 };
 use std::{
     path::PathBuf,
@@ -20,7 +21,7 @@ pub(super) struct FileResult {
 enum FileEvent {
     Selected(String),
     Progress(Verification),
-    Finished(Result<Option<(PathBuf, Media)>, String>),
+    Finished(Result<Option<(PathBuf, Media, ChunkIndex)>, String>),
 }
 
 impl Worker {
@@ -72,7 +73,7 @@ impl Worker {
                     let mut last_progress = None;
                     path.canonicalize()
                         .and_then(|path| {
-                            crate::media::identify_with_progress(&path, |bytes, total| {
+                            crate::media::identify_with_chunks_and_progress(&path, |bytes, total| {
                                 if cancel.load(Ordering::Relaxed) {
                                     return Err(std::io::Error::other("Verificação cancelada"));
                                 }
@@ -95,7 +96,7 @@ impl Worker {
                                 }
                                 Ok(())
                             })
-                            .map(|media| (path, media))
+                            .map(|(media, index)| (path, media, index))
                         })
                         .map_err(|_| {
                             "Não foi possível verificar o arquivo. Confira se ele está acessível e escolha novamente.".into()
@@ -133,8 +134,10 @@ impl Worker {
             }
             FileEvent::Finished(result) => {
                 match result {
-                    Ok(Some((path, media))) => {
+                    Ok(Some((path, media, index))) => {
                         self.previous = None;
+                        self.stop_stream(true);
+                        self.local_media = Some((path.clone(), Arc::new(index)));
                         if self.view.role == super::Role::Host {
                             self.session.apply(Control::Pause, self.now());
                             self.session.state.position = 0.0;
@@ -145,6 +148,7 @@ impl Worker {
                         self.view.file = self.view.pending_file.take();
                         self.presence.media = Some(media);
                         self.presence.ready = false;
+                        self.presence.streaming = false;
                         self.view.player = player::Status::default();
                         self.player(player::Command::Load(path, self.generation));
                     }
@@ -220,6 +224,7 @@ mod tests {
             event: FileEvent::Finished(Ok(Some((
                 PathBuf::from("unused.mkv"),
                 original.media.unwrap(),
+                ChunkIndex::from_hashes(crate::stream::CHUNK_SIZE, 42, vec![]),
             )))),
         });
         assert_eq!(worker.view.file.as_deref(), Some("original.mkv"));

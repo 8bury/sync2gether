@@ -1,13 +1,15 @@
 mod files;
 mod rooms;
+mod stream;
 mod sync;
 mod view;
 
-use self::{files::FileResult, rooms::BackgroundResult};
+use self::{files::FileResult, rooms::BackgroundResult, stream::StreamPrepResult};
 use crate::{
     discovery, network, player,
     protocol::{Control, Message, PORT, Presence, Snapshot, Verification},
     session::Session,
+    stream::{ChunkIndex, StreamEvent, StreamTelemetry, host::HostPending},
     sync::{Clock, Controller},
 };
 use std::{
@@ -78,12 +80,17 @@ pub struct View {
     pub last_start_ms: Option<f64>,
     pub last_start_id: Option<u64>,
     pub scheduled_start_ms: Option<f64>,
+    pub stream: StreamTelemetry,
+    pub can_stream: bool,
+    pub peer_streaming: bool,
 }
 
 pub enum Command {
     Open,
     OpenPath(PathBuf),
     CancelOpen,
+    StartStream,
+    StopStream,
     Host(String),
     HostAuto(u16),
     HostRoom(String),
@@ -210,12 +217,24 @@ struct Worker {
     files: mpsc::Sender<FileResult>,
     file_rx: mpsc::Receiver<FileResult>,
     pings: VecDeque<f64>,
+    local_media: Option<(PathBuf, Arc<ChunkIndex>)>,
+    stream_id: u64,
+    stream_pending: Option<HostPending>,
+    stream_task: Option<JoinHandle<()>>,
+    stream_waiting_since: Option<Instant>,
+    last_stream_request: Option<Instant>,
+    stream_tx: mpsc::Sender<StreamEvent>,
+    stream_rx: mpsc::Receiver<StreamEvent>,
+    stream_prep_tx: mpsc::Sender<StreamPrepResult>,
+    stream_prep_rx: mpsc::Receiver<StreamPrepResult>,
 }
 
 impl Worker {
     fn new(player: player::Player, origin: Instant) -> Self {
         let (files, file_rx) = mpsc::channel(4);
         let (background_tx, background_rx) = mpsc::channel(4);
+        let (stream_tx, stream_rx) = mpsc::channel(32);
+        let (stream_prep_tx, stream_prep_rx) = mpsc::channel(8);
         Self {
             player,
             background: None,
@@ -253,6 +272,16 @@ impl Worker {
             files,
             file_rx,
             pings: VecDeque::new(),
+            local_media: None,
+            stream_id: 1,
+            stream_pending: None,
+            stream_task: None,
+            stream_waiting_since: None,
+            last_stream_request: None,
+            stream_tx,
+            stream_rx,
+            stream_prep_tx,
+            stream_prep_rx,
         }
     }
 
@@ -297,6 +326,7 @@ impl Worker {
     }
 
     fn disconnected(&mut self) {
+        self.stop_stream(false);
         self.outgoing = None;
         self.view.connected = false;
         self.clock = Clock::default();
@@ -316,6 +346,8 @@ impl Worker {
             Command::Open => self.open(None),
             Command::OpenPath(path) => self.open(Some(path)),
             Command::CancelOpen => self.cancel_open(),
+            Command::StartStream => self.start_stream(),
+            Command::StopStream => self.stop_stream(true),
             Command::HostAuto(port) => {
                 self.leave();
                 self.background(Some(port));
@@ -361,6 +393,8 @@ impl Worker {
                 Some((id, result)) = self.background_rx.recv() => self.background_event(id, result),
                 Some(event) = player_events.recv() => self.player_event(event),
                 Some(file) = self.file_rx.recv() => self.file_event(file),
+                Some(prep) = self.stream_prep_rx.recv() => self.stream_prep_event(prep),
+                Some(event) = self.stream_rx.recv() => self.stream_event(event),
                 event = recv_network(&mut self.net_rx) => self.network_event(event),
                 _ = monitor.tick() => {
                     self.progress();

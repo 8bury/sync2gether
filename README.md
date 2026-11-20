@@ -15,14 +15,16 @@ mostram a interface; não demonstram reprodução ou sincronização real.*
 
 ## Como funciona
 
-O sync2gether é um aplicativo de desktop para duas pessoas. Cada PC reproduz
-seu próprio arquivo com libmpv. A conexão envia apenas comandos e informações
-de sincronização, nunca o vídeo.
+O sync2gether é um aplicativo de desktop para duas pessoas. Cada PC reproduz o
+filme com libmpv. Quando ambos têm a cópia local, a conexão envia apenas
+comandos e informações de sincronização; quando apenas o anfitrião tem o
+arquivo, o convidado pode assistir por **streaming P2P direto (QUIC cifrado)**
+sem passar vídeo pelo servidor relay.
 
 1. Uma pessoa clica em **Criar sala** e recebe um código como `4821-gato-lua`.
 2. Ela envia o código para a outra pessoa, que o digita na tela inicial e clica em **Entrar**.
-3. Cada pessoa escolhe sua cópia do filme. O app verifica o conteúdo dos dois
-   arquivos; quando ambos estão prontos, qualquer participante pode clicar em
+3. Cada pessoa escolhe sua cópia do filme — ou o convidado clica em **Assistir por streaming P2P**
+   para receber o arquivo direto do anfitrião com cache progressivo em disco. Quando ambos estão prontos, qualquer participante pode clicar em
    **Começar a assistir**.
 4. Play, pause e mudanças de posição acompanham os dois players. Volume,
    áudio e legendas são ajustados separadamente em cada PC.

@@ -106,10 +106,21 @@ vídeo, GPU ou sincronização entre PCs.
   autenticação da sala, timeout de heartbeat e reconexão.
 - `protocol.rs` define as mensagens Serde e a versão do protocolo.
 - `session.rs` ordena comandos no anfitrião e controla prontidão e pausa.
+- `stream.rs` e `stream/` implementam o streaming P2P direto cifrado:
+  `stream/tls.rs` (TLS 1.3 mútuo sobre QUIC com certificados efêmeros fixados por
+  impressão digital BLAKE3 trocada no canal Noise), `stream/nat.rs` (coleta de
+  candidatos IPv4/IPv6, descoberta STUN RFC 5389 e UDP hole-punching),
+  `stream/wire.rs` (protocolo binário para tabela de hashes, blocos de 256 KiB e
+  sonda de largura de banda), `stream/cache.rs` (cache esparso persistente em
+  disco com verificação BLAKE3 por bloco e escalonador em três prioridades:
+  urgente, lookahead e pré-carregamento), `stream/http.rs` (proxy HTTP/1.1 Range
+  local em `127.0.0.1` com token aleatório para o libmpv), `stream/host.rs` e
+  `stream/guest.rs`. Nenhum byte de vídeo passa pelo relay.
 - `sync.rs` estima a diferença entre relógios por ping e calcula correções.
 - `runtime.rs` define a interface pública (`Runtime`, `Command`, `View`) e o
   loop principal do worker, dividido entre `runtime/rooms.rs` (salas, descoberta
   e eventos de rede), `runtime/files.rs` (seleção e verificação de arquivos),
+  `runtime/stream.rs` (negociação e telemetria do streaming P2P),
   `runtime/sync.rs` (controle de reprodução, snapshots e correção de desvio) e
   `runtime/view.rs` (projeção do estado para a UI). A UI só apresenta os dados e
   devolve ações.
@@ -182,5 +193,5 @@ a linha do tempo da sala da diferença estimada entre os players, quando
 existem medições recentes. Esses valores não medem o instante físico em que
 cada monitor ou dispositivo de áudio apresentou o conteúdo.
 
-O protocolo agora é versão 4, incluindo nomes e progresso de verificação dentro da sala. Os dois aplicativos precisam usar a mesma versão;
+O protocolo agora é versão 5, incluindo nomes, progresso de verificação e negociação de streaming P2P direto (`StreamRequest`, `StreamOffer`, `StreamAnswer`, `StreamStop`) dentro da sala. Os dois aplicativos precisam usar a mesma versão;
 clientes da versão anterior são recusados no handshake.

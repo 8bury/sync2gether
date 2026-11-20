@@ -154,6 +154,7 @@ pub(super) fn room_contents(
             actions.push(Command::Open);
         }
         ui.add_space(12.0);
+        super::stream::room_section(ui, colors, view, actions);
         feedback(ui, view);
         connection_details(ui, view, actions);
         ui.add_space(12.0);

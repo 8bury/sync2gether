@@ -351,6 +351,14 @@ impl Worker {
                             sent_host_ms: self.now(),
                         })
                     }
+                    (Role::Host, Message::StreamRequest) => self.handle_stream_request(),
+                    (Role::Host, Message::StreamAnswer(answer)) if answer.valid() => {
+                        self.handle_stream_answer(*answer);
+                    }
+                    (Role::Guest, Message::StreamOffer(offer)) if offer.valid() => {
+                        self.handle_stream_offer(*offer);
+                    }
+                    (_, Message::StreamStop { id }) => self.handle_stream_stop(id),
                     (Role::Guest, Message::State(state)) if state.valid() => {
                         if self.snapshot.as_ref().is_none_or(|old| {
                             state.revision >= old.revision && state.host_ms >= old.host_ms

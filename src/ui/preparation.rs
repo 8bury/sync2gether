@@ -554,6 +554,10 @@ pub(super) fn draw(
     });
     ui.add_space(if compact { 8.0 } else { 16.0 });
     pair(ui, colors, view, actions);
+    if view.role != Role::Local && view.connected {
+        ui.add_space(if compact { 6.0 } else { 10.0 });
+        super::stream::preparation_strip(ui, colors, view, actions);
+    }
     if !sticky && view.join_request.is_none() {
         ui.add_space(if compact { 10.0 } else { 16.0 });
         action(ui, colors, view, actions);

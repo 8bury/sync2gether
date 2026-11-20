@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      pkgver: ${{ steps.version.outputs.pkgver }}
     steps:
       - uses: actions/checkout@v4
       - name: Conferir versão antes de compilar
@@ -38,8 +39,9 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
           pkgver=$(sed -n 's/^pkgver=//p' packaging/arch/PKGBUILD)
-          if [ "$version" != "$pkgver" ]; then
-            echo "::error::Cargo.toml ($version) e PKGBUILD ($pkgver) têm versões diferentes."
+          expected_pkgver="${version//-/}"
+          if [ "$expected_pkgver" != "$pkgver" ]; then
+            echo "::error::Cargo.toml ($version -> $expected_pkgver) e PKGBUILD ($pkgver) têm versões diferentes."
             exit 1
           fi
           if [ "$MODE" != nenhuma ] && { gh release view "v$version" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; }; then
@@ -47,6 +49,7 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"
 
   package:
     needs: version
@@ -91,6 +94,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.version.outputs.version }}
+      PKGVER: ${{ needs.version.outputs.pkgver }}
       MODE: ${{ inputs.release }}
     steps:
       - uses: actions/download-artifact@v4
@@ -101,7 +105,7 @@ jobs:
         run: |
           cd dist
           deb="sync2gether_${VERSION}_amd64.deb"
-          pkg=$(ls sync2gether-"$VERSION"-*-x86_64.pkg.tar.zst)
+          pkg=$(ls sync2gether-"$PKGVER"-*-x86_64.pkg.tar.zst)
           test -f "$deb"
           sha256sum "$pkg" "$deb" > SHA256SUMS
           cat > notes.md <<EOF
@@ -133,9 +137,10 @@ jobs:
 
           ## Mudanças
           EOF
-          draft=()
-          if [ "$MODE" = rascunho ]; then draft=(--draft); fi
+          flags=()
+          if [ "$MODE" = rascunho ]; then flags+=(--draft); fi
+          if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
           gh release create "v$VERSION" "$pkg" "$deb" SHA256SUMS \
-            -R "$GITHUB_REPOSITORY" "${draft[@]}" --target "$GITHUB_SHA" \
+            -R "$GITHUB_REPOSITORY" "${flags[@]}" --target "$GITHUB_SHA" \
             --title "sync2gether $VERSION" --notes-file notes.md --generate-notes
           echo "Release v$VERSION criada ($MODE)." >> "$GITHUB_STEP_SUMMARY"

@@ -603,3 +603,53 @@ fn internet_room_syncs_two_real_players_through_the_relay_with_intercontinental_
     proxy.abort();
     server.abort();
 }
+
+#[test]
+#[ignore = "requer libmpv e vídeo sintético gerado por scripts/test-mvp.sh"]
+fn two_players_sync_via_p2p_streaming_without_guest_local_file() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".cache/mvp-fixture.mkv");
+    assert!(fixture.is_file(), "execute scripts/test-mvp.sh");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    drop(listener);
+    let host = Runtime::start();
+    let guest = Runtime::start();
+
+    send(&host, Command::OpenPath(fixture));
+    wait(&host, |v| v.player.loaded && v.verified);
+
+    send(&host, Command::Host(address.clone()));
+    let host_view = wait(&host, |v| v.role == Role::Host);
+    let key = host_view.room_key;
+    send(&guest, Command::Join(address, key));
+
+    wait(&host, |v| v.connected && v.can_stream);
+    wait(&guest, |v| v.connected && v.can_stream && v.file.is_none());
+
+    send(&guest, Command::StartStream);
+    let h = wait(&host, |v| v.ready);
+    let g = wait(&guest, |v| v.ready && v.stream.active && v.player.loaded);
+    assert_eq!(g.file.as_deref(), Some("mvp-fixture.mkv"));
+    assert_eq!(h.peer_file.as_deref(), Some("mvp-fixture.mkv"));
+    assert!(g.stream.link_bps.unwrap_or(0) > 0);
+
+    send(&guest, Command::Control(Control::Play));
+    wait(&host, |v| !v.player.paused && v.player.position > 1.2);
+    wait(&guest, |v| !v.player.paused && v.player.position > 1.2);
+
+    send(&guest, Command::Control(Control::Seek(8.0)));
+    wait(&host, |v| (8.0..10.5).contains(&v.player.position));
+    wait(&guest, |v| (8.0..10.5).contains(&v.player.position));
+
+    send(&host, Command::Control(Control::Pause));
+    let h = wait(&host, |v| v.player.paused);
+    let g = wait(&guest, |v| {
+        v.player.paused && (v.player.position - h.player.position).abs() < 0.4
+    });
+    assert!((h.player.position - g.player.position).abs() < 0.4);
+
+    send(&guest, Command::StopStream);
+    wait(&guest, |v| !v.stream.active);
+    shutdown(host);
+    shutdown(guest);
+}

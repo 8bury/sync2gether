@@ -5,6 +5,8 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
 kind=${1:?Uso: bash scripts/package.sh arch|deb}
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+arch_version="${version//-/}"
+deb_version="${version//-/\~}"
 binary="${CARGO_TARGET_DIR:-target}/release/sync2gether"
 output="$PWD/target/dist"
 work="$PWD/target/packaging/$kind"
@@ -15,7 +17,7 @@ mkdir -p "$output" "$work"
 case "$kind" in
   arch)
     test "$(uname -m)" = x86_64
-    test "$version" = "$(sed -n "s/^pkgver=//p" packaging/arch/PKGBUILD)"
+    test "$arch_version" = "$(sed -n "s/^pkgver=//p" packaging/arch/PKGBUILD)"
     install -m755 "$binary" "$work/sync2gether"
     install -m644 packaging/sync2gether.desktop packaging/arch/PKGBUILD "$work/"
     (cd "$work" && PKGDEST="$output" makepkg --force --nodeps)
@@ -30,7 +32,7 @@ case "$kind" in
     size=$(du -sk "$root/usr" | cut -f1)
     cat > "$root/DEBIAN/control" <<EOF
 Package: sync2gether
-Version: $version
+Version: $deb_version
 Section: video
 Priority: optional
 Architecture: amd64

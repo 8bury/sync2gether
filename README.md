@@ -166,7 +166,7 @@ instalados e exercitados em containers Arch e Ubuntu 24.04. Os testes usaram TCP
 sintético, atraso e jitter de rede, áudio virtual e OpenGL com Xvfb/Mesa por
 software. A interface também foi revisada em CachyOS com Wayland/Hyprland.
 
-Esses cenários não comprovam sincronização entre dois PCs físicos, saída física
-de áudio, descoberta por uma VPN real ou desempenho em GPUs diferentes.
+Esses cenários não comprovam saída física de áudio, descoberta por uma VPN real
+ou desempenho em GPUs diferentes.
 Filmes longos, HDR e fidelidade de cores precisam de validação adicional.
 Consulte os [detalhes da validação da release](docs/releases/v0.1.0.md#validação-e-limites).

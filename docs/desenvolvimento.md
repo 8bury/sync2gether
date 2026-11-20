@@ -205,7 +205,7 @@ usando Mesa por software. O exemplo `check-player-gl` verificou vídeo em
 movimento, troca de faixas, controles, tela cheia, redimensionamento e encerramento.
 A demo offline e a mensagem de biblioteca ausente
 também foram exercitadas. Não equivale a
-validar dois PCs pela rede local ou VPN, saída de áudio em dois dispositivos, filmes
+validar saída de áudio em dois dispositivos, filmes
 longos, HDR, desempenho com hardware diferente ou execução real em Ubuntu.
 
 A correção do bloqueio em EGL também foi validada em Wayland/Hyprland 0.56.2

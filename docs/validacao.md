@@ -41,7 +41,7 @@ do título sobre o vídeo, avisos de reconexão e comandos locais dos menus de
 áudio, legendas e volume. `scripts/check.sh` passou. O teste OpenGL com vídeo
 sintético também passou, cobrindo faixas, ocultação dos controles, tela cheia,
 redimensionamento e comandos sem pintura. Esta validação visual não incluiu
-execução em Ubuntu nem testes entre dois PCs.
+execução em Ubuntu.
 
 ## Escolha compartilhada dos arquivos
 
@@ -55,8 +55,7 @@ metadados também foi testado por TCP real após aprovação da entrada.
 players libmpv por software. O teste confirma que nomes diferentes com conteúdo
 igual permitem assistir e que os nomes reaparecem corretamente após reconectar.
 Os cenários de incompatibilidade, comandos coordenados, descoberta e rede com
-atraso e jitter continuam passando. Esta revisão não validou execução em Ubuntu
-nem comunicação entre dois PCs físicos.
+atraso e jitter continuam passando. Esta revisão não validou execução em Ubuntu.
 
 As capturas de revisão ficam em `.cache/ui-redesign/`. Incluem preparação pronta,
 escolha inicial, verificação, arquivos diferentes, aprovação, falha e reconexão,

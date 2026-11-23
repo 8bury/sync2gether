@@ -111,8 +111,6 @@ async fn main() {
             stats.connections, stats.rooms, stats.pipes
         )
     };
-    let mut terminate =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
     let serve = async {
         match acceptor {
             Some(acceptor) => {
@@ -137,9 +135,24 @@ async fn main() {
     tokio::select! {
         _ = serve => {}
         _ = tokio::signal::ctrl_c() => {}
-        _ = async { match &mut terminate { Some(signal) => { signal.recv().await; } None => std::future::pending().await } } => {}
+        _ = terminate() => {}
     }
     eprintln!("Encerrando o relay");
+}
+
+#[cfg(unix)]
+async fn terminate() {
+    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        Ok(mut signal) => {
+            signal.recv().await;
+        }
+        Err(_) => std::future::pending().await,
+    }
+}
+
+#[cfg(not(unix))]
+async fn terminate() {
+    std::future::pending().await
 }
 
 #[cfg(test)]

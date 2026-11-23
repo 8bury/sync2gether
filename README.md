@@ -48,10 +48,10 @@ dois PCs; o streaming P2P direto exige a 0.5.0 nos dois PCs.
 
 ### Windows (x86_64)
 
-- **Instalador:** baixe e execute `sync2gether-0.5.0-windows-x86_64-setup.exe`.
+- **Instalador:** baixe e execute `sync2gether-0.6.0-windows-x86_64-setup.exe`.
   Instala na pasta do usuário sem exigir privilégios de administrador e já inclui
   `libmpv-2.dll`.
-- **Portátil:** extraia `sync2gether-0.5.0-windows-x86_64.zip` e execute
+- **Portátil:** extraia `sync2gether-0.6.0-windows-x86_64.zip` e execute
   `sync2gether.exe`, mantendo `libmpv-2.dll` na mesma pasta.
 
 O executável ainda não possui assinatura digital da Microsoft. Se o **Windows
@@ -61,8 +61,8 @@ acesso na rede privada quando o Firewall do Windows solicitar.
 
 ### macOS (Apple Silicon e Intel)
 
-- **Apple Silicon (M1 ou mais novo):** baixe `sync2gether-0.5.0-macos-arm64.dmg`.
-- **Intel (x86_64):** baixe `sync2gether-0.5.0-macos-x86_64.dmg`.
+- **Apple Silicon (M1 ou mais novo):** baixe `sync2gether-0.6.0-macos-arm64.dmg`.
+- **Intel (x86_64):** baixe `sync2gether-0.6.0-macos-x86_64.dmg`.
 
 Abra o `.dmg` e arraste **sync2gether.app** para a pasta **Applications**. A
 biblioteca `libmpv` e suas dependências já estão embutidas no `.app`.
@@ -81,13 +81,13 @@ Local** quando o macOS solicitar.
 ### Arch Linux
 
 ```sh
-sudo pacman -U ./sync2gether-0.5.0-1-x86_64.pkg.tar.zst
+sudo pacman -U ./sync2gether-0.6.0-1-x86_64.pkg.tar.zst
 ```
 
 ### Ubuntu 24.04
 
 ```sh
-sudo apt install ./sync2gether_0.5.0_amd64.deb
+sudo apt install ./sync2gether_0.6.0_amd64.deb
 ```
 
 No Linux, os gerenciadores instalam as dependências, incluindo libmpv. Abra
@@ -187,8 +187,9 @@ bash scripts/check.sh
 | [Arquitetura e sincronização](docs/arquitetura.md) | Módulos, libmpv, protocolo e correção de desvio |
 | [Salas pela internet e relay](docs/relay.md) | Código da sala, criptografia, reconexão e publicação do servidor |
 | [Diagnóstico](docs/diagnostico.md) | Logs, GDB e travamentos em Wayland |
-| [Pacotes Linux](docs/empacotamento.md) | Builds com Docker e GitHub Actions |
+| [Empacotamento e Release](docs/empacotamento.md) | Builds para Linux, Windows e macOS |
 | [Histórico de validação](docs/validacao.md) | Ambientes e cenários testados nas revisões anteriores |
+| [Notas da versão 0.6.0](docs/releases/v0.6.0.md) | Builds oficiais para Windows e macOS, reconexão P2P e barra de cache |
 | [Notas da versão 0.5.0](docs/releases/v0.5.0.md) | Streaming P2P direto (QUIC E2EE), cache progressivo e validação |
 | [Notas da versão 0.4.0](docs/releases/v0.4.0.md) | TLS no transporte do relay, modularização e validação |
 | [Notas da versão 0.3.0](docs/releases/v0.3.0.md) | Novo fluxo das telas, validação e limites |

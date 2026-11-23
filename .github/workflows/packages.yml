@@ -63,18 +63,36 @@ jobs:
             image: archlinux:base-devel
     runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
-    timeout-minutes: 60
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+      SKIP_CHECKS: 1
     steps:
       - name: Dependências do checkout
         run: |
           if [ '${{ matrix.format }}' = arch ]; then
-            pacman -Syu --noconfirm git
+            pacman -Syu --noconfirm git zstd
           else
             apt-get update
-            apt-get install -y git ca-certificates
+            apt-get install -y --no-install-recommends git ca-certificates zstd
           fi
       - uses: actions/checkout@v4
-      - name: Verificar, compilar e instalar o pacote
+      - uses: actions/cache@v4
+        with:
+          path: |
+            target/release-${{ matrix.format }}/release/deps
+            target/release-${{ matrix.format }}/release/build
+            target/release-${{ matrix.format }}/.fingerprint
+            target/cargo-${{ matrix.format }}/bin
+            target/cargo-${{ matrix.format }}/registry/index
+            target/cargo-${{ matrix.format }}/registry/cache
+            target/cargo-${{ matrix.format }}/git/db
+            target/rustup-${{ matrix.format }}
+          key: linux-release-${{ matrix.format }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            linux-release-${{ matrix.format }}-
+      - name: Compilar, empacotar e testar o pacote instalado
         run: bash scripts/release-container.sh '${{ matrix.format }}'
       - uses: actions/upload-artifact@v4
         with:

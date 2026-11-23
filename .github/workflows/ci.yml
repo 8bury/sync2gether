@@ -58,3 +58,45 @@ jobs:
           rustup default 1.98.0
       - run: bash scripts/check.sh
       - run: bash scripts/test-mvp.sh
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Configurar linker rápido (lld-link)
+        shell: pwsh
+        run: |
+          if (Get-Command lld-link -ErrorAction SilentlyContinue) {
+            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=lld-link" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace --all-targets
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace --all-targets

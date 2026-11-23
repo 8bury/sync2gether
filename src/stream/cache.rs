@@ -1,8 +1,8 @@
+use super::file_io;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs::{self, File, OpenOptions},
     io::{self, Read},
-    os::unix::fs::FileExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -25,6 +25,8 @@ pub struct CacheStats {
 }
 
 struct State {
+    data: Option<Arc<File>>,
+    bitmap_file: Option<Arc<File>>,
     bitmap: Vec<u8>,
     verified: Vec<u8>,
     chunks_cached: u64,
@@ -39,8 +41,6 @@ struct State {
 pub struct ChunkCache {
     dir: PathBuf,
     file_hash: String,
-    data: Arc<File>,
-    bitmap_file: Arc<File>,
     file_size: u64,
     chunk_size: u32,
     chunks_total: u32,
@@ -51,17 +51,46 @@ pub struct ChunkCache {
     work_available: Notify,
 }
 
+pub fn cache_base_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("APPDATA")
+                    .filter(|v| !v.is_empty())
+                    .map(PathBuf::from)
+            })
+            .unwrap_or_else(std::env::temp_dir)
+            .join("sync2gether")
+            .join("cache")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME")
+            .filter(|v| !v.is_empty())
+            .map(|home| PathBuf::from(home).join("Library").join("Caches"))
+            .unwrap_or_else(std::env::temp_dir)
+            .join("sync2gether")
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        std::env::var_os("XDG_CACHE_HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .filter(|v| !v.is_empty())
+                    .map(|home| PathBuf::from(home).join(".cache"))
+            })
+            .unwrap_or_else(std::env::temp_dir)
+            .join("sync2gether")
+    }
+}
+
 pub fn default_cache_dir(file_hash: &str) -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .filter(|v| !v.is_empty())
-                .map(|home| PathBuf::from(home).join(".cache"))
-        })
-        .unwrap_or_else(|| PathBuf::from(".cache"));
-    base.join("sync2gether").join("streams").join(file_hash)
+    cache_base_dir().join("streams").join(file_hash)
 }
 
 fn evict_old_caches(dir: &Path) {
@@ -185,7 +214,7 @@ impl ChunkCache {
 
         let mut bitmap = vec![0u8; bitmap_bytes];
         if resumable {
-            bitmap_file.read_exact_at(&mut bitmap, 0)?;
+            file_io::read_exact_at(&bitmap_file, &mut bitmap, 0)?;
         } else {
             fs::write(&meta_path, expected_meta)?;
         }
@@ -202,13 +231,13 @@ impl ChunkCache {
         Ok(Self {
             dir: dir.to_path_buf(),
             file_hash: file_hash.to_owned(),
-            data: Arc::new(data),
-            bitmap_file: Arc::new(bitmap_file),
             file_size,
             chunk_size,
             chunks_total,
             hashes,
             state: Mutex::new(State {
+                data: Some(Arc::new(data)),
+                bitmap_file: Some(Arc::new(bitmap_file)),
                 bitmap,
                 verified: vec![0u8; bitmap_bytes],
                 chunks_cached,
@@ -305,6 +334,24 @@ impl ChunkCache {
         }
     }
 
+    fn data_file(&self) -> io::Result<Arc<File>> {
+        self.state
+            .lock()
+            .unwrap()
+            .data
+            .clone()
+            .ok_or_else(|| io::Error::other("Cache fechado"))
+    }
+
+    fn bitmap_file(&self) -> io::Result<Arc<File>> {
+        self.state
+            .lock()
+            .unwrap()
+            .bitmap_file
+            .clone()
+            .ok_or_else(|| io::Error::other("Cache fechado"))
+    }
+
     pub async fn read_at_blocking(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
         if offset >= self.file_size || len == 0 {
             return Ok(Vec::new());
@@ -320,12 +367,10 @@ impl ChunkCache {
             if needs_verify {
                 let chunk_offset = u64::from(chunk) * u64::from(self.chunk_size);
                 let chunk_len = self.chunk_len(chunk);
-                let data_file = self.data.clone();
+                let data_file = self.data_file()?;
                 let full_chunk = tokio::task::spawn_blocking(move || {
                     let mut buf = vec![0u8; chunk_len];
-                    data_file
-                        .read_exact_at(&mut buf, chunk_offset)
-                        .map(|()| buf)
+                    file_io::read_exact_at(&data_file, &mut buf, chunk_offset).map(|()| buf)
                 })
                 .await
                 .map_err(io::Error::other)??;
@@ -347,10 +392,10 @@ impl ChunkCache {
             let chunk_end = (chunk_start + u64::from(self.chunk_size)).min(self.file_size);
             let available = (chunk_end - offset) as usize;
             let to_read = len.min(available);
-            let data_file = self.data.clone();
+            let data_file = self.data_file()?;
             return tokio::task::spawn_blocking(move || {
                 let mut buf = vec![0u8; to_read];
-                data_file.read_exact_at(&mut buf, offset).map(|()| buf)
+                file_io::read_exact_at(&data_file, &mut buf, offset).map(|()| buf)
             })
             .await
             .map_err(io::Error::other)?;
@@ -360,17 +405,19 @@ impl ChunkCache {
     async fn persist_bitmap_byte(&self, byte_idx: usize) -> io::Result<()> {
         let _guard = self.bitmap_io.lock().await;
         let val = self.state.lock().unwrap().bitmap[byte_idx];
-        let bitmap_file = self.bitmap_file.clone();
-        tokio::task::spawn_blocking(move || bitmap_file.write_all_at(&[val], byte_idx as u64))
-            .await
-            .map_err(io::Error::other)?
+        let bitmap_file = self.bitmap_file()?;
+        tokio::task::spawn_blocking(move || {
+            file_io::write_all_at(&bitmap_file, &[val], byte_idx as u64)
+        })
+        .await
+        .map_err(io::Error::other)?
     }
 
     async fn flush_bitmap(&self) -> io::Result<()> {
         let _guard = self.bitmap_io.lock().await;
         let bitmap = self.state.lock().unwrap().bitmap.clone();
-        let bitmap_file = self.bitmap_file.clone();
-        tokio::task::spawn_blocking(move || bitmap_file.write_all_at(&bitmap, 0))
+        let bitmap_file = self.bitmap_file()?;
+        tokio::task::spawn_blocking(move || file_io::write_all_at(&bitmap_file, &bitmap, 0))
             .await
             .map_err(io::Error::other)?
     }
@@ -470,8 +517,8 @@ impl ChunkCache {
         }
         let offset = u64::from(idx) * u64::from(self.chunk_size);
         let data_len = data.len() as u64;
-        let data_file = self.data.clone();
-        tokio::task::spawn_blocking(move || data_file.write_all_at(&data, offset))
+        let data_file = self.data_file()?;
+        tokio::task::spawn_blocking(move || file_io::write_all_at(&data_file, &data, offset))
             .await
             .map_err(io::Error::other)??;
 
@@ -544,6 +591,12 @@ impl ChunkCache {
     }
 
     pub async fn wipe_cache(&self) {
+        let _guard = self.bitmap_io.lock().await;
+        {
+            let mut state = self.state.lock().unwrap();
+            state.data = None;
+            state.bitmap_file = None;
+        }
         let dir = self.dir.clone();
         let _ = tokio::task::spawn_blocking(move || fs::remove_dir_all(&dir)).await;
     }
@@ -751,7 +804,7 @@ mod tests {
             .write(true)
             .open(dir.join("data.bin"))
             .unwrap();
-        data_file.write_all_at(&[0xde, 0xad], 0).unwrap();
+        file_io::write_all_at(&data_file, &[0xde, 0xad], 0).unwrap();
         drop(data_file);
 
         let corrupted = Arc::new(
@@ -786,6 +839,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reader.await.unwrap().unwrap(), data[0..16]);
+        drop(corrupted);
 
         let _ = fs::remove_dir_all(&dir);
     }

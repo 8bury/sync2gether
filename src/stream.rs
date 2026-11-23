@@ -1,4 +1,5 @@
 pub mod cache;
+pub(crate) mod file_io;
 pub mod guest;
 pub mod host;
 pub mod http;

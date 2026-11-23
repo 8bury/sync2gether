@@ -135,12 +135,19 @@ impl Drop for Guard {
     }
 }
 pub fn start() -> io::Result<(Guard, PathBuf)> {
-    let path = PathBuf::from(format!(
-        ".cache/sync2gether-diagnostics-{}.log",
-        std::process::id()
-    ));
-    create_dir_all(".cache")?;
-    let mut file = File::create(&path)?;
+    let filename = format!("sync2gether-diagnostics-{}.log", std::process::id());
+    let local_dir = PathBuf::from(".cache");
+    let (path, mut file) =
+        match create_dir_all(&local_dir).and_then(|()| File::create(local_dir.join(&filename))) {
+            Ok(file) => (local_dir.join(filename), file),
+            Err(_) => {
+                let fallback_dir = crate::stream::cache::cache_base_dir();
+                create_dir_all(&fallback_dir)?;
+                let fallback_path = fallback_dir.join(filename);
+                let file = File::create(&fallback_path)?;
+                (fallback_path, file)
+            }
+        };
     writeln!(
         file,
         "sync2gether={} pid={} os={} arch={} wayland_env={} x11_env={} sample_interval_ms=1000",

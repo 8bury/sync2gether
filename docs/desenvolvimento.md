@@ -23,7 +23,33 @@ sudo apt-get update
 sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev libmpv-dev
 ```
 
-Os pacotes mpv/libmpv-dev fornecem libmpv para reprodução. A interface demo
+No Windows (x86_64 com MSVC):
+
+- Instale as **Ferramentas de Build do Visual Studio** (C++ com MSVC) e o `rustup`.
+- Baixe `libmpv-2.dll` (build `mpv-dev-x86_64` de `shinchiro/mpv-winbuild-cmake`)
+  e coloque-a na mesma pasta do executável (por exemplo `target/debug/` ou
+  `target/release/`), ou aponte o caminho em `SYNC2GETHER_LIBMPV`.
+- Opcionalmente, instale o **NSIS** (`makensis`) para gerar o instalador local
+  com `pwsh -File scripts/package-windows.ps1 -LibMpvPath caminho\para\libmpv-2.dll`.
+
+No macOS (Apple Silicon ou Intel):
+
+```sh
+brew install mpv
+```
+
+O app procura `libmpv.2.dylib` dentro do `.app`, na pasta do executável e nos
+diretórios padrão do Homebrew (`/opt/homebrew/lib` e `/usr/local/lib`), ou no
+caminho definido em `SYNC2GETHER_LIBMPV`. Para gerar o `.app` e o `.dmg`
+localmente após `cargo build --release --locked`:
+
+```sh
+bash scripts/package-macos.sh arm64
+```
+
+(Troque `arm64` por `x86_64` em Macs Intel.)
+
+Os pacotes mpv/libmpv fornecem libmpv para reprodução. A interface demo
 continua funcionando sem carregar essa biblioteca.
 
 Para abrir o aplicativo:
@@ -107,8 +133,8 @@ bash scripts/check.sh
 O script verifica formatação, comentários, limite de tamanho dos arquivos de
 código (`scripts/check-file-size.py`), Clippy, testes e documentação, incluindo a
 feature `demo`. O teste de layout exercita a tela inicial e todos os cenários em três dimensões
-de janela e nos temas claro e escuro, com e sem a feature `demo`. O CI está configurado para Ubuntu 24.04
-e um container Arch Linux. No Ubuntu, também captura a janela demo usando Xvfb.
+de janela e nos temas claro e escuro, com e sem a feature `demo`. O CI está configurado para Ubuntu 24.04,
+Arch Linux (container), Windows (`windows-latest`) e macOS (`macos-15`). No Ubuntu, também captura a janela demo usando Xvfb.
 Executar o CI depende de hospedar o projeto no GitHub.
 
 O guia para agentes, os cenários demo e o fluxo de verificações foram

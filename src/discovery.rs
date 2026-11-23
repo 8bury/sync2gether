@@ -26,11 +26,36 @@ pub fn device_name(name: &str) -> String {
     }
 }
 pub fn local_name() -> String {
-    device_name(
-        std::fs::read_to_string("/proc/sys/kernel/hostname")
-            .unwrap_or_else(|_| "sync2gether".into())
-            .trim(),
-    )
+    device_name(hostname().as_deref().unwrap_or("sync2gether").trim())
+}
+
+#[cfg(target_os = "linux")]
+fn hostname() -> Option<String> {
+    std::fs::read_to_string("/proc/sys/kernel/hostname").ok()
+}
+
+#[cfg(target_os = "windows")]
+fn hostname() -> Option<String> {
+    std::env::var("COMPUTERNAME").ok()
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn hostname() -> Option<String> {
+    unsafe extern "C" {
+        fn gethostname(name: *mut std::ffi::c_char, len: usize) -> std::ffi::c_int;
+    }
+    let mut buf = [0u8; 256];
+    // SAFETY: buf é um buffer gravável válido com tamanho buf.len().
+    let status = unsafe { gethostname(buf.as_mut_ptr().cast(), buf.len()) };
+    if status == 0 {
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        if let Ok(name) = std::str::from_utf8(&buf[..len])
+            && !name.trim().is_empty()
+        {
+            return Some(name.to_owned());
+        }
+    }
+    std::env::var("HOSTNAME").ok()
 }
 pub fn local_addresses(port: u16) -> Vec<SocketAddr> {
     if_addrs::get_if_addrs()

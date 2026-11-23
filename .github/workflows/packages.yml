@@ -1,6 +1,6 @@
-name: Pacotes Linux
+name: Pacotes e Release
 
-# Só roda manualmente: Actions → Pacotes Linux → Run workflow.
+# Só roda manualmente: Actions → Pacotes e Release → Run workflow.
 # Para uma release, atualize antes `version` no Cargo.toml e `pkgver` no
 # packaging/arch/PKGBUILD. "nenhuma" só gera os pacotes como artefatos.
 on:
@@ -84,8 +84,115 @@ jobs:
             target/dist/*.pkg.tar.zst
           if-no-files-found: error
 
+  package-windows:
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-windows
+          cache-on-failure: true
+      - name: Configurar linker rápido (lld-link)
+        shell: pwsh
+        run: |
+          if (Get-Command lld-link -ErrorAction SilentlyContinue) {
+            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=lld-link" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+      - name: Resolver libmpv-2.dll (x86_64)
+        id: mpv_meta
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $release = gh api repos/shinchiro/mpv-winbuild-cmake/releases/latest | ConvertFrom-Json
+          $asset = $release.assets | Where-Object { $_.name -match '^mpv-dev-x86_64-(?!v3-).*\.7z$' } | Select-Object -First 1
+          if (-not $asset) {
+            throw "Asset mpv-dev-x86_64 não encontrado na release $($release.tag_name)"
+          }
+          "tag=$($release.tag_name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "url=$($asset.browser_download_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - uses: actions/cache@v4
+        id: mpv_cache
+        with:
+          path: .cache/libmpv
+          key: libmpv-win-x86_64-${{ steps.mpv_meta.outputs.tag }}
+      - name: Baixar e extrair libmpv-2.dll
+        if: steps.mpv_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .cache/libmpv | Out-Null
+          $archive = ".cache/libmpv/mpv-dev.7z"
+          curl.exe -fsSL -o $archive "${{ steps.mpv_meta.outputs.url }}"
+          7z e -y "-o.cache/libmpv" $archive "libmpv-2.dll"
+          Remove-Item -Force $archive
+          if (-not (Test-Path ".cache/libmpv/libmpv-2.dll")) {
+            throw "libmpv-2.dll não encontrada após extração"
+          }
+      - name: Compilar release
+        run: cargo build --release --locked
+      - name: Empacotar zip e instalador NSIS
+        shell: pwsh
+        run: pwsh -File scripts/package-windows.ps1 -LibMpvPath .cache\libmpv\libmpv-2.dll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sync2gether-windows
+          path: |
+            target/dist/*-windows-x86_64.zip
+            target/dist/*-windows-x86_64-setup.exe
+          if-no-files-found: error
+
+  package-macos:
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-macos-${{ matrix.arch }}
+          cache-on-failure: true
+      - name: Instalar libmpv via Homebrew
+        run: brew install mpv
+      - name: Compilar release
+        run: cargo build --release --locked --target "${{ matrix.target }}"
+      - name: Empacotar .app e .dmg
+        run: bash scripts/package-macos.sh "${{ matrix.arch }}" "${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sync2gether-macos-${{ matrix.arch }}
+          path: target/dist/*-macos-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
   release:
-    needs: [version, package]
+    needs: [version, package, package-windows, package-macos]
     if: inputs.release != 'nenhuma'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -106,41 +213,68 @@ jobs:
           cd dist
           deb="sync2gether_${VERSION}_amd64.deb"
           pkg=$(ls sync2gether-"$PKGVER"-*-x86_64.pkg.tar.zst)
-          test -f "$deb"
-          sha256sum "$pkg" "$deb" > SHA256SUMS
+          win_zip="sync2gether-${VERSION}-windows-x86_64.zip"
+          win_setup="sync2gether-${VERSION}-windows-x86_64-setup.exe"
+          mac_arm64="sync2gether-${VERSION}-macos-arm64.dmg"
+          mac_x86_64="sync2gether-${VERSION}-macos-x86_64.dmg"
+          for f in "$pkg" "$deb" "$win_zip" "$win_setup" "$mac_arm64" "$mac_x86_64"; do
+            test -f "$f"
+          done
+          sha256sum "$pkg" "$deb" "$win_zip" "$win_setup" "$mac_arm64" "$mac_x86_64" > SHA256SUMS
           cat > notes.md <<EOF
           ## Downloads e instalação
 
-          Os dois pacotes são para x86_64 e não incluem o modo demo.
+          Os binários de release não incluem o modo demo.
 
-          Arch Linux atualizado:
+          ### Windows (x86_64)
+
+          - **Instalador:** execute \`$win_setup\` (instala na pasta do usuário, sem precisar de administrador, já com \`libmpv-2.dll\`).
+          - **Portátil:** extraia \`$win_zip\` e execute \`sync2gether.exe\` (mantenha \`libmpv-2.dll\` na mesma pasta).
+
+          > O executável ainda não possui certificado de assinatura do Windows. Se o **Windows SmartScreen** exibir um aviso, clique em **Mais informações → Executar assim mesmo**.
+
+          ### macOS (Apple Silicon e Intel)
+
+          - **Apple Silicon (M1/M2/M3/M4):** baixe \`$mac_arm64\`.
+          - **Intel (x86_64):** baixe \`$mac_x86_64\`.
+
+          Abra o \`.dmg\` e arraste **sync2gether.app** para **Applications** (\`libmpv\` e dependências já estão incluídas).
+
+          > O app ainda não possui assinatura/notarização da Apple. Se o **Gatekeeper** bloquear na primeira abertura, execute no Terminal:
+          >
+          > \`\`\`sh
+          > xattr -cr /Applications/sync2gether.app
+          > \`\`\`
+
+          ### Arch Linux (x86_64)
 
           \`\`\`sh
           sudo pacman -U ./$pkg
           \`\`\`
 
-          Ubuntu 24.04:
+          ### Ubuntu 24.04 (x86_64)
 
           \`\`\`sh
           sudo apt install ./$deb
           \`\`\`
 
-          Os gerenciadores instalam as dependências, incluindo libmpv. Abra \`sync2gether\` pelo menu ou terminal. O seletor de arquivos precisa do portal do desktop e de um backend como \`xdg-desktop-portal-gtk\` ou \`xdg-desktop-portal-kde\`.
+          No Linux, os gerenciadores instalam as dependências, incluindo libmpv. O seletor de arquivos precisa do portal do desktop (\`xdg-desktop-portal-gtk\` ou \`xdg-desktop-portal-kde\`).
 
-          Confira a integridade dos downloads:
+          ### Verificação de integridade
 
           \`\`\`sh
-          sha256sum --check SHA256SUMS
+          sha256sum --ignore-missing -c SHA256SUMS
           \`\`\`
 
-          Pacotes compilados e testados pelo GitHub Actions em containers Arch Linux e Ubuntu 24.04.
+          Pacotes compilados pelo GitHub Actions (Arch Linux, Ubuntu 24.04, Windows x86_64 e macOS Apple Silicon/Intel).
 
           ## Mudanças
           EOF
           flags=()
           if [ "$MODE" = rascunho ]; then flags+=(--draft); fi
           if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "v$VERSION" "$pkg" "$deb" SHA256SUMS \
+          gh release create "v$VERSION" \
+            "$pkg" "$deb" "$win_zip" "$win_setup" "$mac_arm64" "$mac_x86_64" SHA256SUMS \
             -R "$GITHUB_REPOSITORY" "${flags[@]}" --target "$GITHUB_SHA" \
             --title "sync2gether $VERSION" --notes-file notes.md --generate-notes
           echo "Release v$VERSION criada ($MODE)." >> "$GITHUB_STEP_SUMMARY"

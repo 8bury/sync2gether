@@ -39,11 +39,44 @@ o convidado sozinho. É possível abrir um filme sozinho.
 
 ## Instalação
 
-Baixe o pacote para sua distribuição e o arquivo `SHA256SUMS` em
-[Releases](https://github.com/8bury/sync2gether/releases). A versão 0.5.0 tem
-pacotes para **Arch Linux atualizado** e **Ubuntu 24.04**, ambos em x86_64.
+Baixe o pacote para seu sistema operacional e o arquivo `SHA256SUMS` em
+[Releases](https://github.com/8bury/sync2gether/releases). Há pacotes para
+**Windows (x86_64)**, **macOS (Apple Silicon e Intel)**, **Arch Linux atualizado**
+e **Ubuntu 24.04** (Linux em x86_64).
 As salas pela internet no relay padrão (TLS) exigem a 0.4.0 ou mais nova nos
 dois PCs; o streaming P2P direto exige a 0.5.0 nos dois PCs.
+
+### Windows (x86_64)
+
+- **Instalador:** baixe e execute `sync2gether-0.5.0-windows-x86_64-setup.exe`.
+  Instala na pasta do usuário sem exigir privilégios de administrador e já inclui
+  `libmpv-2.dll`.
+- **Portátil:** extraia `sync2gether-0.5.0-windows-x86_64.zip` e execute
+  `sync2gether.exe`, mantendo `libmpv-2.dll` na mesma pasta.
+
+O executável ainda não possui assinatura digital da Microsoft. Se o **Windows
+SmartScreen** bloquear a execução, clique em **Mais informações → Executar
+assim mesmo**. Para salas na rede local ou streaming P2P direto, permita o
+acesso na rede privada quando o Firewall do Windows solicitar.
+
+### macOS (Apple Silicon e Intel)
+
+- **Apple Silicon (M1 ou mais novo):** baixe `sync2gether-0.5.0-macos-arm64.dmg`.
+- **Intel (x86_64):** baixe `sync2gether-0.5.0-macos-x86_64.dmg`.
+
+Abra o `.dmg` e arraste **sync2gether.app** para a pasta **Applications**. A
+biblioteca `libmpv` e suas dependências já estão embutidas no `.app`.
+
+O aplicativo ainda não é assinado/notarizado pela Apple. Se o **Gatekeeper**
+impedir a primeira abertura, remova o atributo de quarentena no Terminal e abra
+novamente:
+
+```sh
+xattr -cr /Applications/sync2gether.app
+```
+
+Para salas na rede local ou streaming P2P direto, permita o acesso à **Rede
+Local** quando o macOS solicitar.
 
 ### Arch Linux
 
@@ -57,7 +90,7 @@ sudo pacman -U ./sync2gether-0.5.0-1-x86_64.pkg.tar.zst
 sudo apt install ./sync2gether_0.5.0_amd64.deb
 ```
 
-Os gerenciadores instalam as dependências, incluindo libmpv. Abra
+No Linux, os gerenciadores instalam as dependências, incluindo libmpv. Abra
 **sync2gether** pelo menu de aplicativos ou execute `sync2gether` no terminal.
 O seletor de arquivos usa o portal do desktop; em ambientes mínimos, configure
 um backend como `xdg-desktop-portal-gtk` ou `xdg-desktop-portal-kde`.
@@ -67,6 +100,9 @@ Para conferir os arquivos baixados, execute na pasta dos pacotes:
 ```sh
 sha256sum --ignore-missing -c SHA256SUMS
 ```
+
+No PowerShell (Windows), use `Get-FileHash <arquivo> -Algorithm SHA256`; no
+macOS, `shasum -a 256 --ignore-missing -c SHA256SUMS`.
 
 O pacote Ubuntu não é compatível com 22.04. O pacote Arch requer as bibliotecas
 de um sistema atualizado. Os binários de release não incluem o modo demo.

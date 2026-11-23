@@ -3,8 +3,9 @@ pub use gl::GlRenderer;
 mod tracks;
 use libloading::Library;
 use std::{
-    ffi::{CString, c_char, c_int, c_ulong, c_void},
-    path::PathBuf,
+    borrow::Cow,
+    ffi::{CString, OsString, c_char, c_int, c_ulong, c_void},
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -140,16 +141,106 @@ struct Api {
         unsafe extern "C" fn(*mut c_void, Option<unsafe extern "C" fn(*mut c_void)>, *mut c_void),
     render_free: unsafe extern "C" fn(*mut c_void),
 }
+fn libmpv_candidates() -> Vec<OsString> {
+    let mut candidates = Vec::new();
+    if let Some(custom) = std::env::var_os("SYNC2GETHER_LIBMPV").filter(|v| !v.is_empty()) {
+        candidates.push(custom);
+    }
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    #[cfg(target_os = "windows")]
+    {
+        let names = ["libmpv-2.dll", "mpv-2.dll", "libmpv.dll"];
+        if let Some(dir) = &exe_dir {
+            for name in names {
+                candidates.push(dir.join(name).into_os_string());
+            }
+        }
+        for name in names {
+            candidates.push(OsString::from(name));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(dir) = &exe_dir {
+            for rel in [
+                "../Frameworks/libmpv.2.dylib",
+                "../Frameworks/libmpv.dylib",
+                "libmpv.2.dylib",
+                "libmpv.dylib",
+            ] {
+                candidates.push(dir.join(rel).into_os_string());
+            }
+        }
+        for name in [
+            "libmpv.2.dylib",
+            "libmpv.dylib",
+            "/opt/homebrew/lib/libmpv.2.dylib",
+            "/opt/homebrew/lib/libmpv.dylib",
+            "/usr/local/lib/libmpv.2.dylib",
+            "/usr/local/lib/libmpv.dylib",
+        ] {
+            candidates.push(OsString::from(name));
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = exe_dir;
+        for name in ["libmpv.so.2", "libmpv.so"] {
+            candidates.push(OsString::from(name));
+        }
+    }
+    candidates
+}
+
+fn missing_libmpv_message() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "libmpv não encontrada. Confira se libmpv-2.dll está na mesma pasta do sync2gether.exe."
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "libmpv não encontrada. Reinstale o app ou instale mpv com Homebrew (brew install mpv)."
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        "libmpv não encontrada. Instale mpv no Arch ou libmpv2 no Ubuntu."
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn strip_windows_verbatim(path: &str) -> Cow<'_, str> {
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        Cow::Owned(format!(r"\\{unc}"))
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        Cow::Borrowed(rest)
+    } else {
+        Cow::Borrowed(path)
+    }
+}
+
+fn mpv_load_path(path: &Path) -> Option<Cow<'_, str>> {
+    let raw = path.to_str()?;
+    #[cfg(target_os = "windows")]
+    {
+        Some(strip_windows_verbatim(raw))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Some(Cow::Borrowed(raw))
+    }
+}
+
 impl Api {
     fn load() -> Result<Arc<Self>, String> {
         // SAFETY: símbolos têm as assinaturas públicas de libmpv e a Library vive
         // até depois da destruição do renderer e do handle.
         unsafe {
-            let library = Library::new("libmpv.so.2")
-                .or_else(|_| Library::new("libmpv.so"))
-                .map_err(|_| {
-                    "libmpv não encontrada. Instale mpv no Arch ou libmpv2 no Ubuntu.".to_owned()
-                })?;
+            let library = libmpv_candidates()
+                .into_iter()
+                .find_map(|candidate| Library::new(candidate).ok())
+                .ok_or_else(|| missing_libmpv_message().to_owned())?;
             macro_rules! symbol {
                 ($name:literal) => {
                     *library
@@ -437,8 +528,10 @@ fn run(
                         generation = id;
                         loaded = false;
                         let _ = api.command(handle, &["set", "pause", "yes"]);
-                        match path.to_str() {
-                            Some(path) => api.command(handle, &["loadfile", path, "replace"]),
+                        match mpv_load_path(&path) {
+                            Some(path) => {
+                                api.command(handle, &["loadfile", path.as_ref(), "replace"])
+                            }
                             None => Err("O nome do arquivo não é UTF-8".into()),
                         }
                     }
@@ -633,5 +726,21 @@ mod tests {
         s.paused = false;
         s.seeking = true;
         assert_eq!(s.position_at(1100.0), 10.0);
+    }
+
+    #[test]
+    fn strips_windows_verbatim_prefixes_for_libmpv() {
+        assert_eq!(
+            strip_windows_verbatim(r"\\?\C:\Users\demo\movie.mkv"),
+            r"C:\Users\demo\movie.mkv"
+        );
+        assert_eq!(
+            strip_windows_verbatim(r"\\?\UNC\server\share\movie.mkv"),
+            r"\\server\share\movie.mkv"
+        );
+        assert_eq!(
+            strip_windows_verbatim("/home/demo/movie.mkv"),
+            "/home/demo/movie.mkv"
+        );
     }
 }

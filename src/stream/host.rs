@@ -1,6 +1,6 @@
 use super::{
     ChunkIndex, StreamEvent, StreamPhase, StreamTelemetry, cache::chunk_len_for, file_bitrate_bps,
-    nat, tls, wire,
+    file_io, nat, tls, wire,
 };
 use crate::protocol::{Media, StreamAnswer, StreamOffer};
 use std::{
@@ -8,7 +8,6 @@ use std::{
     fs::File,
     io,
     net::UdpSocket,
-    os::unix::fs::FileExt,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -240,7 +239,7 @@ async fn run_host(
                     let len = chunk_len_for(index.file_size, index.chunk_size, idx);
                     let read_result = tokio::task::spawn_blocking(move || {
                         let mut buf = vec![0u8; len];
-                        file.read_exact_at(&mut buf, offset).map(|()| buf)
+                        file_io::read_exact_at(&file, &mut buf, offset).map(|()| buf)
                     })
                     .await;
                     match read_result {

@@ -1,9 +1,138 @@
 use super::{Palette, kit, section_label, strong};
 use crate::{
     runtime::{Command, Role, View},
-    stream::{BitrateAdvice, StreamPhase, format_bps},
+    stream::{BitrateAdvice, StreamPhase, file_bitrate_bps, format_bps},
 };
 use eframe::egui::{self, RichText, Stroke};
+
+pub(super) enum CardStream {
+    Busy(&'static str),
+    Ready(String),
+}
+
+pub(super) fn card_stream_status(view: &View, local: bool) -> Option<CardStream> {
+    if view.role == Role::Local || !view.connected {
+        return None;
+    }
+    let is_receiver_card = match view.role {
+        Role::Host => {
+            !local && (view.stream.active || view.peer_streaming || view.peer_stream.is_some())
+        }
+        Role::Guest => {
+            local
+                && ((view.stream.active && !view.stream.is_sender)
+                    || view.stream.phase == StreamPhase::Reconnecting)
+        }
+        Role::Local => false,
+    };
+    if !is_receiver_card {
+        return None;
+    }
+    let reconnecting = view.stream.phase == StreamPhase::Reconnecting
+        || (view.role == Role::Host && view.peer_stream.as_ref().is_some_and(|s| s.reconnecting));
+    let connecting = matches!(
+        view.stream.phase,
+        StreamPhase::Offering | StreamPhase::Connecting | StreamPhase::Probing
+    );
+    if reconnecting {
+        return Some(CardStream::Busy("Reconectando streaming P2P…"));
+    }
+    if connecting {
+        return Some(CardStream::Busy("Conectando streaming P2P…"));
+    }
+    let buffering = if local {
+        view.buffering || view.player.buffering
+    } else {
+        view.peer_buffering
+    };
+    if buffering {
+        return Some(CardStream::Busy("Carregando streaming P2P…"));
+    }
+    let verified = if local {
+        view.verified && !view.loading
+    } else {
+        view.peer_verified && !view.peer_loading
+    };
+    if verified {
+        return Some(CardStream::Ready("Via streaming P2P".into()));
+    }
+    Some(CardStream::Busy("Preparando streaming P2P…"))
+}
+
+struct PanelMetrics {
+    phase: StreamPhase,
+    is_sender: bool,
+    cached_bytes: u64,
+    total_bytes: u64,
+    transfer_bps: u64,
+    link_bps: Option<u64>,
+    file_bitrate_bps: Option<u64>,
+    buffered_ahead_bytes: u64,
+    advice: BitrateAdvice,
+    peer_addr: Option<std::net::SocketAddr>,
+    from_peer_report: bool,
+}
+
+impl PanelMetrics {
+    fn from_view(view: &View) -> Self {
+        let s = &view.stream;
+        if view.role == Role::Host
+            && let Some(peer) = &view.peer_stream
+            && peer.total_bytes > 0
+        {
+            let phase = if peer.reconnecting || s.phase == StreamPhase::Reconnecting {
+                StreamPhase::Reconnecting
+            } else if peer.complete || s.phase == StreamPhase::Complete {
+                StreamPhase::Complete
+            } else if matches!(s.phase, StreamPhase::Error(_)) {
+                s.phase.clone()
+            } else {
+                StreamPhase::Streaming
+            };
+            return Self {
+                phase,
+                is_sender: true,
+                cached_bytes: peer.cached_bytes,
+                total_bytes: peer.total_bytes,
+                transfer_bps: peer.transfer_bps,
+                link_bps: peer.link_bps.or(s.link_bps),
+                file_bitrate_bps: s
+                    .file_bitrate_bps
+                    .or_else(|| file_bitrate_bps(peer.total_bytes, view.player.duration)),
+                buffered_ahead_bytes: peer.buffered_ahead_bytes,
+                advice: s.advice,
+                peer_addr: s.peer_addr,
+                from_peer_report: true,
+            };
+        }
+        Self {
+            phase: s.phase.clone(),
+            is_sender: s.is_sender,
+            cached_bytes: s.cached_bytes,
+            total_bytes: s.total_bytes,
+            transfer_bps: s.transfer_bps,
+            link_bps: s.link_bps,
+            file_bitrate_bps: s.file_bitrate_bps,
+            buffered_ahead_bytes: s.buffered_ahead_bytes,
+            advice: s.advice,
+            peer_addr: s.peer_addr,
+            from_peer_report: false,
+        }
+    }
+
+    fn cache_fraction(&self) -> f32 {
+        if self.total_bytes == 0 {
+            0.0
+        } else {
+            (self.cached_bytes as f64 / self.total_bytes as f64).clamp(0.0, 1.0) as f32
+        }
+    }
+
+    fn buffered_seconds(&self) -> Option<f64> {
+        let bitrate = self.file_bitrate_bps.filter(|&b| b > 0)?;
+        Some((self.buffered_ahead_bytes as f64 * 8.0) / bitrate as f64)
+    }
+}
 
 pub(super) fn preparation_strip(
     ui: &mut egui::Ui,
@@ -120,25 +249,30 @@ pub(super) fn preparation_strip(
 }
 
 fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
-    let s = &view.stream;
-    let (phase_label, busy) = match &s.phase {
-        StreamPhase::Offering => ("Preparando túnel P2P…", true),
-        StreamPhase::Connecting => ("Abrindo conexão P2P direta…", true),
-        StreamPhase::Probing => ("Medindo velocidade do enlace…", true),
+    let m = PanelMetrics::from_view(view);
+    let (phase_label, busy, warn) = match &m.phase {
+        StreamPhase::Offering => ("Preparando streaming P2P…", true, false),
+        StreamPhase::Connecting => ("Abrindo conexão P2P direta…", true, false),
+        StreamPhase::Probing => ("Medindo velocidade do enlace…", true, false),
+        StreamPhase::Reconnecting => ("Reconectando streaming P2P…", true, true),
         StreamPhase::Streaming => (
-            if s.is_sender {
+            if m.is_sender {
                 "Transmitindo direto (P2P cifrado)"
             } else {
                 "Recebendo direto (P2P cifrado)"
             },
             false,
+            false,
         ),
-        StreamPhase::Complete => ("Filme 100% em cache local (P2P verificado)", false),
-        StreamPhase::Idle | StreamPhase::Error(_) => ("Streaming P2P", false),
+        StreamPhase::Complete => ("Filme 100% em cache local (P2P verificado)", false, false),
+        StreamPhase::Idle | StreamPhase::Error(_) => ("Streaming P2P", false, false),
     };
     egui::Frame::new()
         .fill(colors.surface)
-        .stroke(Stroke::new(1.0, colors.accent.gamma_multiply(0.45)))
+        .stroke(Stroke::new(
+            1.0,
+            if warn { colors.warning } else { colors.accent }.gamma_multiply(0.45),
+        ))
         .corner_radius(14)
         .inner_margin(egui::Margin::same(14))
         .show(ui, |ui| {
@@ -150,7 +284,13 @@ fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Ve
                 } else {
                     Some(kit::Glyph::Check)
                 };
-                let color = if busy { colors.accent } else { colors.success };
+                let color = if warn {
+                    colors.warning
+                } else if busy {
+                    colors.accent
+                } else {
+                    colors.success
+                };
                 kit::status(ui, glyph, phase_label, color);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if kit::Button::new(kit::Kind::Ghost, "Parar")
@@ -162,27 +302,25 @@ fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Ve
                     }
                 });
             });
-            if s.total_bytes > 0 {
-                kit::progress(ui, colors, s.cache_fraction(), ui.available_width());
-                let pct = (s.cache_fraction() * 100.0).round() as u32;
-                let progress_label = if s.is_sender {
+            if m.total_bytes > 0 {
+                kit::progress(ui, colors, m.cache_fraction(), ui.available_width());
+                let pct = (m.cache_fraction() * 100.0).round() as u32;
+                let progress_label = if m.is_sender && !m.from_peer_report {
                     format!("{pct}% enviados")
                 } else {
                     format!("{pct}% em cache")
                 };
                 let mut metrics = vec![progress_label];
-                if let Some(secs) = s.buffered_seconds() {
+                if let Some(secs) = m.buffered_seconds() {
                     metrics.push(format!("{secs:.0}s à frente"));
                 }
-                if let Some(link) = s.link_bps {
+                if let Some(link) = m.link_bps {
                     metrics.push(format!("Enlace {}", format_bps(link)));
                 }
-                if let Some(bitrate) = s.file_bitrate_bps {
+                if let Some(bitrate) = m.file_bitrate_bps {
                     metrics.push(format!("Filme {}", format_bps(bitrate)));
                 }
-                if s.transfer_bps > 0 {
-                    metrics.push(format!("Agora {}", format_bps(s.transfer_bps)));
-                }
+                metrics.push(format!("Agora {}", format_bps(m.transfer_bps)));
                 ui.add(
                     egui::Label::new(
                         RichText::new(metrics.join(" · "))
@@ -192,7 +330,7 @@ fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Ve
                     .wrap(),
                 );
             }
-            if let Some((text, color)) = advice_line(s.advice, colors) {
+            if let Some((text, color)) = advice_line(m.advice, colors) {
                 ui.add(egui::Label::new(RichText::new(text).size(12.5).color(color)).wrap());
             }
         });
@@ -228,41 +366,60 @@ pub(super) fn room_section(
     view: &View,
     actions: &mut Vec<Command>,
 ) {
-    if !view.stream.active {
+    let has_error = matches!(view.stream.phase, StreamPhase::Error(_));
+    if !view.stream.active && view.peer_stream.is_none() && !has_error {
         return;
     }
-    let s = &view.stream;
+    let m = PanelMetrics::from_view(view);
     ui.add_space(10.0);
     section_label(ui, colors, "Streaming P2P direto");
-    if s.total_bytes > 0 {
-        kit::progress(ui, colors, s.cache_fraction(), ui.available_width());
-        let pct = (s.cache_fraction() * 100.0).round() as u32;
-        ui.label(
-            RichText::new(format!(
-                "{pct}% · {}",
-                if s.transfer_bps > 0 {
-                    format_bps(s.transfer_bps)
-                } else if let Some(link) = s.link_bps {
-                    format_bps(link)
-                } else {
-                    "conectado".into()
-                }
-            ))
-            .size(12.5)
-            .color(colors.muted),
+    if let StreamPhase::Error(err) = &view.stream.phase {
+        ui.add(egui::Label::new(RichText::new(err).size(12.5).color(colors.warning)).wrap());
+    } else if m.phase == StreamPhase::Reconnecting {
+        kit::status(
+            ui,
+            Some(kit::Glyph::Spinner),
+            "Reconectando streaming P2P…",
+            colors.warning,
         );
     }
-    if let Some(addr) = s.peer_addr {
+    if m.total_bytes > 0 {
+        kit::progress(ui, colors, m.cache_fraction(), ui.available_width());
+        let pct = (m.cache_fraction() * 100.0).round() as u32;
+        let mut parts = vec![format!("{pct}% em cache")];
+        if m.phase != StreamPhase::Complete {
+            parts.push(format_bps(m.transfer_bps));
+            if let Some(secs) = m.buffered_seconds() {
+                parts.push(format!("{secs:.0}s à frente"));
+            }
+        }
+        ui.label(
+            RichText::new(parts.join(" · "))
+                .size(12.5)
+                .color(colors.muted),
+        );
+    }
+    if let Some(addr) = m.peer_addr {
         ui.label(
             RichText::new(format!("Direto: {addr}"))
                 .size(12.0)
                 .color(colors.faint),
         );
     }
-    if kit::Button::new(kit::Kind::Ghost, "Parar streaming")
-        .size(kit::Size::Small)
-        .show(ui, colors)
-        .clicked()
+    if has_error
+        && view.can_stream
+        && kit::Button::new(kit::Kind::Secondary, "Reconectar P2P")
+            .size(kit::Size::Small)
+            .show(ui, colors)
+            .clicked()
+    {
+        actions.push(Command::StartStream);
+    }
+    if view.stream.active
+        && kit::Button::new(kit::Kind::Ghost, "Parar streaming")
+            .size(kit::Size::Small)
+            .show(ui, colors)
+            .clicked()
     {
         actions.push(Command::StopStream);
     }

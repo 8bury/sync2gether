@@ -1,8 +1,11 @@
+mod overlay;
+
 use crate::ui::kit::{self, Glyph};
 use crate::{
     player::TrackKind,
     protocol::Control,
     runtime::{Command, Role, View},
+    stream::StreamPhase,
 };
 use eframe::egui::{self, Color32, RichText, Stroke};
 
@@ -17,6 +20,7 @@ pub struct PlayerUi {
     pub fullscreen: bool,
     pub controls_visible: bool,
     pub video_rect: Option<egui::Rect>,
+    loading_card_rect: Option<egui::Rect>,
     last_activity: f64,
     last_pointer: Option<egui::Pos2>,
     last_generation: u64,
@@ -91,6 +95,7 @@ pub(crate) fn draw(
         && (!view.player.paused
             || view.preparing
             || view.scheduled
+            || view.waiting_buffer
             || view.role == Role::Local
             || view.ready);
     let shortcut_focus = (response.hovered() || response.has_focus() || inputs.player.fullscreen)
@@ -103,8 +108,13 @@ pub(crate) fn draw(
     if ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO || i.pointer.any_pressed()) {
         inputs.player.keyboard_navigation = false;
     }
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let over_loading_card = inputs
+        .player
+        .loading_card_rect
+        .is_some_and(|card| pointer.is_some_and(|p| card.contains(p)));
     let mut activity = response.clicked() || ui.input(|i| i.key_pressed(egui::Key::Tab));
-    if response.clicked() {
+    if response.clicked() && !over_loading_card {
         response.request_focus();
         if can_toggle {
             actions.push(Command::Control(toggle(view)));
@@ -149,7 +159,6 @@ pub(crate) fn draw(
     }
     inputs.player.video_rect = Some(rect);
     let now = ui.input(|i| i.time);
-    let pointer = ui.input(|i| i.pointer.hover_pos());
     let panel_height = if rect.width() < 560.0 { 132.0 } else { 106.0 };
     let controls_rect = egui::Rect::from_min_max(
         egui::pos2(rect.left(), rect.bottom() - panel_height),
@@ -161,6 +170,7 @@ pub(crate) fn draw(
         || view.player.blocked
         || view.preparing
         || view.scheduled
+        || overlay::should_keep_controls(view)
         || inputs.seek.is_some()
         || egui::Popup::is_any_open(ui.ctx())
         || pointer.is_some_and(|p| controls_rect.contains(p))
@@ -170,7 +180,9 @@ pub(crate) fn draw(
                 .memory(|m| m.focused().is_some_and(|id| id != response.id));
     let visible = inputs.player.update(now, pointer, rect, keep, activity);
     if !visible {
-        if response.hovered() {
+        inputs.player.loading_card_rect =
+            overlay::draw_center_loading(ui, rect, view, &mut actions);
+        if response.hovered() && !over_loading_card {
             ui.ctx().set_cursor_icon(egui::CursorIcon::None);
         }
         return actions;
@@ -181,11 +193,16 @@ pub(crate) fn draw(
                 (inputs.player.last_activity + 3.0 - now).max(0.01),
             ));
     }
+    let hard_blocked = view.player.blocked && !view.buffering && !view.player.buffering;
+    let suppress_stream_notice = matches!(
+        view.stream.phase,
+        StreamPhase::Reconnecting | StreamPhase::Error(_)
+    );
     let has_notice = view.error.is_some()
         || view.preparing
         || view.scheduled
-        || view.player.blocked
-        || view.notice.is_some();
+        || hard_blocked
+        || (view.notice.is_some() && !suppress_stream_notice);
     let top_height: f32 = if has_notice { 160.0 } else { 80.0 };
     gradient(
         ui.painter(),
@@ -247,12 +264,12 @@ pub(crate) fn draw(
         if has_notice {
             let status = if view.preparing || view.scheduled {
                 "Preparando a reprodução…"
-            } else if view.player.blocked {
+            } else if hard_blocked {
                 "A reprodução foi interrompida. Aguardando o player…"
             } else {
                 &view.status
             };
-            let glyph = if view.error.is_some() || view.player.blocked {
+            let glyph = if view.error.is_some() || hard_blocked {
                 Glyph::Alert
             } else if view.preparing || view.scheduled {
                 Glyph::Spinner
@@ -338,7 +355,15 @@ pub(crate) fn draw(
                     )
                 })
                 .inner;
-            seek_bar(ui, &response, seek, view.player.duration, can_seek);
+            let cached_ranges = overlay::effective_cached_ranges(view);
+            overlay::seek_bar(
+                ui,
+                &response,
+                seek,
+                view.player.duration,
+                can_seek,
+                &cached_ranges,
+            );
             if response.dragged() {
                 inputs.seek = Some(seek);
             }
@@ -347,12 +372,15 @@ pub(crate) fn draw(
                 inputs.seek = None;
             }
             ui.horizontal(|ui| {
-                let icon = if view.player.paused && !view.preparing && !view.scheduled {
+                let cancelling = view.preparing || view.scheduled || view.waiting_buffer;
+                let icon = if cancelling {
+                    Icon::Cancel
+                } else if view.player.paused {
                     Icon::Play
                 } else {
                     Icon::Pause
                 };
-                let tooltip = if view.preparing || view.scheduled {
+                let tooltip = if cancelling {
                     "Cancelar operação"
                 } else if view.player.paused {
                     "Reproduzir · Espaço"
@@ -383,6 +411,14 @@ pub(crate) fn draw(
                     .size(12.5)
                     .color(Color32::from_gray(215)),
                 );
+                let hud_max_w = ui.available_width() - 136.0;
+                if hud_max_w >= 88.0
+                    && let Some((hud_text, hud_color)) =
+                        overlay::stream_hud_label(view, hud_max_w >= 210.0)
+                {
+                    ui.add_space(6.0);
+                    overlay::draw_stream_hud(ui, &hud_text, hud_color, hud_max_w - 6.0);
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icon_button(
                         ui,
@@ -435,6 +471,14 @@ pub(crate) fn draw(
             });
         },
     );
+    let safe_top = rect.top() + if has_notice { 132.0 } else { 56.0 };
+    let safe_bottom = (controls_rect.top() - 4.0).max(safe_top + 48.0);
+    let safe_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), safe_top),
+        egui::pos2(rect.right(), safe_bottom.min(rect.bottom())),
+    );
+    inputs.player.loading_card_rect =
+        overlay::draw_center_loading(ui, safe_rect, view, &mut actions);
     actions
 }
 fn track_menu(ui: &mut egui::Ui, view: &View, demo: bool, actions: &mut Vec<Command>) {
@@ -482,7 +526,7 @@ fn track_menu(ui: &mut egui::Ui, view: &View, demo: bool, actions: &mut Vec<Comm
     });
 }
 fn toggle(view: &View) -> Control {
-    if view.player.paused && !view.preparing && !view.scheduled {
+    if view.player.paused && !view.preparing && !view.scheduled && !view.waiting_buffer {
         Control::Play
     } else {
         Control::Pause
@@ -522,60 +566,6 @@ fn gradient(painter: &egui::Painter, rect: egui::Rect, top: bool) {
     mesh.add_triangle(0, 2, 3);
     painter.add(egui::Shape::mesh(mesh));
 }
-fn seek_bar(ui: &egui::Ui, response: &egui::Response, seek: f64, duration: f64, enabled: bool) {
-    let rect = response.rect;
-    let active = enabled && (response.hovered() || response.dragged());
-    let hover = ui
-        .ctx()
-        .animate_bool_with_time(response.id.with("seek_hover"), active, 0.12);
-    let radius = rect.height() / 2.5;
-    let range = rect.x_range().shrink(radius);
-    let fraction = if duration > 0.0 {
-        (seek / duration).clamp(0.0, 1.0) as f32
-    } else {
-        0.0
-    };
-    let x = range.min + range.span() * fraction;
-    let height = 4.0 + 2.0 * hover;
-    let track = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), height));
-    let painter = ui.painter();
-    painter.rect_filled(track, height * 0.5, Color32::from_white_alpha(56));
-    let mut filled = track;
-    filled.max.x = x.max(track.left() + height);
-    painter.rect_filled(
-        filled,
-        height * 0.5,
-        if enabled {
-            ACCENT
-        } else {
-            ACCENT.gamma_multiply(0.6)
-        },
-    );
-    if enabled {
-        let center = egui::pos2(x, rect.center().y);
-        painter.circle_filled(
-            center + egui::vec2(0.0, 1.0),
-            5.0 + 2.5 * hover,
-            Color32::from_black_alpha(90),
-        );
-        painter.circle_filled(center, 4.5 + 2.5 * hover, Color32::WHITE);
-    }
-    if enabled && let Some(pointer) = response.hover_pos() {
-        let at = ((pointer.x - range.min) / range.span().max(1.0)).clamp(0.0, 1.0) as f64;
-        let text = timestamp(if response.dragged() {
-            seek
-        } else {
-            at * duration
-        });
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), Color32::WHITE);
-        let size = galley.size() + egui::vec2(14.0, 8.0);
-        let anchor = if response.dragged() { x } else { pointer.x };
-        let left = (anchor - size.x * 0.5).clamp(rect.left(), rect.right() - size.x);
-        let bubble = egui::Rect::from_min_size(egui::pos2(left, rect.top() - size.y - 6.0), size);
-        painter.rect_filled(bubble, 6, Color32::from_black_alpha(200));
-        painter.galley(bubble.min + egui::vec2(7.0, 4.0), galley, Color32::WHITE);
-    }
-}
 
 struct Pill {
     label: String,
@@ -603,11 +593,41 @@ fn room_pill(view: &View) -> Pill {
             warning: true,
         };
     }
+    let peer_label = view.peer_name.as_deref().unwrap_or("Outra pessoa");
+    let card_visible = overlay::is_center_loading_visible(view);
+    if view.peer_buffering {
+        return Pill {
+            label: if card_visible {
+                format!("{peer_label} · carregando")
+            } else {
+                format!("{peer_label} · aguardando vídeo…")
+            },
+            glyph: Some(Glyph::Spinner),
+            warning: true,
+        };
+    }
+    if view.buffering || view.waiting_buffer {
+        return Pill {
+            label: "Carregando vídeo…".into(),
+            glyph: Some(Glyph::Spinner),
+            warning: true,
+        };
+    }
+    if view.stream.phase == StreamPhase::Reconnecting
+        || view.peer_stream.as_ref().is_some_and(|s| s.reconnecting)
+    {
+        return Pill {
+            label: if card_visible {
+                format!("{peer_label} · P2P")
+            } else {
+                format!("{peer_label} · reconectando P2P…")
+            },
+            glyph: Some(Glyph::Spinner),
+            warning: true,
+        };
+    }
     Pill {
-        label: format!(
-            "{} · em sincronia",
-            view.peer_name.as_deref().unwrap_or("Outra pessoa")
-        ),
+        label: format!("{peer_label} · em sincronia"),
         glyph: None,
         warning: false,
     }
@@ -736,6 +756,7 @@ fn glass(ui: &mut egui::Ui, pill: &Pill, selected: bool) -> egui::Response {
 enum Icon {
     Play,
     Pause,
+    Cancel,
     Back,
     Forward,
     Volume(bool),
@@ -792,6 +813,9 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, enabled: bool, tooltip: &str) -> e
                     color,
                 );
             }
+        }
+        Icon::Cancel => {
+            kit::draw(ui.painter(), Glyph::Close, c, 15.0, color, 0.0);
         }
         Icon::Back | Icon::Forward => {
             let direction = if matches!(icon, Icon::Back) {

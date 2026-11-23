@@ -9,7 +9,7 @@ use std::{
     net::{SocketAddr, UdpSocket},
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -31,10 +31,17 @@ impl Drop for EndpointGuard {
     }
 }
 
-struct CacheGuard(Arc<ChunkCache>);
+struct CacheGuard {
+    cache: Arc<ChunkCache>,
+    proxy: Option<Weak<http::LocalProxy>>,
+}
 impl Drop for CacheGuard {
     fn drop(&mut self) {
-        self.0.close_with_error("Streaming encerrado".into());
+        if let Some(proxy) = &self.proxy
+            && proxy.strong_count() == 0
+        {
+            self.cache.close_with_error("Streaming encerrado".into());
+        }
     }
 }
 
@@ -45,12 +52,22 @@ pub struct GuestPending {
     identity: tls::Identity,
     stun_enabled: bool,
     cache_dir: Option<PathBuf>,
+    existing_cache: Option<Arc<ChunkCache>>,
 }
 
 pub async fn prepare(
     offer: StreamOffer,
     stun_enabled: bool,
     cache_dir: Option<PathBuf>,
+) -> io::Result<(StreamAnswer, GuestPending)> {
+    prepare_with_cache(offer, stun_enabled, cache_dir, None).await
+}
+
+pub async fn prepare_with_cache(
+    offer: StreamOffer,
+    stun_enabled: bool,
+    cache_dir: Option<PathBuf>,
+    existing_cache: Option<Arc<ChunkCache>>,
 ) -> io::Result<(StreamAnswer, GuestPending)> {
     let socket = nat::bind_udp()?;
     let identity = tls::Identity::generate()?;
@@ -67,8 +84,14 @@ pub async fn prepare(
         identity,
         stun_enabled,
         cache_dir,
+        existing_cache,
     };
     Ok((answer, pending))
+}
+
+enum GuestOutcome {
+    Ended,
+    Disconnected(String),
 }
 
 impl GuestPending {
@@ -76,8 +99,11 @@ impl GuestPending {
         let id = self.id;
         tokio::spawn(async move {
             match run_guest(self, events.clone()).await {
-                Ok(()) => {
+                Ok(GuestOutcome::Ended) => {
                     let _ = events.send(StreamEvent::Ended { id }).await;
+                }
+                Ok(GuestOutcome::Disconnected(reason)) => {
+                    let _ = events.send(StreamEvent::Disconnected { id, reason }).await;
                 }
                 Err(error) => {
                     let _ = events.send(StreamEvent::Failed { id, error }).await;
@@ -87,7 +113,10 @@ impl GuestPending {
     }
 }
 
-async fn run_guest(pending: GuestPending, events: mpsc::Sender<StreamEvent>) -> Result<(), String> {
+async fn run_guest(
+    pending: GuestPending,
+    events: mpsc::Sender<StreamEvent>,
+) -> Result<GuestOutcome, String> {
     let GuestPending {
         id,
         offer,
@@ -95,8 +124,10 @@ async fn run_guest(pending: GuestPending, events: mpsc::Sender<StreamEvent>) -> 
         identity,
         stun_enabled,
         cache_dir,
+        existing_cache,
     } = pending;
 
+    let reconnecting = existing_cache.is_some();
     let local_addr = socket
         .local_addr()
         .map_err(|_| "Não foi possível obter porta UDP local.".to_owned())?;
@@ -106,15 +137,28 @@ async fn run_guest(pending: GuestPending, events: mpsc::Sender<StreamEvent>) -> 
     }
 
     let file_bitrate = file_bitrate_bps(offer.media.bytes, offer.duration);
+    let initial_stats = existing_cache.as_ref().map(|c| c.stats());
     let _ = events
         .send(StreamEvent::Telemetry {
             id,
             telemetry: StreamTelemetry {
                 active: true,
                 is_sender: false,
-                phase: StreamPhase::Connecting,
+                phase: if reconnecting {
+                    StreamPhase::Reconnecting
+                } else {
+                    StreamPhase::Connecting
+                },
                 file_bitrate_bps: file_bitrate,
+                cached_bytes: initial_stats.as_ref().map_or(0, |s| s.cached_bytes),
                 total_bytes: offer.media.bytes,
+                buffered_ahead_bytes: initial_stats.as_ref().map_or(0, |s| s.buffered_ahead_bytes),
+                chunks_cached: initial_stats.as_ref().map_or(0, |s| s.chunks_cached),
+                chunks_total: initial_stats.as_ref().map_or(0, |s| s.chunks_total),
+                cached_ranges: initial_stats
+                    .as_ref()
+                    .map(|s| s.cached_ranges.clone())
+                    .unwrap_or_default(),
                 ..Default::default()
             },
         })
@@ -141,40 +185,68 @@ async fn run_guest(pending: GuestPending, events: mpsc::Sender<StreamEvent>) -> 
     let conn = connect_any(&endpoint, &punch_sock, local_addr, &remote_candidates).await?;
     let peer_addr = conn.remote_address();
 
+    let probe_stats = existing_cache.as_ref().map(|c| c.stats());
     let _ = events
         .send(StreamEvent::Telemetry {
             id,
             telemetry: StreamTelemetry {
                 active: true,
                 is_sender: false,
-                phase: StreamPhase::Probing,
+                phase: if reconnecting {
+                    StreamPhase::Reconnecting
+                } else {
+                    StreamPhase::Probing
+                },
                 peer_addr: Some(peer_addr),
                 file_bitrate_bps: file_bitrate,
+                cached_bytes: probe_stats.as_ref().map_or(0, |s| s.cached_bytes),
                 total_bytes: offer.media.bytes,
+                buffered_ahead_bytes: probe_stats.as_ref().map_or(0, |s| s.buffered_ahead_bytes),
+                chunks_cached: probe_stats.as_ref().map_or(0, |s| s.chunks_cached),
+                chunks_total: probe_stats.as_ref().map_or(0, |s| s.chunks_total),
+                cached_ranges: probe_stats
+                    .as_ref()
+                    .map(|s| s.cached_ranges.clone())
+                    .unwrap_or_default(),
                 ..Default::default()
             },
         })
         .await;
 
-    let hashes = Arc::new(fetch_hash_table(&conn, &offer).await?);
+    let hashes = if existing_cache.is_some() {
+        None
+    } else {
+        Some(Arc::new(fetch_hash_table(&conn, &offer).await?))
+    };
     let link_bps = measure_throughput(&conn, offer.media.bytes).await.ok();
 
-    let dir = cache_dir.unwrap_or_else(|| default_cache_dir(&offer.media.hash));
-    let cache = ChunkCache::open_async(
-        dir,
-        offer.media.hash.clone(),
-        offer.hash_table_digest.clone(),
-        offer.media.bytes,
-        offer.chunk_size,
-        hashes,
-    )
-    .await
-    .map_err(|e| format!("Não foi possível abrir o cache local: {e}"))?;
-    let _cache_guard = CacheGuard(cache.clone());
-
-    let proxy = http::start(cache.clone(), &offer.file_name)
+    let (cache, proxy) = if let Some(existing) = existing_cache {
+        existing.release_in_flight();
+        (existing, None)
+    } else {
+        let dir = cache_dir.unwrap_or_else(|| default_cache_dir(&offer.media.hash));
+        let cache = ChunkCache::open_async(
+            dir,
+            offer.media.hash.clone(),
+            offer.hash_table_digest.clone(),
+            offer.media.bytes,
+            offer.chunk_size,
+            hashes.unwrap(),
+        )
         .await
-        .map_err(|e| format!("Não foi possível iniciar o proxy local do player: {e}"))?;
+        .map_err(|e| format!("Não foi possível abrir o cache local: {e}"))?;
+        let proxy = Arc::new(
+            http::start(cache.clone(), &offer.file_name)
+                .await
+                .map_err(|e| format!("Não foi possível iniciar o proxy local do player: {e}"))?,
+        );
+        (cache, Some(proxy))
+    };
+    let _cache_guard = CacheGuard {
+        cache: cache.clone(),
+        proxy: proxy.as_ref().map(Arc::downgrade),
+    };
+    let _keep_proxy = proxy;
 
     let stats = cache.stats();
     let initial_telemetry = StreamTelemetry {
@@ -195,20 +267,35 @@ async fn run_guest(pending: GuestPending, events: mpsc::Sender<StreamEvent>) -> 
             file_bitrate,
             stats.total_bytes.saturating_sub(stats.cached_bytes),
         ),
+        cached_ranges: stats.cached_ranges,
     };
 
-    if events
-        .send(StreamEvent::Ready {
+    if let Some(proxy) = &_keep_proxy {
+        if events
+            .send(StreamEvent::Ready {
+                id,
+                url: proxy.url.clone(),
+                media: offer.media.clone(),
+                file_name: offer.file_name.clone(),
+                hash_table_digest: offer.hash_table_digest.clone(),
+                cache: cache.clone(),
+                proxy: proxy.clone(),
+                telemetry: initial_telemetry,
+            })
+            .await
+            .is_err()
+        {
+            return Ok(GuestOutcome::Ended);
+        }
+    } else if events
+        .send(StreamEvent::Telemetry {
             id,
-            url: proxy.url.clone(),
-            media: offer.media.clone(),
-            file_name: offer.file_name.clone(),
             telemetry: initial_telemetry,
         })
         .await
         .is_err()
     {
-        return Ok(());
+        return Ok(GuestOutcome::Ended);
     }
 
     let bytes_received = Arc::new(AtomicU64::new(0));
@@ -233,10 +320,13 @@ async fn run_guest(pending: GuestPending, events: mpsc::Sender<StreamEvent>) -> 
             _ = conn.closed() => {
                 if !cache.is_complete() {
                     workers.abort_all();
+                    cache.release_in_flight();
                     if let Some(reason) = cache.closed_reason() {
                         return Err(reason);
                     }
-                    return Err("A conexão P2P direta foi interrompida.".into());
+                    return Ok(GuestOutcome::Disconnected(
+                        "A conexão P2P direta foi interrompida.".into(),
+                    ));
                 }
                 break;
             }
@@ -291,10 +381,11 @@ async fn run_guest(pending: GuestPending, events: mpsc::Sender<StreamEvent>) -> 
                         file_bitrate,
                         stats.total_bytes.saturating_sub(stats.cached_bytes),
                     ),
+                    cached_ranges: stats.cached_ranges,
                 };
                 if events.send(StreamEvent::Telemetry { id, telemetry }).await.is_err() {
                     workers.abort_all();
-                    return Ok(());
+                    return Ok(GuestOutcome::Ended);
                 }
                 if full_verified {
                     break;
@@ -327,13 +418,13 @@ async fn run_guest(pending: GuestPending, events: mpsc::Sender<StreamEvent>) -> 
                 chunks_cached: stats.chunks_cached,
                 chunks_total: stats.chunks_total,
                 advice: super::BitrateAdvice::Ready,
+                cached_ranges: stats.cached_ranges,
             },
         })
         .await;
 
-    let _keep_proxy = proxy;
     std::future::pending::<()>().await;
-    Ok(())
+    Ok(GuestOutcome::Ended)
 }
 
 async fn verify_complete_or_wipe(cache: &ChunkCache) -> Result<(), String> {
@@ -467,7 +558,7 @@ async fn fetch_worker(
             }
             Err(err) => {
                 if conn.close_reason().is_some() {
-                    let _ = cache.record_chunk_failure(idx, "conexão encerrada");
+                    cache.release_chunk(idx);
                     break;
                 }
                 match cache.record_chunk_failure(idx, &err.to_string()) {

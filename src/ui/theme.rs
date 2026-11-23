@@ -2,30 +2,30 @@ use super::kit;
 use eframe::egui::{self, Color32, RichText, Stroke};
 
 #[derive(Clone, Copy)]
-pub(super) struct Palette {
-    pub(super) dark: bool,
-    pub(super) background: Color32,
-    pub(super) surface: Color32,
-    pub(super) inset: Color32,
-    pub(super) raised: Color32,
-    pub(super) hover: Color32,
-    pub(super) disabled: Color32,
-    pub(super) action: Color32,
-    pub(super) action_top: Color32,
-    pub(super) border: Color32,
-    pub(super) border_strong: Color32,
-    pub(super) text: Color32,
-    pub(super) muted: Color32,
-    pub(super) faint: Color32,
-    pub(super) accent: Color32,
-    pub(super) accent_strong: Color32,
-    pub(super) success: Color32,
-    pub(super) warning: Color32,
-    pub(super) error: Color32,
+pub(crate) struct Palette {
+    pub(crate) dark: bool,
+    pub(crate) background: Color32,
+    pub(crate) surface: Color32,
+    pub(crate) inset: Color32,
+    pub(crate) raised: Color32,
+    pub(crate) hover: Color32,
+    pub(crate) disabled: Color32,
+    pub(crate) action: Color32,
+    pub(crate) action_top: Color32,
+    pub(crate) border: Color32,
+    pub(crate) border_strong: Color32,
+    pub(crate) text: Color32,
+    pub(crate) muted: Color32,
+    pub(crate) faint: Color32,
+    pub(crate) accent: Color32,
+    pub(crate) accent_strong: Color32,
+    pub(crate) success: Color32,
+    pub(crate) warning: Color32,
+    pub(crate) error: Color32,
 }
 
 impl Palette {
-    pub(super) fn new(dark: bool) -> Self {
+    pub(crate) fn new(dark: bool) -> Self {
         if dark {
             Self {
                 dark,

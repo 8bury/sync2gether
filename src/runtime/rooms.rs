@@ -78,10 +78,13 @@ impl Worker {
         self.view.room_address = None;
         self.view.room_addresses.clear();
         self.view.watching = false;
+        self.watching_media = None;
+        self.buffer_latch = super::sync::BufferLatch::Idle;
         if let Some(task) = self.network.take() {
             task.abort();
         }
         self.net_rx = None;
+        self.stop_stream(false);
         self.disconnected();
         self.session = Session::default();
         self.view.role = Role::Local;
@@ -307,6 +310,7 @@ impl Worker {
                 self.view.error = None;
                 self.session.connected = true;
                 self.recover = self.view.role == Role::Host;
+                self.on_control_reconnected();
                 if self.view.role == Role::Host {
                     self.clock = Clock::host();
                     self.publish();

@@ -1,6 +1,7 @@
 use crate::protocol::{Control, Presence, Snapshot, Transition};
 
 pub const PREPARE_TIMEOUT_MS: f64 = 10_000.0;
+pub const AUTO_RESUME_STABLE_MS: f64 = 1_000.0;
 pub struct Session {
     pub state: Snapshot,
     pub connected: bool,
@@ -10,6 +11,7 @@ pub struct Session {
     prepare_since: f64,
     arm_by: f64,
     last_operation: u64,
+    buffer_ready_since: Option<f64>,
 }
 impl Default for Session {
     fn default() -> Self {
@@ -18,6 +20,7 @@ impl Default for Session {
                 revision: 0,
                 position: 0.0,
                 paused: true,
+                waiting_buffer: false,
                 host_ms: 0.0,
                 transition: None,
                 host: Presence::default(),
@@ -30,6 +33,7 @@ impl Default for Session {
             prepare_since: 0.0,
             arm_by: 0.0,
             last_operation: 0,
+            buffer_ready_since: None,
         }
     }
 }
@@ -41,11 +45,16 @@ impl Session {
             && self.state.host.media.is_some()
             && self.state.host.media == self.state.guest.media
     }
+    pub fn any_buffering(&self) -> bool {
+        self.state.host.buffering || self.state.guest.buffering
+    }
     pub fn ready(&self) -> bool {
         self.matched()
             && self.state.guest.clock_ready
             && !self.state.host.blocked
             && !self.state.guest.blocked
+            && !self.state.host.buffering
+            && !self.state.guest.buffering
     }
     pub fn position(&self, now: f64) -> f64 {
         self.state.position_at(now)
@@ -67,7 +76,9 @@ impl Session {
                 .state
                 .transition
                 .as_ref()
-                .map_or(!self.state.paused, |t| t.resume),
+                .map_or(!self.state.paused || self.state.waiting_buffer, |t| {
+                    t.resume
+                }),
             Control::Pause => false,
         };
         self.state.position = match command {
@@ -76,6 +87,8 @@ impl Session {
         };
         self.state.host_ms = now;
         self.state.paused = true;
+        self.state.waiting_buffer = false;
+        self.buffer_ready_since = None;
         self.state.revision += 1;
         self.state.transition = if matches!(command, Control::Pause) {
             None
@@ -93,6 +106,11 @@ impl Session {
         self.guest_prepared = false;
         self.guest_armed = false;
         true
+    }
+    fn pause_for_buffer(&mut self, now: f64) {
+        self.apply(Control::Pause, now);
+        self.state.waiting_buffer = true;
+        self.buffer_ready_since = None;
     }
     pub fn prepared(&mut self, id: u64, guest: bool, now: f64) -> bool {
         let Some(t) = &self.state.transition else {
@@ -170,6 +188,10 @@ impl Session {
             }
             if let Some(start) = t.start_at_ms {
                 if !self.ready() || (!self.guest_armed && now >= self.arm_by) {
+                    if t.resume && self.any_buffering() {
+                        self.pause_for_buffer(now);
+                        return false;
+                    }
                     self.apply(Control::Pause, now);
                     return true;
                 }
@@ -177,17 +199,41 @@ impl Session {
                     self.state.position = t.position;
                     self.state.host_ms = start;
                     self.state.paused = false;
+                    self.state.waiting_buffer = false;
                     self.state.transition = None;
                     self.state.revision += 1;
                 }
             } else if now - self.prepare_since >= PREPARE_TIMEOUT_MS {
+                if t.resume && self.any_buffering() {
+                    self.pause_for_buffer(now);
+                    return false;
+                }
                 self.apply(Control::Pause, now);
                 return true;
             } else {
                 self.schedule_if_ready(now);
             }
-        } else if !self.ready() && !self.state.paused {
-            self.apply(Control::Pause, now);
+        } else if !self.state.paused {
+            if !self.ready() {
+                if self.matched() && self.any_buffering() {
+                    self.pause_for_buffer(now);
+                } else {
+                    self.apply(Control::Pause, now);
+                }
+            }
+        } else if self.state.waiting_buffer {
+            if !self.matched() {
+                self.state.waiting_buffer = false;
+                self.buffer_ready_since = None;
+                self.state.revision += 1;
+            } else if self.ready() {
+                let since = *self.buffer_ready_since.get_or_insert(now);
+                if now - since >= AUTO_RESUME_STABLE_MS {
+                    self.apply(Control::Play, now);
+                }
+            } else {
+                self.buffer_ready_since = None;
+            }
         }
         false
     }
@@ -342,5 +388,69 @@ mod tests {
         assert!(!s.apply(Control::Seek(f64::NAN), 3.0));
         s.state.guest.media.as_mut().unwrap().hash = "b".repeat(64);
         assert!(!s.apply(Control::Play, 4.0));
+    }
+
+    #[test]
+    fn buffering_pauses_in_waiting_buffer_and_auto_resumes_after_stability() {
+        let mut s = session();
+        start(&mut s);
+        s.state.guest.buffering = true;
+        s.state.guest.blocked = true;
+        assert!(!s.advance(500.0));
+        assert!(s.state.paused);
+        assert!(s.state.waiting_buffer);
+        assert!(s.state.transition.is_none());
+
+        s.state.guest.buffering = false;
+        s.state.guest.blocked = false;
+        assert!(!s.advance(1000.0));
+        assert!(s.state.waiting_buffer);
+        assert!(s.state.transition.is_none());
+
+        assert!(!s.advance(1000.0 + AUTO_RESUME_STABLE_MS - 1.0));
+        assert!(s.state.transition.is_none());
+
+        assert!(!s.advance(1000.0 + AUTO_RESUME_STABLE_MS));
+        assert!(!s.state.waiting_buffer);
+        assert!(s.state.transition.as_ref().is_some_and(|t| t.resume));
+
+        let id = s.state.transition.as_ref().unwrap().id;
+        s.prepared(id, false, 2010.0);
+        s.prepared(id, true, 2020.0);
+        s.state.guest.buffering = true;
+        s.state.guest.blocked = true;
+        assert!(!s.advance(2050.0));
+        assert!(s.state.paused);
+        assert!(s.state.waiting_buffer);
+
+        assert!(s.apply(Control::Pause, 2100.0));
+        assert!(!s.state.waiting_buffer);
+        s.state.guest.buffering = false;
+        s.state.guest.blocked = false;
+        assert!(!s.advance(5000.0));
+        assert!(s.state.paused);
+        assert!(s.state.transition.is_none());
+    }
+
+    #[test]
+    fn waiting_buffer_clears_when_unmatched_and_scheduled_buffering_does_not_error() {
+        let mut s = session();
+        assert!(s.apply(Control::Play, 0.0));
+        let id = s.state.transition.as_ref().unwrap().id;
+        s.prepared(id, false, 10.0);
+        s.prepared(id, true, 20.0);
+        assert!(s.state.transition.as_ref().unwrap().start_at_ms.is_some());
+        s.state.guest.buffering = true;
+        s.state.guest.blocked = true;
+        assert!(!s.advance(30.0));
+        assert!(s.state.paused);
+        assert!(s.state.waiting_buffer);
+        assert!(s.state.transition.is_none());
+
+        let rev_before = s.state.revision;
+        s.state.guest.media = None;
+        assert!(!s.advance(40.0));
+        assert!(!s.state.waiting_buffer);
+        assert!(s.state.revision > rev_before);
     }
 }

@@ -1755,3 +1755,165 @@ fn p2p_streaming_strip_renders_and_emits_commands_without_overflow() {
     let actions = click_label_at_size(&ctx, &view, &mut inputs, "Parar", [960.0, 720.0]);
     assert!(matches!(actions.as_slice(), [Command::StopStream]));
 }
+
+#[test]
+fn p2p_preparation_card_and_player_buffering_overlay_render_cleanly() {
+    use sync2gether::{
+        player::Status,
+        protocol::StreamProgress,
+        runtime::{Command, Role, View},
+        stream::{StreamPhase, StreamTelemetry},
+    };
+    let host_prep = View {
+        role: Role::Host,
+        connected: true,
+        peer_name: Some("Ana".into()),
+        file: Some("Filme.mkv".into()),
+        verified: true,
+        peer_file: Some("Filme.mkv".into()),
+        peer_verified: true,
+        peer_blocked: true,
+        peer_buffering: true,
+        peer_streaming: true,
+        matched: true,
+        stream: StreamTelemetry {
+            active: true,
+            is_sender: true,
+            phase: StreamPhase::Streaming,
+            total_bytes: 1_000_000_000,
+            ..Default::default()
+        },
+        peer_stream: Some(StreamProgress {
+            cached_bytes: 180_000_000,
+            total_bytes: 1_000_000_000,
+            transfer_bps: 12_400_000,
+            link_bps: Some(15_000_000),
+            buffered_ahead_bytes: 10_000_000,
+            reconnecting: false,
+            complete: false,
+            cached_ranges: vec![(0, 180), (500, 560)],
+        }),
+        ..Default::default()
+    };
+    let _ = preparation_frame(&host_prep, [480.0, 480.0], false);
+    for size in [[720.0, 540.0], [960.0, 640.0]] {
+        let text = preparation_frame(&host_prep, size, false);
+        assert!(text.contains("Carregando streaming P2P"));
+        assert!(!text.contains("Player indisponível"));
+        assert!(!text.contains("Conteúdo diferente"));
+    }
+
+    let mut host_ready = host_prep.clone();
+    host_ready.peer_blocked = false;
+    host_ready.peer_buffering = false;
+    host_ready.peer_ready = true;
+    host_ready.ready = true;
+    let text = preparation_frame(&host_ready, [960.0, 640.0], false);
+    assert!(text.contains("Via streaming P2P"));
+    assert!(text.contains("18% em cache"));
+
+    let host_watching_buffering = View {
+        role: Role::Host,
+        connected: true,
+        watching: true,
+        peer_name: Some("Ana".into()),
+        file: Some("Filme.mkv".into()),
+        matched: true,
+        peer_buffering: true,
+        waiting_buffer: true,
+        peer_streaming: true,
+        player: Status {
+            loaded: true,
+            paused: true,
+            position: 600.0,
+            duration: 5400.0,
+            ..Default::default()
+        },
+        stream: StreamTelemetry {
+            active: true,
+            is_sender: true,
+            phase: StreamPhase::Streaming,
+            file_bitrate_bps: Some(8_000_000),
+            total_bytes: 1_000_000_000,
+            ..Default::default()
+        },
+        peer_stream: host_prep.peer_stream.clone(),
+        ..Default::default()
+    };
+    for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
+        let ctx = egui::Context::default();
+        ui::configure_theme(&ctx, false);
+        let mut inputs = ui::Inputs::default();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
+                ..Default::default()
+            },
+            |root| {
+                assert!(
+                    ui::draw_live(root, &host_watching_buffering, &mut inputs, None).is_empty()
+                );
+                assert!(root.min_rect().width() <= size[0] + 1.0);
+            },
+        );
+        let text = visible_text(&output.shapes);
+        output.textures_delta.clear();
+        assert!(inputs.player.controls_visible);
+        assert!(text.contains("Aguardando Ana carregar o vídeo"));
+        assert!(text.contains("18% em cache"));
+        assert!(text.contains("12.4 Mbps"));
+    }
+
+    let ctx = egui::Context::default();
+    ui::configure_theme(&ctx, false);
+    let mut inputs = ui::Inputs::default();
+    let card_click_actions = click_label_at_size(
+        &ctx,
+        &host_watching_buffering,
+        &mut inputs,
+        "Aguardando Ana carregar o vídeo…",
+        [720.0, 540.0],
+    );
+    assert!(
+        card_click_actions.is_empty(),
+        "clicking the loading card body must not toggle playback or cancel waiting_buffer"
+    );
+
+    let guest_error_watching = View {
+        role: Role::Guest,
+        connected: true,
+        watching: true,
+        can_stream: true,
+        peer_name: Some("Pedro".into()),
+        file: Some("Filme.mkv".into()),
+        matched: true,
+        player: Status {
+            loaded: true,
+            paused: true,
+            position: 600.0,
+            duration: 5400.0,
+            ..Default::default()
+        },
+        stream: StreamTelemetry {
+            active: false,
+            is_sender: false,
+            phase: StreamPhase::Error("A conexão P2P direta foi interrompida.".into()),
+            cached_bytes: 180_000_000,
+            total_bytes: 1_000_000_000,
+            cached_ranges: vec![(0, 180)],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    ui::configure_theme(&ctx, false);
+    let mut inputs = ui::Inputs::default();
+    let actions = click_label_at_size(
+        &ctx,
+        &guest_error_watching,
+        &mut inputs,
+        "Reconectar P2P",
+        [720.0, 540.0],
+    );
+    assert!(matches!(actions.as_slice(), [Command::StartStream]));
+}

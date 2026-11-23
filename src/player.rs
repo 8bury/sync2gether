@@ -29,6 +29,8 @@ pub struct Status {
     pub duration: f64,
     pub paused: bool,
     pub blocked: bool,
+    pub buffering: bool,
+    pub cache_time: f64,
     pub tracks: Vec<Track>,
     pub ended: bool,
 }
@@ -44,6 +46,8 @@ impl Default for Status {
             duration: 0.0,
             paused: true,
             blocked: false,
+            buffering: false,
+            cache_time: 0.0,
             tracks: Vec::new(),
             ended: false,
         }
@@ -72,6 +76,7 @@ pub enum Event {
 pub enum Command {
     Load(PathBuf, u64),
     LoadUrl(String, u64),
+    Stop,
     Pause(bool),
     Seek(f64),
     Prepare { id: u64, position: f64 },
@@ -446,6 +451,14 @@ fn run(
                         let _ = api.command(handle, &["set", "pause", "yes"]);
                         api.command(handle, &["loadfile", &url, "replace"])
                     }
+                    Command::Stop => {
+                        scheduled = None;
+                        preparation = None;
+                        prepared = None;
+                        loaded = false;
+                        let _ = api.command(handle, &["set", "pause", "yes"]);
+                        api.command(handle, &["stop"])
+                    }
                     Command::Pause(paused) => {
                         scheduled = None;
                         preparation = None;
@@ -567,6 +580,8 @@ fn run(
             if last.elapsed() >= Duration::from_millis(50) {
                 let position = api.double(handle, c"time-pos");
                 let measured_ms = origin.elapsed().as_secs_f64() * 1000.0;
+                let buffering = api.flag(handle, c"paused-for-cache");
+                let ended = api.flag(handle, c"eof-reached");
                 let status = Status {
                     generation,
                     measured_ms,
@@ -576,10 +591,11 @@ fn run(
                     loaded,
                     duration: api.double(handle, c"duration"),
                     paused: api.flag(handle, c"pause"),
-                    ended: api.flag(handle, c"eof-reached"),
+                    ended,
+                    buffering,
+                    cache_time: api.double(handle, c"demuxer-cache-time"),
                     tracks: tracks::read(&api, handle),
-                    blocked: api.flag(handle, c"paused-for-cache")
-                        || api.flag(handle, c"eof-reached"),
+                    blocked: buffering || ended,
                 };
                 if events.is_closed() {
                     break;

@@ -14,11 +14,11 @@ mod visuals;
 pub use demo::{draw, draw_with_inputs};
 pub(crate) use room::{media_title, preparation_leave_label, request_leave};
 pub use theme::configure_theme;
-pub(crate) use theme::strong;
+pub(crate) use theme::{Palette, strong};
 use {
     room::{confirm_leave, connection_details, room_addresses, room_contents},
     settings::header,
-    theme::{Palette, card, feedback, quiet, secondary, section_label, semibold_family, title},
+    theme::{card, feedback, quiet, secondary, section_label, semibold_family, title},
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

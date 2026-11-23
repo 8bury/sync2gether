@@ -82,6 +82,9 @@ async fn quic_p2p_streams_random_ranges_survives_host_disconnect_when_complete()
                     return url;
                 }
                 StreamEvent::Failed { error, .. } => panic!("guest stream failed: {error}"),
+                StreamEvent::Disconnected { reason, .. } => {
+                    panic!("guest stream disconnected early: {reason}")
+                }
                 StreamEvent::Ended { .. } => panic!("guest stream ended early"),
                 StreamEvent::Telemetry { .. } => {}
             }
@@ -296,6 +299,7 @@ async fn mismatched_tls_fingerprint_rejects_p2p_connection() {
                     panic!("tampered fingerprint must never connect")
                 }
                 Some(StreamEvent::Telemetry { .. }) => {}
+                Some(StreamEvent::Disconnected { .. }) => {}
                 Some(StreamEvent::Ended { .. }) | None => return false,
             }
         }
@@ -306,5 +310,101 @@ async fn mismatched_tls_fingerprint_rejects_p2p_connection() {
 
     guest_task.abort();
     host_task.abort();
+    let _ = fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn guest_reconnects_reusing_live_cache_and_http_proxy_after_host_drop() {
+    let size = (CHUNK_SIZE as usize) * 8 + 4321;
+    let (path, original) = write_fixture("reconnect.mkv", size);
+    let (media, index) = ChunkIndex::compute_file(&path, CHUNK_SIZE).unwrap();
+    let index = Arc::new(index);
+    let cache_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".cache/stream-reconnect-cache");
+    let _ = fs::remove_dir_all(&cache_dir);
+
+    let (host_tx_1, _host_rx_1) = mpsc::channel(32);
+    let (guest_tx_1, mut guest_rx_1) = mpsc::channel(32);
+    let (offer_1, host_pending_1) = host::prepare(
+        21,
+        path.clone(),
+        media.clone(),
+        "reconnect.mkv".into(),
+        60.0,
+        index.clone(),
+        false,
+    )
+    .await
+    .unwrap();
+    let (answer_1, guest_pending_1) = guest::prepare(offer_1, false, Some(cache_dir.clone()))
+        .await
+        .unwrap();
+    let host_task_1 = host_pending_1.accept(answer_1, host_tx_1);
+    let guest_task_1 = guest_pending_1.connect(guest_tx_1);
+
+    let (url, cache, _proxy) = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match guest_rx_1.recv().await.unwrap() {
+                StreamEvent::Ready {
+                    url, cache, proxy, ..
+                } => return (url, cache, proxy),
+                StreamEvent::Failed { error, .. } => panic!("first connect failed: {error}"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    host_task_1.abort();
+    guest_task_1.abort();
+    cache.release_in_flight();
+
+    let (host_tx_2, _host_rx_2) = mpsc::channel(32);
+    let (guest_tx_2, mut guest_rx_2) = mpsc::channel(32);
+    let (offer_2, host_pending_2) = host::prepare(
+        22,
+        path.clone(),
+        media.clone(),
+        "reconnect.mkv".into(),
+        60.0,
+        index.clone(),
+        false,
+    )
+    .await
+    .unwrap();
+    let (answer_2, guest_pending_2) =
+        guest::prepare_with_cache(offer_2, false, Some(cache_dir.clone()), Some(cache.clone()))
+            .await
+            .unwrap();
+    let host_task_2 = host_pending_2.accept(answer_2, host_tx_2);
+    let guest_task_2 = guest_pending_2.connect(guest_tx_2);
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match guest_rx_2.recv().await {
+                Some(StreamEvent::Telemetry { telemetry, .. })
+                    if telemetry.phase == StreamPhase::Complete =>
+                {
+                    assert_eq!(telemetry.cached_bytes, size as u64);
+                    assert_eq!(telemetry.cached_ranges, vec![(0, 1000)]);
+                    break;
+                }
+                Some(StreamEvent::Ready { .. }) => {
+                    panic!("reconnecting with existing cache must not emit Ready")
+                }
+                Some(StreamEvent::Failed { error, .. }) => panic!("reconnect failed: {error}"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    let slice = http_range(&url, 1024, 9215).await;
+    assert_eq!(slice, original[1024..9216]);
+
+    guest_task_2.abort();
+    host_task_2.abort();
+    let _ = fs::remove_dir_all(&cache_dir);
     let _ = fs::remove_file(&path);
 }

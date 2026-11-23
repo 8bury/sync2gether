@@ -12,14 +12,16 @@ use tokio::sync::Notify;
 const LOOKAHEAD_CHUNKS: u32 = 32;
 const MAX_CHUNK_RETRIES: u8 = 4;
 const MAX_TOTAL_CACHE_BYTES: u64 = 20 * 1024 * 1024 * 1024;
+const MAX_CACHED_RANGES: usize = 48;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CacheStats {
     pub cached_bytes: u64,
     pub total_bytes: u64,
     pub chunks_cached: u64,
     pub chunks_total: u64,
     pub buffered_ahead_bytes: u64,
+    pub cached_ranges: Vec<(u16, u16)>,
 }
 
 struct State {
@@ -253,6 +255,27 @@ impl ChunkCache {
 
     pub fn closed_reason(&self) -> Option<String> {
         self.state.lock().unwrap().closed.clone()
+    }
+
+    pub fn matches_offer(&self, file_hash: &str, file_size: u64, chunk_size: u32) -> bool {
+        self.file_hash.eq_ignore_ascii_case(file_hash)
+            && self.file_size == file_size
+            && self.chunk_size == chunk_size
+            && self.state.lock().unwrap().closed.is_none()
+    }
+
+    pub fn release_chunk(&self, idx: u32) {
+        let mut state = self.state.lock().unwrap();
+        state.in_flight.remove(&idx);
+        drop(state);
+        self.work_available.notify_waiters();
+    }
+
+    pub fn release_in_flight(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.in_flight.clear();
+        drop(state);
+        self.work_available.notify_waiters();
     }
 
     pub fn set_cursor(&self, byte_offset: u64) {
@@ -535,14 +558,66 @@ impl ChunkCache {
                 break;
             }
         }
+        let cached_ranges = summarize_bitmap(&state.bitmap, self.chunks_total);
         CacheStats {
             cached_bytes: state.cached_bytes,
             total_bytes: self.file_size,
             chunks_cached: state.chunks_cached,
             chunks_total: u64::from(self.chunks_total),
             buffered_ahead_bytes,
+            cached_ranges,
         }
     }
+}
+
+pub fn summarize_bitmap(bitmap: &[u8], chunks_total: u32) -> Vec<(u16, u16)> {
+    if chunks_total == 0 {
+        return Vec::new();
+    }
+    let total = u64::from(chunks_total);
+    let mut ranges: Vec<(u16, u16)> = Vec::new();
+    let mut idx = 0u32;
+    while idx < chunks_total {
+        if !bit_get(bitmap, idx) {
+            idx += 1;
+            continue;
+        }
+        let start_chunk = idx;
+        while idx < chunks_total && bit_get(bitmap, idx) {
+            idx += 1;
+        }
+        let mut start = ((u64::from(start_chunk) * 1000) / total) as u16;
+        let mut end = ((u64::from(idx) * 1000).div_ceil(total)).min(1000) as u16;
+        if start >= end {
+            if start >= 1000 {
+                start = 999;
+                end = 1000;
+            } else {
+                end = (start + 1).min(1000);
+            }
+        }
+        if let Some(last) = ranges.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+        } else {
+            ranges.push((start, end));
+        }
+    }
+    while ranges.len() > MAX_CACHED_RANGES {
+        let mut best_i = 0;
+        let mut best_gap = u16::MAX;
+        for i in 0..ranges.len() - 1 {
+            let gap = ranges[i + 1].0.saturating_sub(ranges[i].1);
+            if gap < best_gap {
+                best_gap = gap;
+                best_i = i;
+            }
+        }
+        let next = ranges.remove(best_i + 1);
+        ranges[best_i].1 = ranges[best_i].1.max(next.1);
+    }
+    ranges
 }
 
 fn pick_next(state: &mut State, total: u32) -> Option<u32> {
@@ -787,6 +862,58 @@ mod tests {
             assert_eq!(resumed.stats().cached_bytes, data.len() as u64);
         }
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn summarize_bitmap_merges_runs_handles_gaps_and_caps_span_count() {
+        assert!(summarize_bitmap(&[], 0).is_empty());
+        assert!(summarize_bitmap(&[0u8; 4], 32).is_empty());
+
+        let mut bitmap = vec![0u8; 13];
+        for idx in [0u32, 1, 2, 3, 50, 51, 99] {
+            bitmap[(idx / 8) as usize] |= 1 << (idx % 8);
+        }
+        let ranges = summarize_bitmap(&bitmap, 100);
+        assert_eq!(ranges, vec![(0, 40), (500, 520), (990, 1000)]);
+
+        let full = vec![0xffu8; 13];
+        assert_eq!(summarize_bitmap(&full, 100), vec![(0, 1000)]);
+
+        let mut fragmented = vec![0u8; 250];
+        for idx in (0..2000u32).step_by(4) {
+            fragmented[(idx / 8) as usize] |= 1 << (idx % 8);
+        }
+        let capped = summarize_bitmap(&fragmented, 2000);
+        assert!(capped.len() <= MAX_CACHED_RANGES);
+        assert!(capped.iter().all(|&(s, e)| s < e && e <= 1000));
+    }
+
+    #[tokio::test]
+    async fn release_in_flight_allows_re_fetching_after_disconnect() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".cache/stream-release-test");
+        let _ = fs::remove_dir_all(&dir);
+        let hashes = Arc::new(vec![[0u8; 32]; 4]);
+        let cache = ChunkCache::open(
+            &dir,
+            &"c".repeat(64),
+            &"d".repeat(64),
+            4 * 1024,
+            1024,
+            hashes,
+        )
+        .unwrap();
+        assert_eq!(cache.next_chunk_to_fetch().await, Some(0));
+        assert_eq!(cache.next_chunk_to_fetch().await, Some(1));
+        assert!(cache.record_chunk_failure(0, "blip").is_ok());
+        assert!(cache.record_chunk_failure(0, "blip").is_ok());
+        assert!(cache.record_chunk_failure(0, "blip").is_ok());
+        cache.release_in_flight();
+        assert!(cache.closed_reason().is_none());
+        assert_eq!(cache.next_chunk_to_fetch().await, Some(0));
+        assert_eq!(cache.next_chunk_to_fetch().await, Some(1));
+        assert!(cache.record_chunk_failure(0, "corrupt").is_err());
+        assert!(cache.closed_reason().is_some());
         let _ = fs::remove_dir_all(&dir);
     }
 }

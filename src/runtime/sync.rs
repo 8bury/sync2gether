@@ -1,10 +1,25 @@
 use super::{Role, Worker};
 use crate::{
     player,
-    protocol::{Control, Message, Playback, Snapshot},
+    protocol::{Control, Message, Playback, Snapshot, StreamProgress},
+    stream::{CHUNK_SIZE, StreamPhase},
     sync::Correction,
 };
 use std::time::{Duration, Instant};
+
+const BUFFER_RESUME_SECS: f64 = 3.0;
+const BUFFER_FALLBACK_BYTES: u64 = (CHUNK_SIZE as u64) * 2;
+const BUFFER_MIN_CLEAR_LOCAL: Duration = Duration::from_millis(1200);
+const BUFFER_STREAM_CLEAR_WAIT: Duration = Duration::from_secs(4);
+const BUFFER_MAX_RECOVERY: Duration = Duration::from_secs(12);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum BufferLatch {
+    #[default]
+    Idle,
+    Active,
+    Recovering(Instant),
+}
 
 impl Worker {
     pub(super) fn control(&mut self, control: Control) {
@@ -12,6 +27,12 @@ impl Worker {
             return;
         }
         self.view.notice = None;
+        if matches!(control, Control::Play)
+            && !self.view.player.buffering
+            && matches!(self.buffer_latch, BufferLatch::Recovering(_))
+        {
+            self.buffer_latch = BufferLatch::Idle;
+        }
         match self.view.role {
             Role::Local => match control {
                 Control::Play => {
@@ -28,12 +49,17 @@ impl Worker {
                 if self.session.apply(control, self.now()) {
                     if matches!(control, Control::Play) {
                         self.view.watching = true;
+                        self.watching_media = self.presence.media.clone();
                     }
                     self.publish();
                 }
             }
             Role::Guest => {
                 if self.view.connected {
+                    if matches!(control, Control::Play) {
+                        self.refresh_presence();
+                        self.send(Message::Presence(self.presence.clone()));
+                    }
                     self.send(Message::Request(control));
                 }
             }
@@ -109,24 +135,94 @@ impl Worker {
     }
 
     pub(super) fn refresh_presence(&mut self) {
+        self.refresh_stream_cache_stats();
         let p = &self.view.player;
         let now = self.now();
+        let stream_reconnecting_stalled = self.view.role == Role::Guest
+            && self.guest_stream.is_some()
+            && self.view.stream.phase == StreamPhase::Reconnecting
+            && self.view.stream.buffered_ahead_bytes == 0;
+        let stream_errored = matches!(self.view.stream.phase, StreamPhase::Error(_));
+        if !p.loaded || p.ended || (stream_errored && !p.buffering) {
+            self.buffer_latch = BufferLatch::Idle;
+        } else if p.buffering || stream_reconnecting_stalled {
+            self.buffer_latch = BufferLatch::Active;
+        } else {
+            if matches!(self.buffer_latch, BufferLatch::Active) {
+                self.buffer_latch = BufferLatch::Recovering(Instant::now());
+            }
+            if let BufferLatch::Recovering(cleared_at) = self.buffer_latch {
+                let demux_ahead = (p.cache_time - p.position).max(0.0);
+                let remaining_media = if p.duration > 0.0 {
+                    (p.duration - p.position - 0.5).max(0.0)
+                } else {
+                    BUFFER_RESUME_SECS
+                };
+                let target_secs = BUFFER_RESUME_SECS.min(remaining_media.max(0.5));
+                let recovered = if self.view.role == Role::Guest
+                    && let Some(session) = &self.guest_stream
+                    && self.view.stream.phase != StreamPhase::Complete
+                    && !session.cache.is_complete()
+                {
+                    let cache_ok = self.view.stream.buffered_seconds().map_or(
+                        self.view.stream.buffered_ahead_bytes >= BUFFER_FALLBACK_BYTES,
+                        |secs| secs >= target_secs,
+                    );
+                    self.view.stream.phase != StreamPhase::Reconnecting
+                        && (cache_ok
+                            || demux_ahead >= target_secs
+                            || (cleared_at.elapsed() >= BUFFER_STREAM_CLEAR_WAIT
+                                && self.view.stream.buffered_ahead_bytes > 0)
+                            || cleared_at.elapsed() >= BUFFER_MAX_RECOVERY)
+                } else {
+                    demux_ahead >= target_secs.min(2.0)
+                        || cleared_at.elapsed() >= BUFFER_MIN_CLEAR_LOCAL
+                };
+                if recovered {
+                    self.buffer_latch = BufferLatch::Idle;
+                }
+            }
+        }
+        self.presence.buffering =
+            p.loaded && !p.ended && !matches!(self.buffer_latch, BufferLatch::Idle);
         self.presence.ready = p.loaded
             && p.generation == self.generation
             && self.presence.media.is_some()
             && self.fatal_error.is_none()
             && now - p.measured_ms < 1500.0;
-        self.presence.blocked = p.blocked || self.fatal_error.is_some();
+        self.presence.blocked = p.blocked || self.presence.buffering || self.fatal_error.is_some();
         self.presence.ended = p.ended;
         self.presence.duration = p.duration;
         self.presence.clock_ready = self.clock.ready(now);
         self.presence.rtt_ms = self.clock.rtt_ms;
         self.presence.uncertainty_ms = self.clock.uncertainty_ms;
+        self.presence.streaming = self.view.stream.active || self.guest_stream.is_some();
+        self.presence.stream_progress = if self.view.role == Role::Guest
+            && (self.guest_stream.is_some()
+                || (self.view.stream.active && !self.view.stream.is_sender))
+        {
+            let s = &self.view.stream;
+            Some(StreamProgress {
+                cached_bytes: s.cached_bytes,
+                total_bytes: s.total_bytes,
+                transfer_bps: s.transfer_bps,
+                link_bps: s.link_bps,
+                buffered_ahead_bytes: s.buffered_ahead_bytes,
+                reconnecting: matches!(
+                    s.phase,
+                    StreamPhase::Reconnecting | StreamPhase::Connecting | StreamPhase::Probing
+                ),
+                complete: s.phase == StreamPhase::Complete,
+                cached_ranges: s.cached_ranges.clone(),
+            })
+        } else {
+            None
+        };
         self.presence.playback = self.clock.host_now(p.measured_ms).map(|host_ms| Playback {
             position: p.position,
             host_ms,
             speed: p.speed,
-            paused: p.paused || p.blocked,
+            paused: p.paused || self.presence.blocked,
             seeking: p.seeking,
         });
         if self.view.role == Role::Host {
@@ -161,13 +257,45 @@ impl Worker {
     }
 
     pub(super) fn apply_snapshot(&mut self, state: Snapshot) {
-        if self.snapshot.as_ref().is_some_and(|old| {
-            old.host.media != state.host.media || old.guest.media != state.guest.media
-        }) {
+        if self.view.role == Role::Guest
+            && let Some(session) = &self.guest_stream
+            && let Some(host_media) = &state.host.media
+            && host_media != &session.media
+        {
+            self.stop_stream(false);
+        }
+        if self.view.role == Role::Host
+            && self.view.stream.phase == StreamPhase::Complete
+            && state.guest.media.is_some()
+            && state.guest.media != state.host.media
+        {
+            self.stop_stream(false);
+        }
+        let media_changed = self.snapshot.as_ref().is_some_and(|old| {
+            let host_changed = old.host.media != state.host.media
+                && !(old.host.media.is_none()
+                    && state.host.media.is_some()
+                    && state.host.media == self.watching_media);
+            let guest_changed = old.guest.media != state.guest.media
+                && !(old.guest.media.is_none()
+                    && state.guest.media.is_some()
+                    && state.guest.media == self.watching_media);
+            host_changed || guest_changed
+        });
+        let switched_away = self.watching_media.as_ref().is_some_and(|watching| {
+            state.host.media.as_ref().is_some_and(|m| m != watching)
+                || state.guest.media.as_ref().is_some_and(|m| m != watching)
+        });
+        if media_changed
+            || switched_away
+            || (self.view.watching && (state.host.loading || state.guest.loading))
+        {
             self.view.watching = false;
+            self.watching_media = None;
         }
         if !state.paused || state.transition.as_ref().is_some_and(|t| t.resume) {
             self.view.watching = true;
+            self.watching_media = state.host.media.clone();
         }
 
         self.snapshot = Some(state.clone());

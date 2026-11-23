@@ -12,6 +12,7 @@ use std::{
     io::{self, Read},
     net::SocketAddr,
     path::Path,
+    sync::Arc,
 };
 
 pub const CHUNK_SIZE: u32 = 256 * 1024;
@@ -117,6 +118,7 @@ pub enum StreamPhase {
     Connecting,
     Probing,
     Streaming,
+    Reconnecting,
     Complete,
     Error(String),
 }
@@ -147,6 +149,7 @@ pub struct StreamTelemetry {
     pub chunks_cached: u64,
     pub chunks_total: u64,
     pub advice: BitrateAdvice,
+    pub cached_ranges: Vec<(u16, u16)>,
 }
 
 impl StreamTelemetry {
@@ -217,7 +220,14 @@ pub enum StreamEvent {
         url: String,
         media: Media,
         file_name: String,
+        hash_table_digest: String,
+        cache: Arc<cache::ChunkCache>,
+        proxy: Arc<http::LocalProxy>,
         telemetry: StreamTelemetry,
+    },
+    Disconnected {
+        id: u64,
+        reason: String,
     },
     Ended {
         id: u64,

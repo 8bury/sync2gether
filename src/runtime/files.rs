@@ -48,6 +48,8 @@ impl Worker {
         let generation = self.generation;
         self.view.loading = true;
         self.view.watching = false;
+        self.watching_media = None;
+        self.buffer_latch = super::sync::BufferLatch::Idle;
         self.view.error = None;
         self.view.pending_file = None;
         self.view.verification = None;

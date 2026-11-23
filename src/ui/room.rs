@@ -238,3 +238,83 @@ pub(super) fn room_addresses(view: &View) -> Vec<std::net::SocketAddr> {
         view.room_addresses.clone()
     }
 }
+
+pub(super) fn approval(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    request: &crate::runtime::JoinRequest,
+    actions: &mut Vec<Command>,
+) {
+    egui::Frame::new()
+        .fill(super::kit::lerp(colors.surface, colors.accent, 0.08))
+        .stroke(Stroke::new(1.0, colors.accent.gamma_multiply(0.55)))
+        .corner_radius(16)
+        .inner_margin(egui::Margin::symmetric(16, 14))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            let wide = ui.available_width() >= 460.0;
+            let accept = || kit::Button::new(kit::Kind::Primary, "Aceitar").size(kit::Size::Small);
+            let reject =
+                || kit::Button::new(kit::Kind::Secondary, "Recusar").size(kit::Size::Small);
+            let buttons = accept().natural_width(ui) + reject().natural_width(ui) + 8.0;
+            let mut answer = None;
+            ui.horizontal(|ui| {
+                kit::avatar(ui, colors, &request.name, 36.0);
+                let text_width = (ui.available_width()
+                    - if wide {
+                        buttons + ui.spacing().item_spacing.x
+                    } else {
+                        0.0
+                    })
+                .max(1.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(text_width, 36.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_width(text_width);
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.add(
+                            egui::Label::new(strong(
+                                ui,
+                                format!("{} quer entrar na sala", request.name),
+                            ))
+                            .wrap(),
+                        );
+                        ui.label(
+                            RichText::new(request.address.ip().to_string())
+                                .small()
+                                .color(colors.muted),
+                        );
+                    },
+                );
+                if wide {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if accept().show(ui, colors).clicked() {
+                        answer = Some(true);
+                    }
+                    if reject().show(ui, colors).clicked() {
+                        answer = Some(false);
+                    }
+                }
+            });
+            if !wide {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.add_space(44.0);
+                    if accept().show(ui, colors).clicked() {
+                        answer = Some(true);
+                    }
+                    if reject().show(ui, colors).clicked() {
+                        answer = Some(false);
+                    }
+                });
+            }
+            if let Some(accept) = answer {
+                actions.push(Command::Approve {
+                    id: request.id,
+                    accept,
+                });
+            }
+        });
+}

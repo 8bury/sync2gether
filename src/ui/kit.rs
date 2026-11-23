@@ -4,7 +4,7 @@ use eframe::egui::{
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Kind {
+pub(crate) enum Kind {
     Primary,
     Secondary,
     Ghost,
@@ -12,7 +12,7 @@ pub(super) enum Kind {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Size {
+pub(crate) enum Size {
     Large,
     Medium,
     Small,
@@ -70,7 +70,7 @@ pub(crate) enum Glyph {
 const GLYPH: f32 = 16.0;
 const GLYPH_GAP: f32 = 8.0;
 
-pub(super) struct Button<'a> {
+pub(crate) struct Button<'a> {
     label: &'a str,
     kind: Kind,
     size: Size,

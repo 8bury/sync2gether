@@ -18,11 +18,14 @@ calculado em segundo plano. Arquivos grandes podem levar algum tempo para
 ficarem prontos. Cópias com remux ou metadados diferentes são consideradas
 arquivos diferentes, mesmo quando o conteúdo audiovisual parece igual.
 
-A perda de conexão, um erro de reprodução, carregamento interrompido ou fim do
-filme pausa a sessão. Após a reconexão, os players recuperam a posição do
-anfitrião e aguardam um novo play. Fechar o anfitrião encerra a sala; não há
-transferência de coordenação. O convidado continua tentando reconectar até
-sair da sala.
+A perda de conexão, um erro de reprodução ou fim do filme pausa a sessão.
+Quando um player precisa aguardar cache (`paused-for-cache`), a sessão entra em
+espera de buffer (`waiting_buffer`) com indicador de carregamento nos dois PCs e
+retoma automaticamente após a estabilização do cache (ou permanece pausada se o
+usuário pausar manualmente). Após a reconexão de rede, os players mantêm o
+player aberto quando o filme não mudou, recuperam a posição do anfitrião e
+aguardam um novo play. Fechar o anfitrião encerra a sala; não há transferência
+de coordenação. O convidado continua tentando reconectar até sair da sala.
 
 A janela usa a API OpenGL do libmpv. O vídeo é desenhado em um framebuffer
 com o tamanho da área do player em pixels e permanece na GPU entre frames,
@@ -72,7 +75,10 @@ vídeo, GPU ou sincronização entre PCs.
 - `player.rs` encapsula a FFI libmpv e controla reprodução em uma thread própria.
   `player/gl.rs` renderiza no contexto OpenGL do eframe, sem executar comandos
   síncronos de reprodução. `player/tracks.rs` copia a lista de faixas do mpv.
-- `player_ui.rs` desenha os controles sobre o vídeo e devolve comandos à aplicação.
+- `player_ui.rs` e `player_ui/overlay.rs` desenham os controles sobre o vídeo,
+  a barra de cache em estilo YouTube (usando faixas aproximadas em bytes do
+  cache P2P ou `demuxer-cache-time` local), o indicador central de carregamento
+  e a telemetria P2P em tempo real, devolvendo comandos à aplicação.
 - `ui.rs` coordena o estado das telas (`Screen`, `Inputs`) e o fluxo principal
   com os dados do runtime; a aprovação leva o convidado à preparação dos arquivos.
   `ui/theme.rs` reúne paleta, tema e componentes compartilhados; `ui/settings.rs`
@@ -115,7 +121,10 @@ vídeo, GPU ou sincronização entre PCs.
   disco com verificação BLAKE3 por bloco e escalonador em três prioridades:
   urgente, lookahead e pré-carregamento), `stream/http.rs` (proxy HTTP/1.1 Range
   local em `127.0.0.1` com token aleatório para o libmpv), `stream/host.rs` e
-  `stream/guest.rs`. Nenhum byte de vídeo passa pelo relay.
+  `stream/guest.rs`. Nenhum byte de vídeo passa pelo relay. Em quedas transitórias
+  do túnel QUIC ou do canal de controle, o convidado mantém o cache em disco e o
+  proxy HTTP local ativos enquanto reconecta o túnel automaticamente, evitando
+  interromper a reprodução do que já está em cache.
 - `sync.rs` estima a diferença entre relógios por ping e calcula correções.
 - `runtime.rs` define a interface pública (`Runtime`, `Command`, `View`) e o
   loop principal do worker, dividido entre `runtime/rooms.rs` (salas, descoberta
@@ -193,5 +202,9 @@ a linha do tempo da sala da diferença estimada entre os players, quando
 existem medições recentes. Esses valores não medem o instante físico em que
 cada monitor ou dispositivo de áudio apresentou o conteúdo.
 
-O protocolo agora é versão 5, incluindo nomes, progresso de verificação e negociação de streaming P2P direto (`StreamRequest`, `StreamOffer`, `StreamAnswer`, `StreamStop`) dentro da sala. Os dois aplicativos precisam usar a mesma versão;
+O protocolo agora é versão 5, incluindo nomes, progresso de verificação, estado
+de buffer (`buffering`, `waiting_buffer`), telemetria compacta de cache P2P
+(`stream_progress`, com intervalos em cache em permille de bytes) e negociação
+de streaming P2P direto (`StreamRequest`, `StreamOffer`, `StreamAnswer`,
+`StreamStop`) dentro da sala. Os dois aplicativos precisam usar a mesma versão;
 clientes da versão anterior são recusados no handshake.

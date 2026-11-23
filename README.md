@@ -110,9 +110,13 @@ O tema claro fica disponível em **Configurações**, no ícone de engrenagem do
 - Na rede local, a porta padrão da sala é TCP `7842` e a descoberta usa UDP
   `7841`, com multicast e broadcast IPv4. Se a sala não aparecer, use
   **Conectar por endereço**. O app não instala nem configura uma VPN.
-- Uma desconexão, falha do player ou fim do filme pausa a sessão. Após a
-  reconexão, os players recuperam a posição do anfitrião e aguardam um novo play.
-  Fechar o anfitrião encerra a sala.
+- Uma desconexão, falha do player ou fim do filme pausa a sessão. Se um player
+  precisar carregar cache durante o streaming P2P, a reprodução exibe o status
+  de carregamento, a velocidade e a barra de cache nos dois PCs e retoma
+  sozinha assim que o buffer estabiliza; quedas rápidas do túnel P2P reconectam
+  em segundo plano preservando o que já está em cache. Após reconexão de rede,
+  os players recuperam a posição do anfitrião e aguardam um novo play. Fechar o
+  anfitrião encerra a sala.
 
 Veja o [guia de uso](docs/uso.md) para conexão manual, troca de arquivos,
 controles e atalhos. Chamadas de voz podem acontecer em um aplicativo separado.

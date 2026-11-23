@@ -4,10 +4,14 @@ mod stream;
 mod sync;
 mod view;
 
-use self::{files::FileResult, rooms::BackgroundResult, stream::StreamPrepResult};
+use self::{
+    files::FileResult,
+    rooms::BackgroundResult,
+    stream::{GuestSession, StreamPrepResult},
+};
 use crate::{
     discovery, network, player,
-    protocol::{Control, Message, PORT, Presence, Snapshot, Verification},
+    protocol::{Control, Media, Message, PORT, Presence, Snapshot, StreamProgress, Verification},
     session::Session,
     stream::{ChunkIndex, StreamEvent, StreamTelemetry, host::HostPending},
     sync::{Clock, Controller},
@@ -63,6 +67,9 @@ pub struct View {
     pub peer_verification: Option<Verification>,
     pub peer_verified: bool,
     pub peer_blocked: bool,
+    pub buffering: bool,
+    pub peer_buffering: bool,
+    pub waiting_buffer: bool,
     pub loading: bool,
     pub player: player::Status,
     pub matched: bool,
@@ -81,6 +88,7 @@ pub struct View {
     pub last_start_id: Option<u64>,
     pub scheduled_start_ms: Option<f64>,
     pub stream: StreamTelemetry,
+    pub peer_stream: Option<StreamProgress>,
     pub can_stream: bool,
     pub peer_streaming: bool,
 }
@@ -217,11 +225,17 @@ struct Worker {
     files: mpsc::Sender<FileResult>,
     file_rx: mpsc::Receiver<FileResult>,
     pings: VecDeque<f64>,
+    watching_media: Option<Media>,
+    buffer_latch: sync::BufferLatch,
     local_media: Option<(PathBuf, Arc<ChunkIndex>)>,
+    guest_stream: Option<GuestSession>,
     stream_id: u64,
     stream_pending: Option<HostPending>,
     stream_task: Option<JoinHandle<()>>,
     stream_waiting_since: Option<Instant>,
+    stream_reconnect_at: Option<Instant>,
+    stream_reconnect_attempts: u32,
+    pending_stream_request: bool,
     last_stream_request: Option<Instant>,
     stream_tx: mpsc::Sender<StreamEvent>,
     stream_rx: mpsc::Receiver<StreamEvent>,
@@ -272,11 +286,17 @@ impl Worker {
             files,
             file_rx,
             pings: VecDeque::new(),
+            watching_media: None,
+            buffer_latch: sync::BufferLatch::Idle,
             local_media: None,
+            guest_stream: None,
             stream_id: 1,
             stream_pending: None,
             stream_task: None,
             stream_waiting_since: None,
+            stream_reconnect_at: None,
+            stream_reconnect_attempts: 0,
+            pending_stream_request: false,
             last_stream_request: None,
             stream_tx,
             stream_rx,
@@ -326,7 +346,7 @@ impl Worker {
     }
 
     fn disconnected(&mut self) {
-        self.stop_stream(false);
+        self.on_control_disconnected();
         self.outgoing = None;
         self.view.connected = false;
         self.clock = Clock::default();

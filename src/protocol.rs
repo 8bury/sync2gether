@@ -122,6 +122,39 @@ impl Playback {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamProgress {
+    pub cached_bytes: u64,
+    pub total_bytes: u64,
+    pub transfer_bps: u64,
+    pub link_bps: Option<u64>,
+    pub buffered_ahead_bytes: u64,
+    #[serde(default)]
+    pub reconnecting: bool,
+    #[serde(default)]
+    pub complete: bool,
+    #[serde(default)]
+    pub cached_ranges: Vec<(u16, u16)>,
+}
+impl StreamProgress {
+    pub fn valid(&self) -> bool {
+        self.cached_bytes <= self.total_bytes
+            && self.buffered_ahead_bytes <= self.total_bytes
+            && self.cached_ranges.len() <= 64
+            && self
+                .cached_ranges
+                .iter()
+                .all(|&(start, end)| start < end && end <= 1000)
+    }
+    pub fn cache_fraction(&self) -> f32 {
+        if self.total_bytes == 0 {
+            0.0
+        } else {
+            (self.cached_bytes as f64 / self.total_bytes as f64).clamp(0.0, 1.0) as f32
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Presence {
     pub media: Option<Media>,
@@ -130,6 +163,8 @@ pub struct Presence {
     pub verification: Option<Verification>,
     pub ready: bool,
     pub blocked: bool,
+    #[serde(default)]
+    pub buffering: bool,
     pub ended: bool,
     pub duration: f64,
     pub clock_ready: bool,
@@ -138,6 +173,8 @@ pub struct Presence {
     pub playback: Option<Playback>,
     #[serde(default)]
     pub streaming: bool,
+    #[serde(default)]
+    pub stream_progress: Option<StreamProgress>,
 }
 impl Presence {
     pub fn valid(&self) -> bool {
@@ -150,6 +187,10 @@ impl Presence {
             && self.uncertainty_ms.is_finite()
             && (0.0..=3000.0).contains(&self.uncertainty_ms)
             && self.playback.as_ref().is_none_or(Playback::valid)
+            && self
+                .stream_progress
+                .as_ref()
+                .is_none_or(StreamProgress::valid)
             && self
                 .media
                 .as_ref()
@@ -189,6 +230,8 @@ pub struct Snapshot {
     pub revision: u64,
     pub position: f64,
     pub paused: bool,
+    #[serde(default)]
+    pub waiting_buffer: bool,
     pub host_ms: f64,
     pub transition: Option<Transition>,
     pub host: Presence,

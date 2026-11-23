@@ -62,5 +62,12 @@ sync2gether --version
 ldd /usr/bin/sync2gether
 help=$(sync2gether --help)
 [[ "$help" != *--demo* ]]
+if [[ ! -f .cache/player-gl-fixture.mkv ]]; then
+  mkdir -p .cache
+  ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i 'testsrc2=size=640x360:rate=30' \
+    -f lavfi -i 'sine=frequency=440:sample_rate=48000' \
+    -t 5 -c:v mpeg4 -q:v 5 -c:a pcm_s16le .cache/player-gl-fixture.mkv
+fi
 env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET xvfb-run -a -s '-screen 0 1280x720x24' \
   env LIBGL_ALWAYS_SOFTWARE=1 bash scripts/with-test-audio.sh python3 scripts/test-installed.py

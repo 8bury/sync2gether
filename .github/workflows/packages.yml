@@ -182,14 +182,17 @@ jobs:
           - arch: arm64
             runner: macos-15
             target: aarch64-apple-darwin
+            lto: thin
           - arch: x86_64
             runner: macos-15-intel
             target: x86_64-apple-darwin
+            lto: "false"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+      CARGO_PROFILE_RELEASE_LTO: ${{ matrix.lto }}
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
       HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1

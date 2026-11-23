@@ -38,7 +38,17 @@ fn start_relay(address: SocketAddr) -> Relay {
         .enable_all()
         .build()
         .unwrap();
-    let listener = std::net::TcpListener::bind(address).unwrap();
+    let mut attempts = 0;
+    let listener = loop {
+        match std::net::TcpListener::bind(address) {
+            Ok(listener) => break listener,
+            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse && attempts < 40 => {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(err) => panic!("failed to bind {address}: {err}"),
+        }
+    };
     listener.set_nonblocking(true).unwrap();
     runtime.spawn(async move {
         let listener = TcpListener::from_std(listener).unwrap();

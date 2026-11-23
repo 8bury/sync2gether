@@ -138,6 +138,12 @@ jobs:
           }
       - name: Compilar release
         run: cargo build --release --locked
+      - name: Garantir NSIS instalado
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and -not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+            choco install nsis --no-progress -y
+          }
       - name: Empacotar zip e instalador NSIS
         shell: pwsh
         run: pwsh -File scripts/package-windows.ps1 -LibMpvPath .cache\libmpv\libmpv-2.dll

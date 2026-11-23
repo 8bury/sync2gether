@@ -169,11 +169,19 @@ test "$("$app/Contents/MacOS/sync2gether" --version)" = "sync2gether $version"
 
 cp -R "$app" "$dmg_stage/"
 ln -s /Applications "$dmg_stage/Applications"
-rm -f "$dmg_out"
-hdiutil create \
-  -volname "sync2gether $version" \
-  -srcfolder "$dmg_stage" \
-  -ov \
-  -format UDZO \
-  "$dmg_out"
+for attempt in 1 2 3 4 5; do
+  rm -f "$dmg_out"
+  if hdiutil create \
+    -volname "sync2gether $version" \
+    -srcfolder "$dmg_stage" \
+    -ov \
+    -format UDZO \
+    "$dmg_out"; then
+    break
+  fi
+  if [[ "$attempt" -eq 5 ]]; then
+    exit 1
+  fi
+  sleep 3
+done
 test -s "$dmg_out"

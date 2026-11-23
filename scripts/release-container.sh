@@ -4,6 +4,8 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 kind=${1:?Uso: bash scripts/release-container.sh arch|deb}
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-$(nproc)}
+export CARGO_NET_RETRY=${CARGO_NET_RETRY:-10}
+export RUSTUP_MAX_RETRIES=${RUSTUP_MAX_RETRIES:-10}
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target/release-$kind}"
 export CARGO_HOME="${CARGO_HOME:-$PWD/target/cargo-$kind}"
 export RUSTUP_HOME="${RUSTUP_HOME:-$PWD/target/rustup-$kind}"
@@ -11,28 +13,43 @@ export PATH="$CARGO_HOME/bin:$PATH"
 skip_checks=${SKIP_CHECKS:-0}
 mkdir -p target
 
+retry() {
+  local attempt=1
+  local max=3
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if [[ "$attempt" -ge "$max" ]]; then
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    sleep $((attempt * 5))
+  done
+}
+
 case "$kind" in
   arch)
-    pacman -Syu --noconfirm --needed rustup git pkgconf wayland libxkbcommon libxkbcommon-x11 mesa mpv ffmpeg pulseaudio xorg-server-xvfb xorg-xauth python python-xlib
+    retry pacman -Syu --noconfirm --needed rustup git pkgconf wayland libxkbcommon libxkbcommon-x11 mesa mpv ffmpeg pulseaudio xorg-server-xvfb xorg-xauth python python-xlib
     if [[ "$skip_checks" == 1 ]]; then
-      rustup toolchain install 1.98.0 --profile minimal
+      retry rustup toolchain install 1.98.0 --profile minimal
     else
-      rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+      retry rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
     fi
     rustup default 1.98.0
     ;;
   deb)
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y --no-install-recommends build-essential curl ca-certificates git pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev libmpv-dev ffmpeg pulseaudio pulseaudio-utils xvfb xauth python3 python3-xlib
+    retry apt-get update
+    retry apt-get install -y --no-install-recommends -o Acquire::Retries=5 build-essential curl ca-certificates git pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev libmpv-dev ffmpeg pulseaudio pulseaudio-utils xvfb xauth python3 python3-xlib
     if [[ ! -x "$CARGO_HOME/bin/rustup" ]]; then
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o target/rustup-init.sh
+      curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --max-time 120 https://sh.rustup.rs -o target/rustup-init.sh
       bash target/rustup-init.sh -y --profile minimal --default-toolchain 1.98.0
     fi
-    rustup toolchain install 1.98.0 --profile minimal
+    retry rustup toolchain install 1.98.0 --profile minimal
     rustup default 1.98.0
     if [[ "$skip_checks" != 1 ]]; then
-      rustup component add rustfmt clippy
+      retry rustup component add rustfmt clippy
     fi
     ;;
   *) echo "Formato desconhecido: $kind" >&2; exit 1 ;;

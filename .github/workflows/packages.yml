@@ -22,21 +22,31 @@ concurrency:
   group: packages
   cancel-in-progress: false
 
+env:
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
 jobs:
   version:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
       pkgver: ${{ steps.version.outputs.pkgver }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Conferir versão antes de compilar
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
           MODE: ${{ inputs.release }}
         run: |
+          if [ "$MODE" != nenhuma ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases só podem ser criadas a partir de main (ref atual: $GITHUB_REF)."
+            exit 1
+          fi
           version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
           pkgver=$(sed -n 's/^pkgver=//p' packaging/arch/PKGBUILD)
           expected_pkgver="${version//-/}"
@@ -44,9 +54,24 @@ jobs:
             echo "::error::Cargo.toml ($version -> $expected_pkgver) e PKGBUILD ($pkgver) têm versões diferentes."
             exit 1
           fi
-          if [ "$MODE" != nenhuma ] && { gh release view "v$version" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; }; then
-            echo "::error::A versão $version já existe. Atualize Cargo.toml e PKGBUILD."
-            exit 1
+          if [ "$MODE" != nenhuma ]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+              echo "::error::A tag v$version já existe. Atualize Cargo.toml e PKGBUILD."
+              exit 1
+            fi
+            status=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$version" --include 2>&1 | head -1 || true)
+            if [[ "$status" == *" 200 "* ]]; then
+              echo "::error::A release v$version já existe. Atualize Cargo.toml e PKGBUILD."
+              exit 1
+            elif [[ "$status" != *" 404 "* ]]; then
+              echo "::error::Não foi possível verificar releases existentes: $status"
+              exit 1
+            fi
+            drafts=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=50" --jq "[.[] | select(.tag_name == \"v$version\")] | length")
+            if [ "$drafts" -gt 0 ]; then
+              echo "::error::Já existe um rascunho de release para v$version."
+              exit 1
+            fi
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"
@@ -54,7 +79,7 @@ jobs:
   package:
     needs: version
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - format: deb
@@ -75,26 +100,26 @@ jobs:
             pacman -Syu --noconfirm git zstd
           else
             apt-get update
-            apt-get install -y --no-install-recommends git ca-certificates zstd
+            apt-get install -y --no-install-recommends -o Acquire::Retries=5 git ca-certificates zstd
           fi
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
         with:
           path: |
             target/release-${{ matrix.format }}/release/deps
             target/release-${{ matrix.format }}/release/build
-            target/release-${{ matrix.format }}/.fingerprint
+            target/release-${{ matrix.format }}/release/.fingerprint
             target/cargo-${{ matrix.format }}/bin
             target/cargo-${{ matrix.format }}/registry/index
             target/cargo-${{ matrix.format }}/registry/cache
             target/cargo-${{ matrix.format }}/git/db
             target/rustup-${{ matrix.format }}
-          key: linux-release-${{ matrix.format }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: linux-release-v2-${{ matrix.format }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/release-container.sh') }}
           restore-keys: |
-            linux-release-${{ matrix.format }}-
+            linux-release-v2-${{ matrix.format }}-
       - name: Compilar, empacotar e testar o pacote instalado
         run: bash scripts/release-container.sh '${{ matrix.format }}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sync2gether-${{ matrix.format }}
           path: |
@@ -104,20 +129,20 @@ jobs:
 
   package-windows:
     needs: version
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.0
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-windows
-          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Configurar linker rápido (lld-link)
         shell: pwsh
         run: |
@@ -131,13 +156,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $release = gh api repos/shinchiro/mpv-winbuild-cmake/releases/latest | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $release) {
+            throw "Falha ao consultar shinchiro/mpv-winbuild-cmake"
+          }
           $asset = $release.assets | Where-Object { $_.name -match '^mpv-dev-x86_64-(?!v3-).*\.7z$' } | Select-Object -First 1
           if (-not $asset) {
             throw "Asset mpv-dev-x86_64 não encontrado na release $($release.tag_name)"
           }
           "tag=$($release.tag_name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "url=$($asset.browser_download_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: mpv_cache
         with:
           path: .cache/libmpv
@@ -148,24 +176,42 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path .cache/libmpv | Out-Null
           $archive = ".cache/libmpv/mpv-dev.7z"
-          curl.exe -fsSL -o $archive "${{ steps.mpv_meta.outputs.url }}"
+          curl.exe -fsSL --retry 5 --retry-all-errors --max-time 180 -o $archive "${{ steps.mpv_meta.outputs.url }}"
+          if ($LASTEXITCODE -ne 0) { throw "Falha ao baixar $archive" }
           7z e -y "-o.cache/libmpv" $archive "libmpv-2.dll"
+          if ($LASTEXITCODE -ne 0) { throw "Falha ao extrair libmpv-2.dll" }
           Remove-Item -Force $archive
           if (-not (Test-Path ".cache/libmpv/libmpv-2.dll")) {
             throw "libmpv-2.dll não encontrada após extração"
           }
-      - name: Compilar release
-        run: cargo build --release --locked
-      - name: Garantir NSIS instalado
+      - uses: actions/cache@v6
+        id: nsis_cache
+        with:
+          path: .cache/nsis
+          key: nsis-3.13-ba63dffc
+      - name: Baixar NSIS portátil 3.13
+        if: steps.nsis_cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and -not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
-            choco install nsis --no-progress -y
+          New-Item -ItemType Directory -Force -Path .cache/nsis | Out-Null
+          $zip = ".cache/nsis/nsis-3.13.zip"
+          curl.exe -fsSL --retry 5 --retry-all-errors --max-time 120 -o $zip "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13.zip"
+          if ($LASTEXITCODE -ne 0) { throw "Falha ao baixar NSIS 3.13" }
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne "ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8") {
+            throw "Checksum SHA-256 inesperado do NSIS 3.13: $hash"
           }
+          Expand-Archive -Path $zip -DestinationPath .cache/nsis -Force
+          Remove-Item -Force $zip
+      - name: Adicionar NSIS ao PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$PWD\.cache\nsis\nsis-3.13"
+      - name: Compilar release
+        run: cargo build --release --locked
       - name: Empacotar zip e instalador NSIS
         shell: pwsh
         run: pwsh -File scripts/package-windows.ps1 -LibMpvPath .cache\libmpv\libmpv-2.dll
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sync2gether-windows
           path: |
@@ -197,7 +243,7 @@ jobs:
       HOMEBREW_NO_INSTALL_CLEANUP: 1
       HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.0
@@ -205,14 +251,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-macos-${{ matrix.arch }}
-          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Instalar libmpv via Homebrew
-        run: brew install mpv
+        run: |
+          for attempt in 1 2 3; do
+            if brew install mpv; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
       - name: Compilar release
         run: cargo build --release --locked --target "${{ matrix.target }}"
       - name: Empacotar .app e .dmg
         run: bash scripts/package-macos.sh "${{ matrix.arch }}" "${{ matrix.target }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sync2gether-macos-${{ matrix.arch }}
           path: target/dist/*-macos-${{ matrix.arch }}.dmg
@@ -231,7 +286,7 @@ jobs:
       PKGVER: ${{ needs.version.outputs.pkgver }}
       MODE: ${{ inputs.release }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -265,7 +320,7 @@ jobs:
           - **Apple Silicon (M1/M2/M3/M4):** baixe \`$mac_arm64\`.
           - **Intel (x86_64):** baixe \`$mac_x86_64\`.
 
-          Abra o \`.dmg\` e arraste **sync2gether.app** para **Applications** (\`libmpv\` e dependências já estão incluídas).
+          Abra o \`.dmg\` e arraste **sync2gether.app** para **Applications** (\`libmpv\` e dependências já estão incluídas). Requer macOS 15 ou mais recente.
 
           > O app ainda não possui assinatura/notarização da Apple. Se o **Gatekeeper** bloquear na primeira abertura, execute no Terminal:
           >

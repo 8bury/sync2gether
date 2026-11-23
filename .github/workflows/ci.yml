@@ -2,6 +2,7 @@ name: Verificações
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -12,21 +13,27 @@ concurrency:
   group: checks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
 jobs:
   ubuntu:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dependências de desenvolvimento e captura
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev libmpv-dev ffmpeg pulseaudio pulseaudio-utils xvfb xauth
+          sudo apt-get install -y -o Acquire::Retries=5 build-essential pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev libmpv-dev ffmpeg pulseaudio pulseaudio-utils xvfb xauth
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: bash scripts/check.sh
       - run: bash scripts/test-mvp.sh
       - name: Player OpenGL com vídeo sintético
@@ -37,7 +44,7 @@ jobs:
           cargo build --locked --features demo
           timeout 30s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 target/debug/sync2gether --demo --demo-state synchronized --demo-shot .cache/demo.png
           test -s .cache/demo.png
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ubuntu-demo
           path: |
@@ -50,30 +57,34 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Dependências
-        run: pacman -Syu --noconfirm git rustup pkgconf wayland libxkbcommon libxkbcommon-x11 mesa mpv ffmpeg pulseaudio
-      - uses: actions/checkout@v4
+        run: pacman -Syu --noconfirm git zstd rustup pkgconf wayland libxkbcommon libxkbcommon-x11 mesa mpv ffmpeg pulseaudio
+      - uses: actions/checkout@v7
       - name: Rust fixado
         run: |
           rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
           rustup default 1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-arch
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: bash scripts/check.sh
       - run: bash scripts/test-mvp.sh
 
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 25
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.0
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Configurar linker rápido (lld-link)
         shell: pwsh
         run: |
@@ -90,13 +101,13 @@ jobs:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.0
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace --all-targets

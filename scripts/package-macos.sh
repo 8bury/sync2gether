@@ -6,6 +6,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 arch=${1:?Uso: bash scripts/package-macos.sh arm64|x86_64 [target-triple]}
 target=${2:-}
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+bundle_version="${version%%-*}"
 target_dir="${CARGO_TARGET_DIR:-target}"
 if [[ -n "$target" ]]; then
   binary="$target_dir/$target/release/sync2gether"
@@ -33,8 +34,10 @@ rm -rf "$work"
 mkdir -p "$output" "$app/Contents/MacOS" "$app/Contents/Frameworks" "$dmg_stage"
 
 install -m755 "$binary" "$app/Contents/MacOS/sync2gether"
-sed "s/@VERSION@/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$app/Contents/MacOS/sync2gether" 2>/dev/null || true
+sed "s/@VERSION@/$bundle_version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+if ! otool -l "$app/Contents/MacOS/sync2gether" | grep -Fq "@executable_path/../Frameworks"; then
+  install_name_tool -add_rpath "@executable_path/../Frameworks" "$app/Contents/MacOS/sync2gether"
+fi
 
 python3 - "$app/Contents/MacOS/sync2gether" "$libmpv" "$app/Contents/Frameworks" "$brew_prefix" <<'PY'
 import os
@@ -166,10 +169,27 @@ codesign --force --sign - "$app/Contents/MacOS/sync2gether"
 codesign --force --sign - "$app"
 
 test "$("$app/Contents/MacOS/sync2gether" --version)" = "sync2gether $version"
+python3 - "$app/Contents/Frameworks/libmpv.2.dylib" <<'PY'
+import ctypes
+import sys
+
+lib = ctypes.CDLL(sys.argv[1])
+lib.mpv_client_api_version.restype = ctypes.c_ulong
+api = lib.mpv_client_api_version()
+major, minor = api >> 16, api & 0xFFFF
+assert major >= 2, f"libmpv API inesperada: {major}.{minor}"
+print(f"libmpv carregada com sucesso (API {major}.{minor}).")
+PY
 
 cp -R "$app" "$dmg_stage/"
 ln -s /Applications "$dmg_stage/Applications"
-for attempt in 1 2 3 4 5; do
+delays=(5 10 20 40 0)
+for idx in "${!delays[@]}"; do
+  for vol in /Volumes/sync2gether*; do
+    if [[ -e "$vol" ]]; then
+      hdiutil detach -force "$vol" || true
+    fi
+  done
   rm -f "$dmg_out"
   if hdiutil create \
     -volname "sync2gether $version" \
@@ -179,9 +199,11 @@ for attempt in 1 2 3 4 5; do
     "$dmg_out"; then
     break
   fi
-  if [[ "$attempt" -eq 5 ]]; then
+  delay="${delays[$idx]}"
+  if [[ "$delay" -eq 0 ]]; then
     exit 1
   fi
-  sleep 3
+  sleep "$delay"
 done
+hdiutil verify "$dmg_out"
 test -s "$dmg_out"

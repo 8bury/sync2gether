@@ -942,7 +942,7 @@ fn click_preparation_widget(
 }
 
 #[test]
-fn each_file_menu_copies_the_full_name_without_changing_playback() {
+fn clicking_each_file_name_copies_it_without_changing_playback() {
     use sync2gether::runtime::{Role, View};
     for light in [false, true] {
         for local in [false, true] {
@@ -957,26 +957,16 @@ fn each_file_menu_copies_the_full_name_without_changing_playback() {
                 peer_name: Some("Ana".into()),
                 ..Default::default()
             };
-            let _ = click_preparation_widget(
+            let output = click_preparation_widget(
                 &ctx,
                 &view,
                 &mut inputs,
                 if local {
-                    "Opções do seu arquivo"
+                    "Copiar nome do seu arquivo"
                 } else {
-                    "Opções do arquivo da outra pessoa"
+                    "Copiar nome do arquivo da outra pessoa"
                 },
             );
-            assert!(egui::Popup::is_any_open(&ctx));
-            let (output, actions) = preparation_output(&ctx, &view, &mut inputs, vec![]);
-            assert!(actions.is_empty());
-            assert!(
-                visible_text(&output.shapes).contains("Nome completo"),
-                "menu not shown: local={local}, light={light}, popup={}, text={}",
-                egui::Popup::is_any_open(&ctx),
-                visible_text(&output.shapes)
-            );
-            let output = click_preparation_widget(&ctx, &view, &mut inputs, "Copiar nome");
             let expected = if local {
                 view.file.as_ref().unwrap()
             } else {
@@ -987,7 +977,9 @@ fn each_file_menu_copies_the_full_name_without_changing_playback() {
             ));
             let (output, actions) = preparation_output(&ctx, &view, &mut inputs, vec![]);
             assert!(actions.is_empty());
-            assert!(visible_text(&output.shapes).contains("Copiado"));
+            let text = visible_text(&output.shapes);
+            assert!(!text.contains("Nome completo") && !text.contains("Copiar nome"));
+            assert!(text.contains("Nome copiado"));
             assert!(!inputs.player.fullscreen);
         }
     }
@@ -1531,7 +1523,7 @@ fn internet_room_invites_with_the_code_and_never_with_addresses() {
             let text = preparation_frame(&view, size, light);
             assert!(text.contains("Envie este código"));
             assert!(text.contains("4821-gato-lua"));
-            assert!(text.contains("Copiar"));
+            assert!(text.contains("Copiar código"));
             assert!(text.contains("Sem contato com o servidor"));
             assert!(!text.contains("192.168.1.10"));
         }
@@ -1594,16 +1586,23 @@ fn host_room_shows_the_invite_until_someone_joins_then_the_film_step() {
     };
     for size in [[480.0, 480.0], [960.0, 640.0]] {
         let text = preparation_frame(&view, size, false);
-        assert!(text.contains("Esperando alguém entrar"));
-        assert!(text.contains("Escolher meu filme"));
+        assert!(!text.contains("sperando alguém entrar"));
+        assert!(!text.contains("Escolher meu filme"));
+        assert!(text.contains("Copiar código"));
         assert!(!text.contains("Escolham o mesmo filme"));
         assert!(!text.contains("Começar a assistir"));
     }
+    let ctx = egui::Context::default();
+    let mut inputs = ui::Inputs::default();
+    let output = click_preparation_widget(&ctx, &view, &mut inputs, "Copiar código");
+    assert!(output.platform_output.commands.iter().any(
+        |command| matches!(command, egui::OutputCommand::CopyText(code) if code == "4821-gato-lua")
+    ));
     view.connected = true;
     view.peer_name = Some("Ana".into());
     let text = preparation_frame(&view, [960.0, 640.0], false);
     assert!(text.contains("Escolham o mesmo filme"));
-    assert!(!text.contains("Esperando alguém entrar"));
+    assert!(!text.contains("sperando alguém entrar"));
     assert!(text.contains("4821-gato-lua"));
 }
 
@@ -2159,9 +2158,9 @@ fn keyboard_focus_is_distinct_from_the_active_subtitle_state() {
 }
 
 #[test]
-fn file_menu_shows_keyboard_focus() {
+fn file_name_shows_keyboard_focus() {
     use sync2gether::runtime::{Role, View};
-    const MENU: &str = "Opções do seu arquivo";
+    const MENU: &str = "Copiar nome do seu arquivo";
     let size = [1000.0, 760.0];
     let ctx = egui::Context::default();
     ctx.enable_accesskit();

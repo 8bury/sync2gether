@@ -18,6 +18,7 @@ impl Worker {
         self.view.buffering = self.presence.buffering;
         self.view.peer_buffering = false;
         self.view.waiting_buffer = false;
+        self.view.paused_by = None;
         self.view.peer_streaming = false;
         self.view.peer_stream = None;
         self.view.can_stream = false;
@@ -42,6 +43,7 @@ impl Worker {
                 self.view.peer_stream = peer.stream_progress.clone();
             }
             self.view.waiting_buffer = state.waiting_buffer;
+            self.view.paused_by = state.paused_by.filter(|_| state.paused);
             self.view.can_stream = self.view.connected
                 && !self.view.stream.active
                 && match self.view.role {

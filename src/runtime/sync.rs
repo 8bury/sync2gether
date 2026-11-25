@@ -1,7 +1,7 @@
 use super::{Role, Worker};
 use crate::{
     player,
-    protocol::{Control, Message, Playback, Snapshot, StreamProgress},
+    protocol::{Control, Message, Playback, Side, Snapshot, StreamProgress},
     stream::{CHUNK_SIZE, StreamPhase},
     sync::Correction,
 };
@@ -23,6 +23,10 @@ pub(super) enum BufferLatch {
 
 impl Worker {
     pub(super) fn control(&mut self, control: Control) {
+        self.control_by(control, Side::Host);
+    }
+
+    pub(super) fn control_by(&mut self, control: Control, by: Side) {
         if !control.valid() {
             return;
         }
@@ -46,7 +50,7 @@ impl Worker {
             },
             Role::Host => {
                 self.refresh_presence();
-                if self.session.apply(control, self.now()) {
+                if self.session.request(control, by, self.now()) {
                     if matches!(control, Control::Play) {
                         self.view.watching = true;
                         self.watching_media = self.presence.media.clone();

@@ -1,5 +1,6 @@
 use super::ACCENT;
 use crate::{
+    protocol::Side,
     runtime::{Command, Role, View},
     stream::{StreamPhase, file_bitrate_bps, format_bps},
     ui::{
@@ -311,6 +312,19 @@ fn center_notice(view: &View) -> Option<CenterNotice> {
     }
 }
 
+fn paused_title(view: &View, peer: &str) -> String {
+    let own = match view.role {
+        Role::Host => Side::Host,
+        Role::Guest => Side::Guest,
+        Role::Local => return "Pausado".to_owned(),
+    };
+    match view.paused_by {
+        Some(side) if side == own => "Você pausou".to_owned(),
+        Some(_) => format!("{peer} pausou"),
+        None => "Pausado".to_owned(),
+    }
+}
+
 pub(super) fn video_dim(view: &View) -> u8 {
     match center_notice(view) {
         Some(CenterNotice::Lost | CenterNotice::Left) => 178,
@@ -334,7 +348,7 @@ pub(super) fn draw_center_notice(
     let (state, title, detail, diameter) = match notice {
         CenterNotice::Paused => (
             (!solo).then_some(Presence::Together),
-            "Pausado".to_owned(),
+            paused_title(view, peer_label),
             format!("em {position}"),
             22.0,
         ),

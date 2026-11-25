@@ -6,7 +6,7 @@ use crate::{
     protocol::Control,
     runtime::{Command, Role, View},
 };
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, RichText, Stroke};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Tone {
@@ -296,7 +296,6 @@ pub(super) fn compare(view: &View) -> Compare {
 #[derive(Clone, Copy)]
 pub(super) struct Fit {
     pub(super) sticky: bool,
-    pub(super) available: f32,
 }
 
 pub(super) fn draw(
@@ -306,7 +305,7 @@ pub(super) fn draw(
     fit: Fit,
     actions: &mut Vec<Command>,
 ) {
-    let Fit { sticky, available } = fit;
+    let Fit { sticky } = fit;
     let window = ui.ctx().content_rect();
     let compact = window.height() < 700.0;
     ui.spacing_mut().item_spacing.y = if compact { 6.0 } else { 10.0 };
@@ -319,14 +318,7 @@ pub(super) fn draw(
         ui.label(title(heading(view), size));
     });
     ui.add_space(if compact { 8.0 } else { 20.0 });
-    let foot = if sticky { 0.0 } else { 104.0 };
-    let strip = if view.can_stream || view.stream.active {
-        72.0
-    } else {
-        0.0
-    };
-    let free = available - size * 1.3 - 28.0 - foot - strip;
-    copies::pair(ui, colors, view, free, actions);
+    copies::pair(ui, colors, view, actions);
     if view.role != Role::Local && view.connected {
         ui.add_space(if compact { 4.0 } else { 8.0 });
         super::stream::preparation_strip(ui, colors, view, actions);
@@ -384,60 +376,6 @@ pub(super) fn room(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mu
                     .color(colors.warning),
             );
         }
-        ui.add_space(if compact { 10.0 } else { 22.0 });
-        ui.label(
-            RichText::new("Esperando alguém entrar…")
-                .size(14.0)
-                .color(colors.muted),
-        );
-        ui.add_space(if compact { 8.0 } else { 16.0 });
-        if view.loading {
-            ui.set_max_width(ui.available_width().min(340.0));
-            if let Some(progress) = view.verification.filter(|_| view.pending_file.is_some()) {
-                ui.label(
-                    RichText::new("Conferindo seu arquivo")
-                        .size(13.0)
-                        .color(colors.muted),
-                );
-                ui.add_space(6.0);
-                kit::progress(ui, colors, progress.fraction(), ui.available_width());
-            } else {
-                kit::status(
-                    ui,
-                    Some(kit::Glyph::Spinner),
-                    "Escolhendo arquivo…",
-                    colors.muted,
-                );
-            }
-        } else {
-            let label = if view.file.is_some() {
-                "Trocar meu filme"
-            } else {
-                "Escolher meu filme"
-            };
-            if kit::Button::new(kit::Kind::Ghost, label)
-                .glyph(kit::Glyph::Folder)
-                .size(kit::Size::Small)
-                .show(ui, colors)
-                .clicked()
-            {
-                actions.push(Command::Open);
-            }
-            if let Some(file) = &view.file {
-                ui.add_space(4.0);
-                ui.set_max_width(ui.available_width().min(420.0));
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(file)
-                            .font(egui::FontId::monospace(12.5))
-                            .color(colors.faint),
-                    )
-                    .halign(egui::Align::Center)
-                    .truncate(),
-                )
-                .on_hover_text(file);
-            }
-        }
     });
 }
 
@@ -459,6 +397,122 @@ fn invite(ui: &mut egui::Ui, colors: Palette, value: &str, copy: &str, compact: 
     );
     ui.add_space(if compact { 8.0 } else { 26.0 });
     copy_button_with(ui, kit::Kind::Secondary, kit::Size::Medium, copy, value);
+}
+
+pub(super) fn copyable(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    value: &str,
+    accessible: &str,
+    text: impl Fn(Color32) -> RichText,
+) {
+    let id = ui.id().with(("copyable", value));
+    let now = ui.input(|i| i.time);
+    let elapsed = ui
+        .ctx()
+        .data(|d| d.get_temp::<f64>(id))
+        .map(|at| now - at)
+        .filter(|elapsed| (0.0..COPIED_FOR).contains(elapsed));
+    let copied = elapsed.is_some();
+    let flash = ui
+        .ctx()
+        .animate_bool_with_time(id.with("flash"), copied, 0.18);
+    let hover_id = id.with("hover");
+    let hovered = ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(hover_id))
+        .unwrap_or(false);
+    let hover = ui.ctx().animate_bool_with_time(hover_id, hovered, 0.15);
+    let response = ui
+        .add(
+            egui::Label::new(text(
+                kit::lerp(colors.muted, colors.text, hover).gamma_multiply(1.0 - flash),
+            ))
+            .sense(egui::Sense::click())
+            .show_tooltip_when_elided(false)
+            .truncate(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_ui(|ui| {
+            ui.set_max_width(320.0);
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.add(egui::Label::new(value).wrap());
+            kit::status(
+                ui,
+                Some(if copied {
+                    kit::Glyph::Check
+                } else {
+                    kit::Glyph::Copy
+                }),
+                if copied {
+                    "Copiado"
+                } else {
+                    "Clique para copiar"
+                },
+                colors.muted,
+            );
+        });
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(hover_id, response.hovered()));
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            response.rect.expand(3.0),
+            4,
+            Stroke::new(2.0, colors.text),
+            egui::StrokeKind::Outside,
+        );
+    }
+    if let Some(elapsed) = elapsed {
+        copied_flash(ui, colors, response.rect, elapsed as f32, flash);
+    }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, accessible));
+    if response.clicked() {
+        ui.ctx().copy_text(value.to_owned());
+        ui.ctx().data_mut(|d| d.insert_temp(id, now));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(COPIED_FOR));
+    }
+}
+
+const COPIED_FOR: f64 = 1.6;
+
+fn copied_flash(ui: &egui::Ui, colors: Palette, rect: egui::Rect, elapsed: f32, flash: f32) {
+    let pulse = (1.0 - elapsed / 0.6).clamp(0.0, 1.0);
+    if pulse > 0.0 {
+        ui.ctx().request_repaint();
+    }
+    let bounds = ui.max_rect();
+    let painter = ui.painter_at(bounds.intersect(ui.clip_rect()));
+    let ink = colors.success.gamma_multiply(flash);
+    let pop = 1.0 + 0.35 * pulse * pulse;
+    let center = egui::pos2(rect.left() + 7.0, rect.center().y);
+    kit::draw(
+        &painter,
+        kit::Glyph::Check,
+        center,
+        13.0 * pop,
+        ink,
+        ui.input(|i| i.time),
+    );
+    let x = rect.left() + 20.0 - 6.0 * (1.0 - flash);
+    let room = bounds.right() - (rect.left() + 20.0);
+    let font = egui::FontId::proportional(13.0);
+    let label = ["Nome copiado", "Copiado"].into_iter().find(|label| {
+        painter
+            .layout_no_wrap((*label).to_owned(), font.clone(), ink)
+            .size()
+            .x
+            <= room
+    });
+    if let Some(label) = label {
+        painter.text(
+            egui::pos2(x, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            font,
+            ink,
+        );
+    }
 }
 
 fn invite_code(ui: &mut egui::Ui, colors: Palette, view: &View, compact: bool) {

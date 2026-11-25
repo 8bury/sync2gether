@@ -198,6 +198,12 @@ impl Presence {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Side {
+    Host,
+    Guest,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Control {
     Play,
@@ -232,6 +238,8 @@ pub struct Snapshot {
     pub paused: bool,
     #[serde(default)]
     pub waiting_buffer: bool,
+    #[serde(default)]
+    pub paused_by: Option<Side>,
     pub host_ms: f64,
     pub transition: Option<Transition>,
     pub host: Presence,

@@ -71,6 +71,7 @@ pub struct View {
     pub buffering: bool,
     pub peer_buffering: bool,
     pub waiting_buffer: bool,
+    pub paused_by: Option<crate::protocol::Side>,
     pub loading: bool,
     pub player: player::Status,
     pub matched: bool,

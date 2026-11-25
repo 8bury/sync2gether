@@ -365,7 +365,9 @@ impl Worker {
                         self.session.state.guest = p;
                         self.progress();
                     }
-                    (Role::Host, Message::Request(c)) => self.control(c),
+                    (Role::Host, Message::Request(c)) => {
+                        self.control_by(c, crate::protocol::Side::Guest)
+                    }
                     (Role::Host, Message::Prepared { id }) => {
                         self.refresh_presence();
                         self.session.prepared(id, true, self.now());

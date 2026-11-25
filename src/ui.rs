@@ -273,7 +273,6 @@ fn draw_flow(
                                 body,
                                 preparation::Fit {
                                     sticky: sticky_preparation,
-                                    available: bounds.height(),
                                 },
                                 &mut actions,
                             );

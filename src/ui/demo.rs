@@ -118,6 +118,7 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
     view.verified = true;
     view.player.loaded = true;
     view.player.paused = state != SessionState::Synchronized;
+    view.paused_by = (state == SessionState::Paused).then_some(crate::protocol::Side::Guest);
     view.player.duration = 5400.0;
     view.player.position = 754.0;
     view.connected = !matches!(

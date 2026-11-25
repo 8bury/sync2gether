@@ -38,6 +38,14 @@ fn start_relay(address: SocketAddr) -> Relay {
         .enable_all()
         .build()
         .unwrap();
+    let listener = bind_retrying(address);
+    runtime.spawn(async move {
+        let listener = TcpListener::from_std(listener).unwrap();
+        sync2gether_relay::serve(listener, Limits::default()).await
+    });
+    Relay(Some(runtime))
+}
+fn bind_retrying(address: SocketAddr) -> std::net::TcpListener {
     let mut attempts = 0;
     let listener = loop {
         match std::net::TcpListener::bind(address) {
@@ -50,11 +58,7 @@ fn start_relay(address: SocketAddr) -> Relay {
         }
     };
     listener.set_nonblocking(true).unwrap();
-    runtime.spawn(async move {
-        let listener = TcpListener::from_std(listener).unwrap();
-        sync2gether_relay::serve(listener, Limits::default()).await
-    });
-    Relay(Some(runtime))
+    listener
 }
 fn free_address() -> SocketAddr {
     std::net::TcpListener::bind("127.0.0.1:0")
@@ -449,8 +453,7 @@ fn start_tls_relay(address: SocketAddr, cert_pem: &[u8], key_pem: &[u8]) -> Rela
         .enable_all()
         .build()
         .unwrap();
-    let listener = std::net::TcpListener::bind(address).unwrap();
-    listener.set_nonblocking(true).unwrap();
+    let listener = bind_retrying(address);
     runtime.spawn(async move {
         let listener = TcpListener::from_std(listener).unwrap();
         sync2gether_relay::serve_tls(listener, Limits::default(), acceptor).await

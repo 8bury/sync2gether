@@ -77,6 +77,9 @@ A digitação aceita maiúsculas, acentos e espaços no lugar dos hífens.
   foi encerrada.
 - Fechar o app do anfitrião ou clicar em **Encerrar sala** fecha a sala no
   relay imediatamente.
+- Quem sai envia `Bye` pelo canal cifrado. O outro lado mostra que a pessoa
+  saiu ou que a sala foi encerrada, em vez de "Conexão perdida", e o
+  convidado para de reconectar.
 
 A latência acrescentada é o desvio geográfico até o relay. A margem do início
 agendado já se ajusta ao RTT medido, que inclui esse desvio.

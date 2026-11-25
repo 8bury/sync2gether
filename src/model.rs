@@ -17,10 +17,12 @@ pub enum SessionState {
     Synchronized,
     Paused,
     Reconnecting,
+    PeerLeft,
+    RoomClosed,
 }
 
 impl SessionState {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 18] = [
         Self::Idle,
         Self::JoinCode,
         Self::Browsing,
@@ -37,6 +39,8 @@ impl SessionState {
         Self::Synchronized,
         Self::Paused,
         Self::Reconnecting,
+        Self::PeerLeft,
+        Self::RoomClosed,
     ];
 
     pub fn label(self) -> &'static str {
@@ -57,6 +61,8 @@ impl SessionState {
             Self::Synchronized => "Sincronizados",
             Self::Paused => "Pausado",
             Self::Reconnecting => "Reconectando",
+            Self::PeerLeft => "Parceiro saiu",
+            Self::RoomClosed => "Sala encerrada",
         }
     }
 }

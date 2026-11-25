@@ -386,6 +386,92 @@ async fn approved_guest_reconnects_without_another_approval() {
     guest.abort();
 }
 
+async fn left(rx: &mut mpsc::Receiver<Event>) {
+    loop {
+        match next(rx).await {
+            Event::PeerLeft => return,
+            Event::Connected(_) | Event::Disconnected => panic!("saída tratada como queda"),
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn leaving_guest_is_reported_and_the_room_accepts_a_new_guest() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let key = "c".repeat(32);
+    let host = tokio::spawn(network::host(
+        listener,
+        key.clone(),
+        host_tx,
+        Instant::now(),
+    ));
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::guest(
+        address,
+        key.clone(),
+        guest_tx,
+        Instant::now(),
+    ));
+    let _host_out = connected(&mut host_rx).await;
+    let guest_out = connected(&mut guest_rx).await;
+    guest_out.send(Message::Bye).await.unwrap();
+    timeout(Duration::from_secs(2), guest_out.closed())
+        .await
+        .expect("a despedida foi enviada");
+    left(&mut host_rx).await;
+    assert!(matches!(next(&mut guest_rx).await, Event::Disconnected));
+    timeout(Duration::from_secs(3), guest)
+        .await
+        .expect("quem saiu não tenta reconectar")
+        .unwrap();
+
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::guest(address, key, guest_tx, Instant::now()));
+    let _host_out = connected(&mut host_rx).await;
+    let _guest_out = connected(&mut guest_rx).await;
+    host.abort();
+    guest.abort();
+}
+
+#[tokio::test]
+async fn closing_host_with_unread_messages_still_ends_the_guest_session() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::rooms::host(
+        listener,
+        "host".into(),
+        host_tx,
+        Instant::now(),
+    ));
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::rooms::guest(address, guest_tx, Instant::now()));
+    assert!(matches!(next(&mut guest_rx).await, Event::WaitingApproval));
+    let Event::ApprovalRequested { reply, .. } = next(&mut host_rx).await else {
+        panic!("approval missing");
+    };
+    reply.send(true).unwrap();
+    let host_out = connected(&mut host_rx).await;
+    let guest_out = connected(&mut guest_rx).await;
+    for n in 0..256 {
+        guest_out
+            .send(Message::Request(Control::Seek(n as f64)))
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    host_out.send(Message::Bye).await.unwrap();
+    left(&mut guest_rx).await;
+    timeout(Duration::from_secs(3), guest)
+        .await
+        .expect("o convidado não tenta reconectar")
+        .unwrap();
+    host.abort();
+}
+
 #[tokio::test]
 async fn room_search_ignores_unrelated_services_and_incompatible_versions() {
     use sync2gether::discovery::{Room, find_rooms};

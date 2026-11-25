@@ -287,6 +287,7 @@ pub(super) fn volume_bar(ui: &mut egui::Ui, volume: &mut f64, enabled: bool) -> 
 enum CenterNotice {
     Paused,
     Lost,
+    Left,
 }
 
 fn center_notice(view: &View) -> Option<CenterNotice> {
@@ -299,7 +300,9 @@ fn center_notice(view: &View) -> Option<CenterNotice> {
     {
         return None;
     }
-    if view.role != Role::Local && !view.connected {
+    if view.role == Role::Host && view.peer_left {
+        Some(CenterNotice::Left)
+    } else if view.role != Role::Local && !view.connected {
         Some(CenterNotice::Lost)
     } else if view.player.paused {
         Some(CenterNotice::Paused)
@@ -310,7 +313,7 @@ fn center_notice(view: &View) -> Option<CenterNotice> {
 
 pub(super) fn video_dim(view: &View) -> u8 {
     match center_notice(view) {
-        Some(CenterNotice::Lost) => 178,
+        Some(CenterNotice::Lost | CenterNotice::Left) => 178,
         Some(CenterNotice::Paused) => 97,
         None => 0,
     }
@@ -334,6 +337,12 @@ pub(super) fn draw_center_notice(
             "Pausado".to_owned(),
             format!("em {position}"),
             22.0,
+        ),
+        CenterNotice::Left => (
+            Some(Presence::Solo),
+            format!("{peer_label} saiu da sala"),
+            "A sala continua aberta para entrar de novo.".to_owned(),
+            30.0,
         ),
         CenterNotice::Lost if view.role == Role::Host => (
             Some(Presence::Lost),

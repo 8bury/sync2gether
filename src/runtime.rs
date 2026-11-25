@@ -55,6 +55,7 @@ pub struct View {
     pub watching: bool,
 
     pub connected: bool,
+    pub peer_left: bool,
     pub status: String,
     pub error: Option<String>,
     pub notice: Option<String>,
@@ -213,6 +214,7 @@ struct Worker {
     last_pause: Option<u64>,
     failed: Option<u64>,
     network: Option<JoinHandle<()>>,
+    farewell: Option<JoinHandle<()>>,
     net_rx: Option<mpsc::Receiver<network::Event>>,
     outgoing: Option<mpsc::Sender<Message>>,
     presence: Presence,
@@ -274,6 +276,7 @@ impl Worker {
             last_pause: None,
             failed: None,
             network: None,
+            farewell: None,
             net_rx: None,
             outgoing: None,
             presence: Presence::default(),
@@ -441,6 +444,9 @@ impl Worker {
             }
         }
         self.leave();
+        if let Some(farewell) = self.farewell.take() {
+            let _ = farewell.await;
+        }
         drop(player_events);
     }
 }

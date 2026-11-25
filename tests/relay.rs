@@ -357,6 +357,61 @@ async fn leaving_host_closes_the_room_for_new_entries() {
     guest.abort();
 }
 
+async fn left(rx: &mut mpsc::Receiver<Event>) {
+    loop {
+        match next(rx).await {
+            Event::PeerLeft => return,
+            Event::Connected(_) | Event::Disconnected => panic!("saída tratada como queda"),
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn leaving_is_announced_to_the_other_side() {
+    let relay = free_address();
+    let _relay = start_relay(relay);
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let host = tokio::spawn(network::relay::host(
+        relay.to_string(),
+        host_tx,
+        Instant::now(),
+    ));
+    let code = Code::parse(&room_code(&mut host_rx).await).unwrap();
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest(
+        relay.to_string(),
+        code.clone(),
+        guest_tx,
+        Instant::now(),
+    ));
+    let _host_out = connected(&mut host_rx).await;
+    let (guest_out, _) = connected(&mut guest_rx).await;
+    guest_out.send(Message::Bye).await.unwrap();
+    left(&mut host_rx).await;
+    timeout(Duration::from_secs(5), guest)
+        .await
+        .expect("quem saiu não tenta reconectar")
+        .unwrap();
+
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::relay::guest(
+        relay.to_string(),
+        code,
+        guest_tx,
+        Instant::now(),
+    ));
+    let (host_out, _) = connected(&mut host_rx).await;
+    let _guest_out = connected(&mut guest_rx).await;
+    host_out.send(Message::Bye).await.unwrap();
+    left(&mut guest_rx).await;
+    timeout(Duration::from_secs(5), guest)
+        .await
+        .expect("o convidado não tenta reconectar")
+        .unwrap();
+    host.abort();
+}
+
 struct TestPki {
     ca_pem: Vec<u8>,
     cert_pem: Vec<u8>,

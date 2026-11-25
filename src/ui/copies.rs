@@ -210,6 +210,8 @@ fn copy_state<'a>(view: &'a View, local: bool) -> CopyState<'a> {
             super::stream::CardStream::Busy(label) => (label.into(), Tone::Busy),
             super::stream::CardStream::Ready(label) => (label, Tone::Success),
         }
+    } else if !local && view.peer_left && !view.connected {
+        ("Saiu da sala".into(), Tone::Muted)
     } else if !local && !view.connected {
         ("Ainda não entrou na sala".into(), Tone::Muted)
     } else if loading && name.is_none() {

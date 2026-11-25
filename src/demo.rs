@@ -25,6 +25,8 @@ pub enum Scenario {
     Synchronized,
     Paused,
     Reconnecting,
+    PeerLeft,
+    RoomClosed,
 }
 
 impl From<Scenario> for SessionState {
@@ -46,6 +48,8 @@ impl From<Scenario> for SessionState {
             Scenario::Synchronized => Self::Synchronized,
             Scenario::Paused => Self::Paused,
             Scenario::Reconnecting => Self::Reconnecting,
+            Scenario::PeerLeft => Self::PeerLeft,
+            Scenario::RoomClosed => Self::RoomClosed,
         }
     }
 }

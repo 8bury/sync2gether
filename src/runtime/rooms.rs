@@ -80,9 +80,7 @@ impl Worker {
         self.view.watching = false;
         self.watching_media = None;
         self.buffer_latch = super::sync::BufferLatch::Idle;
-        if let Some(task) = self.network.take() {
-            task.abort();
-        }
+        self.close_network();
         self.net_rx = None;
         self.stop_stream(false);
         self.disconnected();
@@ -94,6 +92,37 @@ impl Worker {
         self.view.relay_offline = false;
         self.view.error = None;
         self.view.notice = None;
+        self.view.peer_left = false;
+    }
+
+    fn close_network(&mut self) {
+        let Some(task) = self.network.take() else {
+            return;
+        };
+        match self.outgoing.take() {
+            Some(outgoing) if outgoing.try_send(Message::Bye).is_ok() => {
+                self.farewell = Some(tokio::spawn(async move {
+                    let _ = tokio::time::timeout(network::FAREWELL, outgoing.closed()).await;
+                    task.abort();
+                }));
+            }
+            _ => task.abort(),
+        }
+    }
+
+    fn peer_left(&mut self) {
+        let peer = self.view.peer_name.clone();
+        if self.view.role == Role::Guest {
+            self.player(crate::player::Command::Pause(true));
+            self.leave();
+            self.view.notice = Some(match peer {
+                Some(peer) => format!("{peer} encerrou a sala."),
+                None => "O anfitrião encerrou a sala.".into(),
+            });
+        } else {
+            self.disconnected();
+            self.view.peer_left = true;
+        }
     }
 
     pub(super) fn approve(&mut self, id: u64, accept: bool) {
@@ -307,6 +336,7 @@ impl Worker {
                 self.disconnected();
                 self.outgoing = Some(tx);
                 self.view.connected = true;
+                self.view.peer_left = false;
                 self.view.error = None;
                 self.session.connected = true;
                 self.recover = self.view.role == Role::Host;
@@ -320,6 +350,7 @@ impl Worker {
                 }
             }
             network::Event::Disconnected => self.disconnected(),
+            network::Event::PeerLeft => self.peer_left(),
             network::Event::Error(error) => self.view.error = Some(error),
             network::Event::DiscoveryUnavailable => {
                 self.view.discovery_error = Some(

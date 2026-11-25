@@ -16,6 +16,7 @@ pub mod rooms;
 pub mod secure;
 
 pub const SILENCE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const FAREWELL: Duration = Duration::from_secs(1);
 const OUTGOING: usize = 64;
 
 pub enum Event {
@@ -39,6 +40,7 @@ pub enum Event {
     Connected(mpsc::Sender<Message>),
     Message(Box<Message>, Instant),
     Disconnected,
+    PeerLeft,
     Error(String),
     DiscoveryUnavailable,
 }
@@ -91,7 +93,14 @@ impl<W: AsyncWrite + Unpin + Send> Outbound for Plain<W> {
     }
 }
 
-async fn connection(stream: TcpStream, events: &mpsc::Sender<Event>, origin: Instant) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Ended {
+    Lost,
+    PeerLeft,
+    Left,
+}
+
+async fn connection(stream: TcpStream, events: &mpsc::Sender<Event>, origin: Instant) -> Ended {
     let _ = stream.set_nodelay(true);
     let (reader, writer) = stream.into_split();
     exchange(Plain(reader), Plain(writer), events, origin).await
@@ -101,25 +110,25 @@ async fn exchange(
     mut writer: impl Outbound,
     events: &mpsc::Sender<Event>,
     origin: Instant,
-) {
+) -> Ended {
     let (tx, mut rx) = mpsc::channel(OUTGOING);
     if events.send(Event::Connected(tx)).await.is_err() {
-        return;
+        return Ended::Left;
     }
     let incoming = async {
         loop {
             match timeout(SILENCE_TIMEOUT, reader.recv()).await {
-                Ok(Ok(Message::Bye)) => break,
+                Ok(Ok(Message::Bye)) => return Ended::PeerLeft,
                 Ok(Ok(message)) => {
                     if events
                         .send(Event::Message(Box::new(message), Instant::now()))
                         .await
                         .is_err()
                     {
-                        break;
+                        return Ended::Left;
                     }
                 }
-                _ => break,
+                _ => return Ended::Lost,
             }
         }
     };
@@ -128,16 +137,30 @@ async fn exchange(
             if let Message::Pong { sent_host_ms, .. } = &mut message {
                 *sent_host_ms = origin.elapsed().as_secs_f64() * 1000.0;
             }
+            let farewell = matches!(message, Message::Bye);
             if !matches!(
                 timeout(SILENCE_TIMEOUT, writer.send(&message)).await,
                 Ok(Ok(()))
             ) {
-                break;
+                return Ended::Lost;
+            }
+            if farewell {
+                return Ended::Left;
             }
         }
+        Ended::Lost
     };
-    tokio::select! { _ = incoming => {}, _ = outgoing => {} }
-    let _ = events.send(Event::Disconnected).await;
+    let ended = tokio::select! { ended = incoming => ended, ended = outgoing => ended };
+    if ended == Ended::Left {
+        let _ = timeout(FAREWELL, async { while reader.recv().await.is_ok() {} }).await;
+    }
+    let _ = events
+        .send(match ended {
+            Ended::PeerLeft => Event::PeerLeft,
+            Ended::Lost | Ended::Left => Event::Disconnected,
+        })
+        .await;
+    ended
 }
 
 pub async fn host(
@@ -185,7 +208,9 @@ pub async fn guest(addr: SocketAddr, key: String, events: mpsc::Sender<Event>, o
             };
             match timeout(Duration::from_secs(3), welcome).await {
                 Ok(Ok(Message::Welcome { version: VERSION })) => {
-                    connection(stream, &events, origin).await
+                    if connection(stream, &events, origin).await != Ended::Lost {
+                        return;
+                    }
                 }
                 _ => {
                     let _ = events

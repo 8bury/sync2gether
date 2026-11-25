@@ -25,7 +25,11 @@ retoma automaticamente após a estabilização do cache (ou permanece pausada se
 usuário pausar manualmente). Após a reconexão de rede, os players mantêm o
 player aberto quando o filme não mudou, recuperam a posição do anfitrião e
 aguardam um novo play. Fechar o anfitrião encerra a sala; não há transferência
-de coordenação. O convidado continua tentando reconectar até sair da sala.
+de coordenação. Quem sai da sala ou fecha o app envia `Bye` (com até 500 ms
+para entregá-lo) antes de fechar a conexão. Ao recebê-lo, o convidado volta ao
+início com o aviso de que o anfitrião encerrou a sala, e o anfitrião mostra que
+a outra pessoa saiu, mantendo a sala aberta. Sem `Bye`, a queda é tratada como
+perda de conexão e o convidado continua tentando reconectar até sair da sala.
 
 A janela usa a API OpenGL do libmpv. O vídeo é desenhado em um framebuffer
 com o tamanho da área do player em pixels e permanece na GPU entre frames,

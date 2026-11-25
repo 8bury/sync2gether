@@ -1,4 +1,4 @@
-use super::{Event, allowed_address, connection, read_message, write_message};
+use super::{Ended, Event, allowed_address, connection, read_message, write_message};
 use crate::{
     discovery::{Lan, device_name},
     protocol::{Message, VERSION},
@@ -223,7 +223,9 @@ pub async fn guest(address: SocketAddr, events: mpsc::Sender<Event>, origin: Ins
             return;
         }
     };
-    connection(stream, &events, origin).await;
+    if connection(stream, &events, origin).await != Ended::Lost {
+        return;
+    }
     loop {
         sleep(Duration::from_secs(1)).await;
         let result = timeout(Duration::from_secs(3), async {
@@ -242,7 +244,9 @@ pub async fn guest(address: SocketAddr, events: mpsc::Sender<Event>, origin: Ins
         .await;
         match result {
             Ok(Ok((stream, Message::Welcome { version: VERSION }))) => {
-                connection(stream, &events, origin).await
+                if connection(stream, &events, origin).await != Ended::Lost {
+                    return;
+                }
             }
             Ok(Ok((_, Message::Rejected))) => {
                 let _ = events

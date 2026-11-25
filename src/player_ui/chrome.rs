@@ -39,6 +39,9 @@ fn peer_status(view: &View) -> PeerStatus {
         return status("Sozinho", "", Presence::Solo, false);
     }
     let peer = view.peer_name.as_deref().unwrap_or("Outra pessoa");
+    if view.peer_left && !view.connected {
+        return status(peer, "saiu da sala", Presence::Solo, false);
+    }
     if !view.connected {
         let detail = if view.role == Role::Host {
             "desconectado"

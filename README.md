@@ -152,7 +152,8 @@ O tema claro fica disponível em **Configurações**, no ícone de engrenagem do
   sozinha assim que o buffer estabiliza; quedas rápidas do túnel P2P reconectam
   em segundo plano preservando o que já está em cache. Após reconexão de rede,
   os players recuperam a posição do anfitrião e aguardam um novo play. Fechar o
-  anfitrião encerra a sala.
+  anfitrião encerra a sala e avisa o convidado; quando o convidado sai, o
+  anfitrião vê que a outra pessoa saiu, não uma queda de conexão.
 
 Veja o [guia de uso](docs/uso.md) para conexão manual, troca de arquivos,
 controles e atalhos. Chamadas de voz podem acontecer em um aplicativo separado.

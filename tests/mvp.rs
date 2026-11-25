@@ -113,9 +113,10 @@ fn two_players_sync_mismatch_disconnect_and_resume() {
     send(&guest, Command::Control(Control::Play));
     wait(&host, |v| !v.player.paused);
     send(&guest, Command::Leave);
-    wait(&host, |v| !v.connected && v.player.paused);
+    wait(&host, |v| !v.connected && v.peer_left && v.player.paused);
     send(&guest, Command::Join(address, key));
     let h = wait(&host, |v| v.ready && v.player.paused);
+    assert!(!h.peer_left);
     let g = wait(&guest, |v| v.ready && v.player.paused);
     assert_eq!(h.peer_file.as_deref(), Some("mvp-renamed.mkv"));
     assert_eq!(g.peer_file.as_deref(), Some("mvp-fixture.mkv"));
@@ -139,7 +140,20 @@ fn two_players_sync_mismatch_disconnect_and_resume() {
     wait(&host, |v| v.ready && v.player.position < 0.5);
     wait(&guest, |v| v.ready && v.player.position < 0.5);
     shutdown(host);
+    host_closed_the_room(&guest);
     shutdown(guest);
+}
+
+fn host_closed_the_room(guest: &Runtime) {
+    let view = wait(guest, |v| v.role == Role::Local && v.player.paused);
+    assert!(
+        view.notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("encerrou a sala")),
+        "{:?}",
+        view.notice
+    );
+    assert!(!view.connected);
 }
 
 #[derive(Clone)]
@@ -437,7 +451,7 @@ fn approved_room_waits_for_explicit_play_and_returns_to_preparation_on_file_chan
     wait(&host, |v| v.ready && !v.watching);
     wait(&guest, |v| v.ready && !v.watching);
     send(&guest, Command::Leave);
-    wait(&host, |v| !v.connected && v.player.paused);
+    wait(&host, |v| !v.connected && v.peer_left && v.player.paused);
     let guest_view = wait(&guest, |v| v.role == Role::Local);
     assert!(!guest_view.watching);
     shutdown(host);
@@ -598,6 +612,8 @@ fn internet_room_syncs_two_real_players_through_the_relay_with_intercontinental_
     wait(&guest, |v| {
         v.player.paused && (v.player.position - h.player.position).abs() < 0.4
     });
+    send(&host, Command::Leave);
+    host_closed_the_room(&guest);
     shutdown(host);
     shutdown(guest);
     proxy.abort();

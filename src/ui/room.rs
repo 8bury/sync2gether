@@ -122,7 +122,7 @@ pub(super) fn room_contents(
                 colors,
                 if view.connected {
                     Presence::Together
-                } else if view.role == Role::Local {
+                } else if view.role == Role::Local || view.peer_left {
                     Presence::Solo
                 } else {
                     Presence::Lost
@@ -136,6 +136,8 @@ pub(super) fn room_contents(
                     ("Conectado", colors.success)
                 } else if view.role == Role::Local {
                     ("Reprodução local", colors.muted)
+                } else if view.peer_left {
+                    ("Saiu da sala", colors.muted)
                 } else {
                     ("Desconectado", colors.warning)
                 };

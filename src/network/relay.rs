@@ -1,5 +1,5 @@
 use super::{
-    Event, exchange,
+    Ended, Event, exchange,
     secure::{self, Channel, INTRO_PAKE, INTRO_RESUME, Key},
 };
 use rustls::pki_types::{CertificateDer, ServerName};
@@ -718,7 +718,9 @@ pub async fn guest_with_tls(
         match enter(&endpoint, &tls, &code, None, &name).await {
             Ok((key, channel)) => {
                 let _ = events.send(Event::PeerName(channel.peer)).await;
-                exchange(channel.reader, channel.writer, &events, origin).await;
+                if exchange(channel.reader, channel.writer, &events, origin).await != Ended::Lost {
+                    return;
+                }
                 break key;
             }
             Err(failure) => {
@@ -754,7 +756,9 @@ pub async fn guest_with_tls(
             Ok((_, channel)) => {
                 gone = None;
                 let _ = events.send(Event::PeerName(channel.peer)).await;
-                exchange(channel.reader, channel.writer, &events, origin).await;
+                if exchange(channel.reader, channel.writer, &events, origin).await != Ended::Lost {
+                    return;
+                }
             }
             Err(Failure::WrongKey) => {
                 let _ = events

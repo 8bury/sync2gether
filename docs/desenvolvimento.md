@@ -68,7 +68,7 @@ cargo run --locked --features demo -- --demo --demo-state synchronized
 Os valores de `--demo-state` são `idle`, `browsing`, `connecting`,
 `pending-approval`, `waiting`, `approval`,
 `choosing`, `verifying`, `mismatch`, `stabilizing`, `player-error`, `ready`,
-`synchronized`, `paused` e `reconnecting`. Eles usam as mesmas telas
+`synchronized`, `paused`, `reconnecting`, `peer-left` e `room-closed`. Eles usam as mesmas telas
 do app, com dados fictícios e sem enviar comandos ao runtime. Use `--demo-light` para o tema claro.
 
 Para revisar o fluxo inicial, use `idle` para a tela de boas-vindas,
@@ -83,6 +83,9 @@ Os cenários `choosing`, `verifying`, `ready`, `mismatch` e `player-error`
 permitem revisar a lista de arquivos, progresso, liberação do play e falhas.
 Use os menus **⋯** para consultar e copiar os nomes fictícios. `approval` e
 `waiting` exercitam a solicitação e o convite na preparação do anfitrião.
+`peer-left` mostra o anfitrião depois que o convidado saiu da sala, e
+`room-closed` mostra o convidado de volta ao início depois que o anfitrião
+encerrou a sala.
 
 Para salvar uma captura e encerrar:
 

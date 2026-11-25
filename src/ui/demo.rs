@@ -86,6 +86,13 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
     if matches!(state, SessionState::Idle | SessionState::JoinCode) {
         return view;
     }
+    if state == SessionState::RoomClosed {
+        view.file = Some("Filme de demonstração.mkv".into());
+        view.player.loaded = true;
+        view.player.paused = true;
+        view.notice = Some("notebook-ana encerrou a sala.".into());
+        return view;
+    }
     if state == SessionState::Connecting {
         view.role = Role::Guest;
         view.internet = true;
@@ -115,8 +122,12 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
     view.player.position = 754.0;
     view.connected = !matches!(
         state,
-        SessionState::Waiting | SessionState::Approval | SessionState::Reconnecting
+        SessionState::Waiting
+            | SessionState::Approval
+            | SessionState::Reconnecting
+            | SessionState::PeerLeft
     );
+    view.peer_left = state == SessionState::PeerLeft;
     view.peer_name = Some("notebook-ana".into());
     view.peer_ready = view.connected;
     view.peer_verified = view.connected;
@@ -133,7 +144,10 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
     view.ready = view.connected;
     view.watching = matches!(
         state,
-        SessionState::Synchronized | SessionState::Paused | SessionState::Reconnecting
+        SessionState::Synchronized
+            | SessionState::Paused
+            | SessionState::Reconnecting
+            | SessionState::PeerLeft
     );
     view.status = state.label().into();
     if view.watching && view.connected {

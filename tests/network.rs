@@ -437,6 +437,46 @@ async fn leaving_guest_is_reported_and_the_room_accepts_a_new_guest() {
 }
 
 #[tokio::test]
+async fn goodbye_is_delivered_after_the_app_stops_reading_events() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (host_tx, mut host_rx) = mpsc::channel(64);
+    let key = "d".repeat(32);
+    let host = tokio::spawn(network::host(
+        listener,
+        key.clone(),
+        host_tx,
+        Instant::now(),
+    ));
+    let (guest_tx, mut guest_rx) = mpsc::channel(64);
+    let guest = tokio::spawn(network::guest(address, key, guest_tx, Instant::now()));
+    let host_out = connected(&mut host_rx).await;
+    let guest_out = connected(&mut guest_rx).await;
+    let chatter = tokio::spawn(async move {
+        for n in 0.. {
+            if host_out
+                .send(Message::Request(Control::Seek(n as f64)))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(guest_rx);
+    guest_out.send(Message::Bye).await.unwrap();
+    left(&mut host_rx).await;
+    timeout(Duration::from_secs(3), guest)
+        .await
+        .unwrap()
+        .unwrap();
+    chatter.abort();
+    host.abort();
+}
+
+#[tokio::test]
 async fn closing_host_with_unread_messages_still_ends_the_guest_session() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();

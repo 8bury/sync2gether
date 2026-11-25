@@ -1,3 +1,5 @@
+mod chrome;
+mod icons;
 mod overlay;
 
 use crate::ui::kit::{self, Glyph};
@@ -8,8 +10,11 @@ use crate::{
     stream::StreamPhase,
 };
 use eframe::egui::{self, Color32, RichText, Stroke};
+use icons::{Icon, icon_button};
 
-const ACCENT: Color32 = Color32::from_rgb(122, 156, 255);
+const ACCENT: Color32 = Color32::from_rgb(238, 238, 236);
+const WIDE_PLAYER: f32 = 860.0;
+const CONTROLS_HEIGHT: f32 = 106.0;
 
 pub enum Video<'a> {
     Texture(&'a egui::TextureHandle),
@@ -113,7 +118,13 @@ pub(crate) fn draw(
         .player
         .loading_card_rect
         .is_some_and(|card| pointer.is_some_and(|p| card.contains(p)));
-    let mut activity = response.clicked() || ui.input(|i| i.key_pressed(egui::Key::Tab));
+    let volume_focused = ui.memory(|m| m.has_focus(overlay::volume_bar_id()));
+    let mut activity = response.clicked()
+        || ui.input(|i| {
+            i.key_pressed(egui::Key::Tab)
+                || volume_focused
+                    && (i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowRight))
+        });
     if response.clicked() && !over_loading_card {
         response.request_focus();
         if can_toggle {
@@ -127,7 +138,7 @@ pub(crate) fn draw(
                 activity = true;
             }
             for (key, delta) in [(egui::Key::ArrowLeft, -10.0), (egui::Key::ArrowRight, 10.0)] {
-                if i.consume_key(egui::Modifiers::NONE, key) && can_seek {
+                if !volume_focused && i.consume_key(egui::Modifiers::NONE, key) && can_seek {
                     actions.push(Command::Control(Control::Seek(
                         (view.player.position + delta).clamp(0.0, view.player.duration),
                     )));
@@ -159,9 +170,8 @@ pub(crate) fn draw(
     }
     inputs.player.video_rect = Some(rect);
     let now = ui.input(|i| i.time);
-    let panel_height = if rect.width() < 560.0 { 132.0 } else { 106.0 };
     let controls_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.left(), rect.bottom() - panel_height),
+        egui::pos2(rect.left(), rect.bottom() - CONTROLS_HEIGHT),
         rect.right_bottom(),
     );
     let keep = inputs.room_panel
@@ -170,6 +180,7 @@ pub(crate) fn draw(
         || view.player.blocked
         || view.preparing
         || view.scheduled
+        || view.role != Role::Local && !view.connected
         || overlay::should_keep_controls(view)
         || inputs.seek.is_some()
         || egui::Popup::is_any_open(ui.ctx())
@@ -203,65 +214,50 @@ pub(crate) fn draw(
         || view.scheduled
         || hard_blocked
         || (view.notice.is_some() && !suppress_stream_notice);
-    let top_height: f32 = if has_notice { 160.0 } else { 80.0 };
+    let dim = overlay::video_dim(view);
+    if dim > 0 {
+        ui.painter()
+            .rect_filled(rect, 0, Color32::from_black_alpha(dim));
+    }
+    let bar_height: f32 = if rect.height() < 420.0 { 52.0 } else { 64.0 };
+    let side = if rect.width() < WIDE_PLAYER {
+        16.0
+    } else {
+        28.0
+    };
     gradient(
         ui.painter(),
         egui::Rect::from_min_size(
             rect.min,
-            egui::vec2(rect.width(), top_height.min(rect.height())),
+            egui::vec2(rect.width(), (bar_height * 1.4).min(rect.height())),
         ),
         true,
     );
     gradient(
         ui.painter(),
         egui::Rect::from_min_max(
-            egui::pos2(rect.left(), controls_rect.top() - 32.0),
+            egui::pos2(rect.left(), controls_rect.top() - 26.0),
             rect.max,
         ),
         false,
     );
-    let top = egui::Rect::from_min_max(
-        rect.min + egui::vec2(16.0, 12.0),
-        egui::pos2(rect.right() - 16.0, rect.top() + top_height - 10.0),
+    chrome::top_bar(
+        ui,
+        egui::Rect::from_min_max(
+            rect.min + egui::vec2(side, 0.0),
+            egui::pos2(rect.right() - side, rect.top() + bar_height),
+        ),
+        view,
+        inputs,
+        &mut actions,
     );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(top), |ui| {
-        ui.visuals_mut().override_text_color = Some(Color32::WHITE);
-        ui.horizontal(|ui| {
-            let back = crate::ui::preparation_leave_label(view.role);
-            if glass_icon(ui, Glyph::ArrowLeft, back).clicked() {
-                crate::ui::request_leave(view, inputs, &mut actions);
-            }
-            let pill = room_pill(view);
-            let pill_width = glass_width(ui, &pill.label);
-            let title_width = (ui.available_width() - pill_width - 16.0).max(20.0);
-            ui.allocate_ui_with_layout(
-                egui::vec2(title_width, 32.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.set_min_width(title_width);
-                    ui.add(
-                        egui::Label::new(
-                            crate::ui::strong(
-                                ui,
-                                view.file
-                                    .as_deref()
-                                    .map(crate::ui::media_title)
-                                    .unwrap_or("Seu filme, juntos"),
-                            )
-                            .size(16.5)
-                            .color(Color32::WHITE),
-                        )
-                        .truncate(),
-                    );
-                },
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if glass(ui, &pill, inputs.room_panel).clicked() {
-                    inputs.room_panel = !inputs.room_panel;
-                }
-            });
-        });
-        if has_notice {
+    if has_notice {
+        let notice = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + side, rect.top() + bar_height + 4.0),
+            egui::pos2(rect.right() - side, rect.top() + bar_height + 100.0),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(notice), |ui| {
+            ui.visuals_mut().override_text_color = Some(Color32::WHITE);
             let status = if view.preparing || view.scheduled {
                 "Preparando a reprodução…"
             } else if hard_blocked {
@@ -276,12 +272,10 @@ pub(crate) fn draw(
             } else {
                 Glyph::Info
             };
-            ui.add_space(4.0);
             egui::Frame::new()
-                .fill(Color32::from_black_alpha(165))
-                .stroke(Stroke::new(1.0, Color32::from_white_alpha(26)))
-                .corner_radius(12)
-                .inner_margin(egui::Margin::symmetric(12, 10))
+                .fill(Color32::from_rgba_unmultiplied(22, 22, 22, 225))
+                .corner_radius(8)
+                .inner_margin(egui::Margin::symmetric(14, 8))
                 .show(ui, |ui| {
                     ui.set_max_width(ui.available_width().min(520.0));
                     ui.horizontal_top(|ui| {
@@ -294,7 +288,7 @@ pub(crate) fn draw(
                             icon.center(),
                             15.0,
                             if glyph == Glyph::Alert {
-                                Color32::from_rgb(255, 170, 150)
+                                crate::ui::Palette::new(true).warning
                             } else {
                                 ACCENT
                             },
@@ -317,10 +311,10 @@ pub(crate) fn draw(
                         );
                     });
                 });
-        }
-    });
+        });
+    }
     ui.scope_builder(
-        egui::UiBuilder::new().max_rect(controls_rect.shrink2(egui::vec2(16.0, 8.0))),
+        egui::UiBuilder::new().max_rect(controls_rect.shrink2(egui::vec2(side, 8.0))),
         |ui| {
             *ui.visuals_mut() = egui::Visuals::dark();
             ui.visuals_mut().override_text_color = Some(Color32::WHITE);
@@ -329,7 +323,7 @@ pub(crate) fn draw(
             ui.visuals_mut().widgets.hovered.bg_fill = Color32::WHITE;
             ui.visuals_mut().widgets.active.bg_fill = Color32::WHITE;
             ui.spacing_mut().button_padding = egui::vec2(6.0, 6.0);
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 6.0);
             ui.spacing_mut().slider_width = ui.available_width();
             ui.spacing_mut().interact_size.y = 18.0;
             ui.visuals_mut().handle_shape = egui::style::HandleShape::Circle;
@@ -363,6 +357,7 @@ pub(crate) fn draw(
                 view.player.duration,
                 can_seek,
                 &cached_ranges,
+                overlay::peer_position(view),
             );
             if response.dragged() {
                 inputs.seek = Some(seek);
@@ -387,31 +382,45 @@ pub(crate) fn draw(
                 } else {
                     "Pausar · Espaço"
                 };
-                if icon_button(ui, icon, can_toggle, tooltip).clicked() {
+                if icon_button(ui, icon, can_toggle, false, tooltip).clicked() {
                     actions.push(Command::Control(toggle(view)));
                 }
-                if icon_button(ui, Icon::Back, can_seek, "Voltar 10 segundos · ←").clicked() {
+                if icon_button(ui, Icon::Back, can_seek, false, "Voltar 10 segundos · ←").clicked()
+                {
                     actions.push(Command::Control(Control::Seek(
                         (view.player.position - 10.0).max(0.0),
                     )));
                 }
-                if icon_button(ui, Icon::Forward, can_seek, "Avançar 10 segundos · →").clicked()
+                if icon_button(
+                    ui,
+                    Icon::Forward,
+                    can_seek,
+                    false,
+                    "Avançar 10 segundos · →",
+                )
+                .clicked()
                 {
                     actions.push(Command::Control(Control::Seek(
                         (view.player.position + 10.0).min(view.player.duration),
                     )));
                 }
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!(
-                        "{} / {}",
-                        timestamp(seek),
-                        timestamp(view.player.duration)
-                    ))
-                    .size(12.5)
-                    .color(Color32::from_gray(215)),
-                );
-                let hud_max_w = ui.available_width() - 136.0;
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let font = egui::FontId::monospace(13.0);
+                    ui.label(
+                        RichText::new(timestamp(seek))
+                            .font(font.clone())
+                            .color(ACCENT),
+                    );
+                    ui.label(
+                        RichText::new(format!(" / {}", timestamp(view.player.duration)))
+                            .font(font)
+                            .color(Color32::from_rgb(164, 164, 161)),
+                    );
+                });
+                let wide = rect.width() >= WIDE_PLAYER;
+                let hud_max_w = ui.available_width() - if wide { 240.0 } else { 136.0 };
                 if hud_max_w >= 88.0
                     && let Some((hud_text, hud_color)) =
                         overlay::stream_hud_label(view, hud_max_w >= 210.0)
@@ -424,6 +433,7 @@ pub(crate) fn draw(
                         ui,
                         Icon::Fullscreen,
                         true,
+                        false,
                         if inputs.player.fullscreen {
                             "Sair da tela cheia · Esc"
                         } else {
@@ -434,49 +444,72 @@ pub(crate) fn draw(
                     {
                         inputs.player.fullscreen = !inputs.player.fullscreen;
                     }
-                    let tracks = icon_button(ui, Icon::Captions, true, "Áudio e legendas");
+                    let subtitled = view
+                        .player
+                        .tracks
+                        .iter()
+                        .any(|t| t.kind == TrackKind::Subtitle && t.selected);
+                    let tracks =
+                        icon_button(ui, Icon::Captions, true, subtitled, "Áudio e legendas");
                     egui::Popup::menu(&tracks).show(|ui| track_menu(ui, view, demo, &mut actions));
+                    if wide {
+                        ui.add_space(6.0);
+                        if overlay::volume_bar(ui, &mut inputs.volume, !demo) {
+                            actions.push(Command::Volume(inputs.volume));
+                        }
+                        ui.add_space(2.0);
+                    }
                     let volume = icon_button(
                         ui,
                         Icon::Volume(inputs.volume == 0.0),
                         true,
+                        false,
                         "Volume · M para silenciar",
                     );
-                    egui::Popup::menu(&volume).show(|ui| {
-                        ui.label("Volume neste PC");
-                        ui.spacing_mut().slider_width = 160.0;
-                        ui.add_enabled_ui(!demo, |ui| {
-                            if ui
-                                .add(
-                                    egui::Slider::new(&mut inputs.volume, 0.0..=100.0).suffix(" %"),
-                                )
-                                .changed()
-                            {
-                                actions.push(Command::Volume(inputs.volume));
-                            }
-                            if ui
-                                .button(if inputs.volume == 0.0 {
-                                    "Ativar som"
-                                } else {
-                                    "Silenciar"
-                                })
-                                .clicked()
-                            {
-                                mute(inputs);
-                                actions.push(Command::Volume(inputs.volume));
-                            }
+                    if wide {
+                        if volume.clicked() && !demo {
+                            mute(inputs);
+                            actions.push(Command::Volume(inputs.volume));
+                        }
+                    } else {
+                        egui::Popup::menu(&volume).show(|ui| {
+                            ui.label("Volume neste PC");
+                            ui.spacing_mut().slider_width = 160.0;
+                            ui.add_enabled_ui(!demo, |ui| {
+                                if ui
+                                    .add(
+                                        egui::Slider::new(&mut inputs.volume, 0.0..=100.0)
+                                            .suffix(" %"),
+                                    )
+                                    .changed()
+                                {
+                                    actions.push(Command::Volume(inputs.volume));
+                                }
+                                if ui
+                                    .button(if inputs.volume == 0.0 {
+                                        "Ativar som"
+                                    } else {
+                                        "Silenciar"
+                                    })
+                                    .clicked()
+                                {
+                                    mute(inputs);
+                                    actions.push(Command::Volume(inputs.volume));
+                                }
+                            });
                         });
-                    });
+                    }
                 });
             });
         },
     );
-    let safe_top = rect.top() + if has_notice { 132.0 } else { 56.0 };
+    let safe_top = rect.top() + bar_height + if has_notice { 76.0 } else { 0.0 };
     let safe_bottom = (controls_rect.top() - 4.0).max(safe_top + 48.0);
     let safe_rect = egui::Rect::from_min_max(
         egui::pos2(rect.left(), safe_top),
         egui::pos2(rect.right(), safe_bottom.min(rect.bottom())),
     );
+    overlay::draw_center_notice(ui, safe_rect, view, timestamp(view.player.position));
     inputs.player.loading_card_rect =
         overlay::draw_center_loading(ui, safe_rect, view, &mut actions);
     actions
@@ -553,366 +586,19 @@ fn fit_video(rect: egui::Rect, size: egui::Vec2) -> egui::Rect {
     egui::Rect::from_center_size(rect.center(), size * scale)
 }
 fn gradient(painter: &egui::Painter, rect: egui::Rect, top: bool) {
+    let scrim = |alpha| Color32::from_rgba_unmultiplied(8, 8, 8, alpha);
     let mut mesh = egui::Mesh::default();
     for (pos, alpha) in [
-        (rect.left_top(), if top { 210 } else { 0 }),
-        (rect.right_top(), if top { 210 } else { 0 }),
-        (rect.right_bottom(), if top { 0 } else { 230 }),
-        (rect.left_bottom(), if top { 0 } else { 230 }),
+        (rect.left_top(), if top { 178 } else { 0 }),
+        (rect.right_top(), if top { 178 } else { 0 }),
+        (rect.right_bottom(), if top { 0 } else { 199 }),
+        (rect.left_bottom(), if top { 0 } else { 199 }),
     ] {
-        mesh.colored_vertex(pos, Color32::from_black_alpha(alpha));
+        mesh.colored_vertex(pos, scrim(alpha));
     }
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
     painter.add(egui::Shape::mesh(mesh));
-}
-
-struct Pill {
-    label: String,
-    glyph: Option<Glyph>,
-    warning: bool,
-}
-
-fn room_pill(view: &View) -> Pill {
-    let peer = view.peer_name.as_deref().unwrap_or("a outra pessoa");
-    if view.role == Role::Local {
-        return Pill {
-            label: "Sala".into(),
-            glyph: Some(Glyph::People),
-            warning: false,
-        };
-    }
-    if !view.connected {
-        return Pill {
-            label: if view.role == Role::Host {
-                format!("Esperando {peer} voltar…")
-            } else {
-                format!("Reconectando com {peer}…")
-            },
-            glyph: Some(Glyph::Spinner),
-            warning: true,
-        };
-    }
-    let peer_label = view.peer_name.as_deref().unwrap_or("Outra pessoa");
-    let card_visible = overlay::is_center_loading_visible(view);
-    if view.peer_buffering {
-        return Pill {
-            label: if card_visible {
-                format!("{peer_label} · carregando")
-            } else {
-                format!("{peer_label} · aguardando vídeo…")
-            },
-            glyph: Some(Glyph::Spinner),
-            warning: true,
-        };
-    }
-    if view.buffering || view.waiting_buffer {
-        return Pill {
-            label: "Carregando vídeo…".into(),
-            glyph: Some(Glyph::Spinner),
-            warning: true,
-        };
-    }
-    if view.stream.phase == StreamPhase::Reconnecting
-        || view.peer_stream.as_ref().is_some_and(|s| s.reconnecting)
-    {
-        return Pill {
-            label: if card_visible {
-                format!("{peer_label} · P2P")
-            } else {
-                format!("{peer_label} · reconectando P2P…")
-            },
-            glyph: Some(Glyph::Spinner),
-            warning: true,
-        };
-    }
-    Pill {
-        label: format!("{peer_label} · em sincronia"),
-        glyph: None,
-        warning: false,
-    }
-}
-
-fn glass_icon(ui: &mut egui::Ui, glyph: Glyph, label: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    let hover =
-        ui.ctx()
-            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
-    let painter = ui.painter();
-    painter.circle(
-        rect.center(),
-        16.0,
-        kit::lerp(
-            Color32::from_black_alpha(130),
-            Color32::from_white_alpha(40),
-            hover,
-        ),
-        Stroke::new(1.0, Color32::from_white_alpha(40)),
-    );
-    if response.has_focus() {
-        painter.circle_stroke(rect.center(), 18.0, Stroke::new(2.0, ACCENT));
-    }
-    kit::draw(painter, glyph, rect.center(), 15.0, Color32::WHITE, 0.0);
-    response
-        .on_hover_text(label)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-const PILL_FONT: f32 = 13.5;
-const PILL_MAX: f32 = 280.0;
-
-fn glass_width(ui: &egui::Ui, label: &str) -> f32 {
-    let galley = egui::WidgetText::from(crate::ui::strong(ui, label).size(PILL_FONT)).into_galley(
-        ui,
-        Some(egui::TextWrapMode::Extend),
-        f32::INFINITY,
-        egui::TextStyle::Button,
-    );
-    (galley.size().x + 12.0 + 20.0 + 8.0 + 14.0).min(PILL_MAX)
-}
-
-fn glass(ui: &mut egui::Ui, pill: &Pill, selected: bool) -> egui::Response {
-    let width = glass_width(ui, &pill.label);
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::click());
-    let label = pill.label.clone();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
-    let response = response
-        .on_hover_text("Detalhes da sala")
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    let hover =
-        ui.ctx()
-            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
-    let warning = Color32::from_rgb(244, 192, 104);
-    let ink = if pill.warning {
-        warning
-    } else {
-        Color32::WHITE
-    };
-    let painter = ui.painter();
-    painter.rect(
-        rect,
-        16,
-        if selected {
-            Color32::from_white_alpha(60)
-        } else {
-            kit::lerp(
-                Color32::from_black_alpha(130),
-                Color32::from_white_alpha(40),
-                hover,
-            )
-        },
-        Stroke::new(
-            1.0,
-            if pill.warning {
-                warning.gamma_multiply(0.55)
-            } else {
-                Color32::from_white_alpha(40)
-            },
-        ),
-        egui::StrokeKind::Inside,
-    );
-    if response.has_focus() {
-        painter.rect_stroke(
-            rect.expand(2.0),
-            18,
-            Stroke::new(2.0, ACCENT),
-            egui::StrokeKind::Outside,
-        );
-    }
-    let slot = egui::pos2(rect.left() + 6.0 + 10.0, rect.center().y);
-    match pill.glyph {
-        Some(glyph) => {
-            kit::draw(painter, glyph, slot, 15.0, ink, ui.input(|i| i.time));
-            if glyph == Glyph::Spinner {
-                ui.ctx().request_repaint();
-            }
-        }
-        None => {
-            let green = Color32::from_rgb(92, 214, 164);
-            painter.circle_filled(slot, 7.0, green.gamma_multiply(0.22));
-            painter.circle_filled(slot, 3.5, green);
-        }
-    }
-    let galley = egui::WidgetText::from(
-        crate::ui::strong(ui, &pill.label)
-            .size(PILL_FONT)
-            .color(ink),
-    )
-    .into_galley(
-        ui,
-        Some(egui::TextWrapMode::Truncate),
-        width - 6.0 - 20.0 - 8.0 - 14.0,
-        egui::TextStyle::Button,
-    );
-    ui.painter().galley(
-        egui::pos2(rect.left() + 34.0, rect.center().y - galley.size().y * 0.5),
-        galley,
-        ink,
-    );
-    response
-}
-
-enum Icon {
-    Play,
-    Pause,
-    Cancel,
-    Back,
-    Forward,
-    Volume(bool),
-    Captions,
-    Fullscreen,
-}
-fn icon_button(ui: &mut egui::Ui, icon: Icon, enabled: bool, tooltip: &str) -> egui::Response {
-    let response = ui
-        .add_enabled(
-            enabled,
-            egui::Button::new("")
-                .frame(false)
-                .min_size(egui::vec2(36.0, 36.0)),
-        )
-        .on_hover_text(tooltip);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tooltip));
-    let response = if enabled {
-        response.on_hover_cursor(egui::CursorIcon::PointingHand)
-    } else {
-        response
-    };
-    let c = response.rect.center();
-    let hover = ui.ctx().animate_bool_with_time(
-        response.id.with("hover"),
-        response.hovered() && enabled || response.has_focus(),
-        0.12,
-    );
-    if hover > 0.0 {
-        ui.painter()
-            .circle_filled(c, 18.0, Color32::from_white_alpha((30.0 * hover) as u8));
-    }
-    let color = if enabled {
-        Color32::WHITE
-    } else {
-        Color32::from_gray(100)
-    };
-    match icon {
-        Icon::Play => {
-            ui.painter().add(egui::Shape::convex_polygon(
-                vec![
-                    c + egui::vec2(-5.0, -8.5),
-                    c + egui::vec2(9.0, 0.0),
-                    c + egui::vec2(-5.0, 8.5),
-                ],
-                color,
-                egui::Stroke::NONE,
-            ));
-        }
-        Icon::Pause => {
-            for x in [-4.5, 4.5] {
-                ui.painter().rect_filled(
-                    egui::Rect::from_center_size(c + egui::vec2(x, 0.0), egui::vec2(3.5, 16.0)),
-                    1.5,
-                    color,
-                );
-            }
-        }
-        Icon::Cancel => {
-            kit::draw(ui.painter(), Glyph::Close, c, 15.0, color, 0.0);
-        }
-        Icon::Back | Icon::Forward => {
-            let direction = if matches!(icon, Icon::Back) {
-                -1.0
-            } else {
-                1.0
-            };
-            let arc = (0..=24)
-                .map(|i| {
-                    let angle = -std::f32::consts::FRAC_PI_2
-                        + i as f32 / 24.0 * std::f32::consts::TAU * 0.82;
-                    c + egui::vec2(angle.cos() * -direction, angle.sin()) * 11.0
-                })
-                .collect();
-            ui.painter()
-                .add(egui::Shape::line(arc, egui::Stroke::new(1.5, color)));
-            ui.painter().add(egui::Shape::convex_polygon(
-                vec![
-                    c + egui::vec2(direction * 5.0, -11.0),
-                    c + egui::vec2(-direction * 1.0, -15.0),
-                    c + egui::vec2(-direction * 1.0, -7.0),
-                ],
-                color,
-                egui::Stroke::NONE,
-            ));
-            ui.painter().text(
-                c,
-                egui::Align2::CENTER_CENTER,
-                "10",
-                egui::FontId::proportional(10.0),
-                color,
-            );
-        }
-        Icon::Volume(muted) => {
-            ui.painter().add(egui::Shape::closed_line(
-                vec![
-                    c + egui::vec2(-10.0, -3.0),
-                    c + egui::vec2(-6.0, -3.0),
-                    c + egui::vec2(0.0, -8.0),
-                    c + egui::vec2(0.0, 8.0),
-                    c + egui::vec2(-6.0, 3.0),
-                    c + egui::vec2(-10.0, 3.0),
-                ],
-                egui::Stroke::new(1.5, color),
-            ));
-            if muted {
-                for y in [-1.0, 1.0] {
-                    ui.painter().line_segment(
-                        [c + egui::vec2(4.0, y * 4.0), c + egui::vec2(10.0, -y * 4.0)],
-                        egui::Stroke::new(1.5, color),
-                    );
-                }
-            } else {
-                for radius in [7.0, 11.0] {
-                    ui.painter().add(egui::Shape::line(
-                        (0..=12)
-                            .map(|i| {
-                                let a = -0.7 + i as f32 / 12.0 * 1.4;
-                                c + egui::vec2(a.cos(), a.sin()) * radius
-                            })
-                            .collect(),
-                        egui::Stroke::new(1.5, color),
-                    ));
-                }
-            }
-        }
-        Icon::Captions => {
-            ui.painter().rect_stroke(
-                egui::Rect::from_center_size(c, egui::vec2(22.0, 17.0)),
-                3,
-                egui::Stroke::new(1.5, color),
-                egui::StrokeKind::Inside,
-            );
-            for y in [-2.0, 3.0] {
-                for (left, right) in [(-6.0, -1.0), (2.0, 6.0)] {
-                    ui.painter().line_segment(
-                        [c + egui::vec2(left, y), c + egui::vec2(right, y)],
-                        egui::Stroke::new(1.5, color),
-                    );
-                }
-            }
-        }
-        Icon::Fullscreen => {
-            for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-                let corner = c + egui::vec2(x * 7.0, y * 6.0);
-                ui.painter().line_segment(
-                    [corner, corner - egui::vec2(x * 4.0, 0.0)],
-                    egui::Stroke::new(1.5, color),
-                );
-                ui.painter().line_segment(
-                    [corner, corner - egui::vec2(0.0, y * 4.0)],
-                    egui::Stroke::new(1.5, color),
-                );
-            }
-        }
-    }
-    response
 }
 
 #[cfg(test)]

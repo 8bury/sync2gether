@@ -1,14 +1,11 @@
 use super::{Palette, strong};
-use eframe::egui::{
-    self, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, Vec2, epaint, vec2,
-};
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, Shape, Stroke, Vec2, vec2};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Primary,
     Secondary,
     Ghost,
-    Link,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,33 +25,31 @@ impl Size {
     }
     fn font(self) -> f32 {
         match self {
-            Self::Large => 15.0,
-            Self::Medium => 14.5,
-            Self::Small => 13.5,
+            Self::Large => 16.0,
+            Self::Medium => 15.0,
+            Self::Small => 14.0,
         }
     }
     fn padding(self) -> f32 {
         match self {
-            Self::Large => 22.0,
-            Self::Medium => 16.0,
-            Self::Small => 12.0,
+            Self::Large => 24.0,
+            Self::Medium => 18.0,
+            Self::Small => 10.0,
         }
     }
     fn radius(self) -> u8 {
         match self {
-            Self::Large => 12,
-            Self::Medium => 10,
-            Self::Small => 8,
+            Self::Large | Self::Medium => 8,
+            Self::Small => 6,
         }
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Glyph {
-    Plus,
     ArrowLeft,
     ArrowRight,
-    Play,
+    ChevronLeft,
     Refresh,
     Gear,
     Check,
@@ -62,7 +57,6 @@ pub(crate) enum Glyph {
     Close,
     Alert,
     Info,
-    People,
     Spinner,
     Folder,
 }
@@ -75,6 +69,9 @@ pub(crate) struct Button<'a> {
     kind: Kind,
     size: Size,
     glyph: Option<Glyph>,
+    trailing: Option<Glyph>,
+    spread: bool,
+    height: Option<f32>,
     width: Option<f32>,
     enabled: bool,
     busy: bool,
@@ -87,6 +84,9 @@ impl<'a> Button<'a> {
             kind,
             size: Size::Large,
             glyph: None,
+            trailing: None,
+            spread: false,
+            height: None,
             width: None,
             enabled: true,
             busy: false,
@@ -100,8 +100,20 @@ impl<'a> Button<'a> {
         self.glyph = Some(glyph);
         self
     }
-    pub fn maybe_glyph(mut self, glyph: Option<Glyph>) -> Self {
-        self.glyph = glyph;
+    pub fn trailing(mut self, glyph: Glyph) -> Self {
+        self.trailing = Some(glyph);
+        self
+    }
+    pub fn spread(mut self) -> Self {
+        self.spread = true;
+        self
+    }
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
+    }
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
     pub fn fill_width(mut self, ui: &egui::Ui) -> Self {
@@ -118,7 +130,7 @@ impl<'a> Button<'a> {
     }
 
     fn text(&self, ui: &egui::Ui, color: Color32) -> egui::RichText {
-        let text = if matches!(self.kind, Kind::Primary | Kind::Secondary | Kind::Link) {
+        let text = if matches!(self.kind, Kind::Primary | Kind::Secondary) {
             strong(ui, self.label)
         } else {
             egui::RichText::new(self.label)
@@ -133,7 +145,7 @@ impl<'a> Button<'a> {
             f32::INFINITY,
             egui::TextStyle::Button,
         );
-        galley.size().x + self.glyph_width() + 2.0 * self.padding()
+        galley.size().x + self.glyph_width() + self.trailing_width() + 2.0 * self.size.padding()
     }
 
     fn glyph_width(&self) -> f32 {
@@ -144,11 +156,11 @@ impl<'a> Button<'a> {
         }
     }
 
-    fn padding(&self) -> f32 {
-        if matches!(self.kind, Kind::Link) {
-            6.0
+    fn trailing_width(&self) -> f32 {
+        if self.trailing.is_some() && !self.busy {
+            GLYPH + GLYPH_GAP
         } else {
-            self.size.padding()
+            0.0
         }
     }
 
@@ -159,8 +171,8 @@ impl<'a> Button<'a> {
             .width
             .unwrap_or(natural)
             .min(ui.available_width().max(1.0));
-        let height = self.size.height();
-        let (rect, response) = ui.allocate_exact_size(
+        let height = self.height.unwrap_or(self.size.height());
+        let (full_rect, response) = ui.allocate_exact_size(
             vec2(width, height),
             if enabled {
                 Sense::click()
@@ -176,60 +188,39 @@ impl<'a> Button<'a> {
         } else {
             response
         };
-        if !ui.is_rect_visible(rect) {
+        if !ui.is_rect_visible(full_rect) {
             return response;
         }
         let hover = ui.ctx().animate_bool_with_time(
             response.id.with("hover"),
             enabled && response.hovered(),
-            0.12,
+            0.15,
         );
         let pressed = enabled && response.is_pointer_button_down_on();
+        let rect = if pressed && self.kind != Kind::Ghost {
+            full_rect.shrink2(full_rect.size() * 0.0075)
+        } else {
+            full_rect
+        };
         let radius = self.size.radius();
         let painter = ui.painter();
+        let solid = self.kind == Kind::Primary && (enabled || self.busy);
         let (text_color, glyph_color) = match self.kind {
-            Kind::Primary if enabled || self.busy => (Color32::WHITE, Color32::WHITE),
-            Kind::Primary | Kind::Secondary if !enabled => (colors.muted, colors.faint),
-            Kind::Primary | Kind::Secondary => (colors.text, colors.accent),
+            Kind::Primary if solid => (colors.action_ink, colors.action_ink),
+            Kind::Primary | Kind::Secondary if !enabled => (colors.faint, colors.faint),
+            Kind::Primary | Kind::Secondary => (colors.text, colors.text),
             Kind::Ghost if !enabled => (colors.faint, colors.faint),
             Kind::Ghost => {
                 let color = lerp(colors.muted, colors.text, hover);
                 (color, color)
             }
-            Kind::Link if !enabled => (colors.faint, colors.faint),
-            Kind::Link => {
-                let color = lerp(colors.accent, colors.accent_strong, hover);
-                (color, color)
-            }
         };
         match self.kind {
-            Kind::Primary if enabled || self.busy => {
-                let glow = colors
-                    .action
-                    .gamma_multiply(if colors.dark { 0.38 } else { 0.30 });
-                painter.add(
-                    egui::Shadow {
-                        offset: [0, if pressed { 2 } else { 6 }],
-                        blur: if pressed { 8 } else { 18 },
-                        spread: 0,
-                        color: glow.gamma_multiply(0.7 + 0.3 * hover),
-                    }
-                    .as_shape(rect.shrink2(vec2(6.0, 4.0)), radius),
-                );
-                let lift = 0.08 * hover - if pressed { 0.08 } else { 0.0 };
-                let top = lerp(colors.action_top, Color32::WHITE, lift.max(0.0));
-                let bottom = lerp(colors.action, Color32::WHITE, lift.max(0.0));
-                let (top, bottom) = if pressed {
-                    (colors.action, colors.action)
-                } else {
-                    (top, bottom)
-                };
-                gradient_rect(painter, rect, radius, top, bottom);
-                painter.rect_stroke(
-                    rect.shrink(0.5),
+            Kind::Primary if solid => {
+                painter.rect_filled(
+                    rect,
                     radius,
-                    Stroke::new(1.0, Color32::from_white_alpha(28)),
-                    egui::StrokeKind::Inside,
+                    lerp(colors.action, colors.action_hover, hover),
                 );
             }
             Kind::Primary | Kind::Secondary => {
@@ -242,18 +233,11 @@ impl<'a> Button<'a> {
                     rect,
                     radius,
                     fill,
-                    Stroke::new(
-                        1.0,
-                        if enabled {
-                            lerp(colors.border, colors.border_strong, hover)
-                        } else {
-                            colors.border
-                        },
-                    ),
+                    Stroke::new(1.0, colors.border),
                     egui::StrokeKind::Inside,
                 );
             }
-            Kind::Ghost | Kind::Link => {
+            Kind::Ghost => {
                 if hover > 0.0 {
                     painter.rect_filled(rect, radius, colors.hover.gamma_multiply(hover));
                 }
@@ -261,21 +245,28 @@ impl<'a> Button<'a> {
         }
         if response.has_focus() {
             painter.rect_stroke(
-                rect.expand(2.0),
-                radius + 2,
-                Stroke::new(2.0, colors.accent.gamma_multiply(0.8)),
+                full_rect.expand(3.0),
+                radius + 3,
+                Stroke::new(2.0, colors.text),
                 egui::StrokeKind::Outside,
             );
         }
-        let text_room = (width - 2.0 * self.padding() - self.glyph_width()).max(8.0);
+        let padding = self.size.padding();
+        let glyph_width = self.glyph_width();
+        let trailing_width = self.trailing_width();
+        let text_room = (width - 2.0 * padding - glyph_width - trailing_width).max(8.0);
         let galley = egui::WidgetText::from(self.text(ui, text_color)).into_galley(
             ui,
             Some(egui::TextWrapMode::Truncate),
             text_room,
             egui::TextStyle::Button,
         );
-        let content = galley.size().x + self.glyph_width();
-        let start = rect.center().x - content * 0.5;
+        let content = galley.size().x + glyph_width + trailing_width;
+        let start = if self.spread {
+            rect.left() + padding
+        } else {
+            rect.center().x - content * 0.5
+        };
         if self.busy {
             draw(
                 painter,
@@ -296,16 +287,150 @@ impl<'a> Button<'a> {
                 0.0,
             );
         }
-        let text_pos = Pos2::new(
-            start + self.glyph_width(),
-            rect.center().y - galley.size().y * 0.5,
-        );
+        let text_x = start + glyph_width;
+        let text_end = text_x + galley.size().x;
+        let text_pos = Pos2::new(text_x, rect.center().y - galley.size().y * 0.5);
         painter.galley(text_pos, galley, text_color);
+        if let Some(trailing) = self.trailing.filter(|_| !self.busy) {
+            let x = if self.spread {
+                rect.right() - padding - GLYPH * 0.5
+            } else {
+                text_end + GLYPH_GAP + GLYPH * 0.5
+            };
+            draw(
+                painter,
+                trailing,
+                Pos2::new(x, rect.center().y),
+                GLYPH,
+                glyph_color,
+                0.0,
+            );
+        }
         response
     }
 }
 
-pub(super) fn icon_button(
+pub(super) fn row(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    title: &str,
+    detail: &str,
+    compact: bool,
+    enabled: bool,
+) -> egui::Response {
+    let height = if compact { 58.0 } else { 78.0 };
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), height),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, title));
+    let response = if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    };
+    let hover = ui.ctx().animate_bool_with_time(
+        response.id.with("hover"),
+        enabled && response.hovered(),
+        0.2,
+    );
+    let painter = ui.painter();
+    painter.hline(
+        rect.x_range(),
+        rect.top() + 0.5,
+        Stroke::new(1.0, colors.border),
+    );
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect.shrink(1.0),
+            4,
+            Stroke::new(2.0, colors.text),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let left = rect.left() + 4.0 + 6.0 * hover;
+    let arrow_x = rect.right() - 12.0 + 4.0 * hover;
+    let room = (arrow_x - left - 20.0).max(20.0);
+    let ink = if enabled { colors.text } else { colors.faint };
+    let title_galley = single_line(
+        ui,
+        strong(ui, title).size(15.0).color(ink),
+        room,
+        egui::TextStyle::Body,
+    );
+    let detail_galley = single_line(
+        ui,
+        egui::RichText::new(detail).size(13.0).color(colors.faint),
+        room,
+        egui::TextStyle::Small,
+    );
+    let total = title_galley.size().y + 3.0 + detail_galley.size().y;
+    let top = rect.center().y - total * 0.5;
+    let detail_y = top + title_galley.size().y + 3.0;
+    painter.galley(Pos2::new(left, top), title_galley, ink);
+    painter.galley(Pos2::new(left, detail_y), detail_galley, colors.faint);
+    draw(
+        painter,
+        Glyph::ArrowRight,
+        Pos2::new(arrow_x, rect.center().y),
+        15.0,
+        lerp(colors.muted, colors.text, hover),
+        0.0,
+    );
+    response
+}
+
+pub(super) fn rule(ui: &mut egui::Ui, colors: Palette) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        Stroke::new(1.0, colors.border),
+    );
+}
+
+pub(crate) fn single_line(
+    ui: &egui::Ui,
+    text: egui::RichText,
+    max_width: f32,
+    style: egui::TextStyle,
+) -> std::sync::Arc<egui::Galley> {
+    egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        max_width.max(1.0),
+        style,
+    )
+}
+
+pub(super) fn fitted_size(
+    ui: &egui::Ui,
+    text: &str,
+    target: f32,
+    max_width: f32,
+    build: impl Fn(&str, f32) -> egui::RichText,
+) -> f32 {
+    let width = egui::WidgetText::from(build(text, target))
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Body,
+        )
+        .size()
+        .x;
+    if width > max_width && width > 0.0 {
+        (target * max_width / width).floor().max(12.0)
+    } else {
+        target
+    }
+}
+
+pub(crate) fn icon_button(
     ui: &mut egui::Ui,
     colors: Palette,
     glyph: Glyph,
@@ -316,16 +441,16 @@ pub(super) fn icon_button(
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     let hover =
         ui.ctx()
-            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.15);
     if hover > 0.0 {
         ui.painter()
-            .rect_filled(rect, 8, colors.hover.gamma_multiply(hover));
+            .rect_filled(rect, 6, colors.hover.gamma_multiply(hover));
     }
     if response.has_focus() {
         ui.painter().rect_stroke(
-            rect.expand(1.0),
-            9,
-            Stroke::new(2.0, colors.accent.gamma_multiply(0.8)),
+            rect.expand(2.0),
+            8,
+            Stroke::new(2.0, colors.text),
             egui::StrokeKind::Outside,
         );
     }
@@ -333,7 +458,7 @@ pub(super) fn icon_button(
         ui.painter(),
         glyph,
         rect.center(),
-        GLYPH + 2.0,
+        GLYPH + 1.0,
         lerp(colors.muted, colors.text, hover),
         0.0,
     );
@@ -356,58 +481,6 @@ pub(super) fn centered_row<R>(
     .inner
 }
 
-pub(super) fn avatar(ui: &mut egui::Ui, colors: Palette, name: &str, size: f32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    paint_avatar(ui.painter(), colors, rect.center(), size, name);
-}
-
-pub(super) fn paint_avatar(
-    painter: &egui::Painter,
-    colors: Palette,
-    center: Pos2,
-    size: f32,
-    name: &str,
-) {
-    let tints = [
-        Color32::from_rgb(99, 132, 255),
-        Color32::from_rgb(168, 112, 245),
-        Color32::from_rgb(46, 182, 166),
-        Color32::from_rgb(236, 128, 92),
-        Color32::from_rgb(222, 98, 152),
-    ];
-    let hash = name
-        .bytes()
-        .fold(7u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
-    let tint = tints[hash as usize % tints.len()];
-    painter.circle_filled(
-        center,
-        size * 0.5,
-        tint.gamma_multiply(if colors.dark { 0.22 } else { 0.16 }),
-    );
-    painter.circle_stroke(
-        center,
-        size * 0.5 - 0.5,
-        Stroke::new(1.0, tint.gamma_multiply(0.45)),
-    );
-    let initial = name
-        .chars()
-        .find(|c| c.is_alphanumeric())
-        .map(|c| c.to_uppercase().collect::<String>())
-        .unwrap_or_else(|| "?".into());
-    let color = if colors.dark {
-        lerp(tint, Color32::WHITE, 0.45)
-    } else {
-        lerp(tint, Color32::BLACK, 0.25)
-    };
-    painter.text(
-        center + vec2(0.0, 0.5),
-        egui::Align2::CENTER_CENTER,
-        initial,
-        egui::FontId::new(size * 0.42, super::semibold_family(painter.ctx())),
-        color,
-    );
-}
-
 pub(super) fn status(ui: &mut egui::Ui, glyph: Option<Glyph>, text: &str, color: Color32) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -422,13 +495,13 @@ pub(super) fn status(ui: &mut egui::Ui, glyph: Option<Glyph>, text: &str, color:
                 ui.input(|i| i.time),
             ),
             None => {
-                ui.painter().circle_filled(rect.center(), 3.5, color);
+                ui.painter().circle_filled(rect.center(), 3.0, color);
             }
         }
         if glyph == Some(Glyph::Spinner) {
             ui.ctx().request_repaint();
         }
-        ui.add(egui::Label::new(egui::RichText::new(text).size(12.5).color(color)).truncate())
+        ui.add(egui::Label::new(egui::RichText::new(text).size(13.0).color(color)).truncate())
             .on_hover_text(text);
     });
 }
@@ -439,12 +512,12 @@ pub(super) fn progress(ui: &mut egui::Ui, colors: Palette, fraction: f32, width:
         let label = format!("{:.0}%", (fraction * 100.0).clamp(0.0, 100.0));
         let bar = (width - 44.0).max(20.0);
         let (rect, _) = ui.allocate_exact_size(vec2(bar, 14.0), Sense::hover());
-        let track = Rect::from_center_size(rect.center(), vec2(bar, 6.0));
-        ui.painter().rect_filled(track, 3, colors.hover);
+        let track = Rect::from_center_size(rect.center(), vec2(bar, 2.0));
+        ui.painter().rect_filled(track, 0, colors.border);
         let mut fill = track;
-        fill.set_width((bar * fraction.clamp(0.0, 1.0)).max(6.0));
-        gradient_rect_h(ui.painter(), fill, 3, colors.action, colors.accent);
-        ui.label(egui::RichText::new(label).size(12.5).color(colors.muted));
+        fill.set_width(bar * fraction.clamp(0.0, 1.0));
+        ui.painter().rect_filled(fill, 0, colors.text);
+        ui.label(egui::RichText::new(label).size(13.0).color(colors.muted));
     });
 }
 
@@ -459,61 +532,6 @@ pub(crate) fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
     )
 }
 
-fn rounded_points(rect: Rect, radius: u8) -> Vec<Pos2> {
-    let mut points = Vec::new();
-    epaint::tessellator::path::rounded_rectangle(
-        &mut points,
-        rect,
-        CornerRadius::same(radius).into(),
-    );
-    points
-}
-
-pub(super) fn gradient_rect(
-    painter: &egui::Painter,
-    rect: Rect,
-    radius: u8,
-    top: Color32,
-    bottom: Color32,
-) {
-    gradient_mesh(painter, rect, radius, |p| {
-        lerp(top, bottom, (p.y - rect.top()) / rect.height().max(1.0))
-    });
-}
-
-pub(super) fn gradient_rect_h(
-    painter: &egui::Painter,
-    rect: Rect,
-    radius: u8,
-    left: Color32,
-    right: Color32,
-) {
-    gradient_mesh(painter, rect, radius, |p| {
-        lerp(left, right, (p.x - rect.left()) / rect.width().max(1.0))
-    });
-}
-
-fn gradient_mesh(painter: &egui::Painter, rect: Rect, radius: u8, color: impl Fn(Pos2) -> Color32) {
-    let points = rounded_points(rect, radius);
-    if points.len() < 3 {
-        return;
-    }
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(rect.center(), color(rect.center()));
-    for &p in &points {
-        mesh.colored_vertex(p, color(p));
-    }
-    let n = points.len() as u32;
-    for i in 0..n {
-        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
-    }
-    painter.add(Shape::mesh(mesh));
-    painter.add(Shape::closed_line(
-        points,
-        Stroke::new(1.0, color(rect.center())),
-    ));
-}
-
 pub(crate) fn draw(
     painter: &egui::Painter,
     glyph: Glyph,
@@ -524,12 +542,8 @@ pub(crate) fn draw(
 ) {
     let s = size / 16.0;
     let p = |x: f32, y: f32| center + vec2(x, y) * s;
-    let stroke = Stroke::new((1.6 * s).max(1.2), color);
+    let stroke = Stroke::new((1.5 * s).max(1.2), color);
     match glyph {
-        Glyph::Plus => {
-            painter.line_segment([p(-6.0, 0.0), p(6.0, 0.0)], stroke);
-            painter.line_segment([p(0.0, -6.0), p(0.0, 6.0)], stroke);
-        }
         Glyph::ArrowLeft | Glyph::ArrowRight => {
             let d = if glyph == Glyph::ArrowLeft { -1.0 } else { 1.0 };
             painter.line_segment([p(-6.0 * d, 0.0), p(6.0 * d, 0.0)], stroke);
@@ -538,11 +552,10 @@ pub(crate) fn draw(
                 stroke,
             ));
         }
-        Glyph::Play => {
-            painter.add(Shape::convex_polygon(
-                vec![p(-4.0, -6.5), p(6.5, 0.0), p(-4.0, 6.5)],
-                color,
-                Stroke::NONE,
+        Glyph::ChevronLeft => {
+            painter.add(Shape::line(
+                vec![p(2.5, -5.5), p(-3.0, 0.0), p(2.5, 5.5)],
+                stroke,
             ));
         }
         Glyph::Refresh => {
@@ -610,26 +623,6 @@ pub(crate) fn draw(
             };
             painter.line_segment([a, b], stroke);
             painter.circle_filled(dot, 1.1 * s, color);
-        }
-        Glyph::People => {
-            for (x, alpha) in [(-3.5, 1.0), (3.5, 0.55)] {
-                let c = p(x, 0.0);
-                let col = color.gamma_multiply(alpha);
-                painter.circle_stroke(
-                    c + vec2(0.0, -3.2) * s,
-                    2.6 * s,
-                    Stroke::new(stroke.width, col),
-                );
-                painter.add(Shape::line(
-                    (0..=10)
-                        .map(|i| {
-                            let a = std::f32::consts::PI + i as f32 / 10.0 * std::f32::consts::PI;
-                            c + vec2(a.cos() * 4.6, 6.2 + a.sin() * 4.0) * s
-                        })
-                        .collect(),
-                    Stroke::new(stroke.width, col),
-                ));
-            }
         }
         Glyph::Folder => {
             painter.add(Shape::closed_line(

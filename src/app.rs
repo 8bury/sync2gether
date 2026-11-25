@@ -74,6 +74,7 @@ impl App {
                     self.inputs.code = code.clone();
                     self.inputs.code_entry = true;
                     self.inputs.joining = true;
+                    self.inputs.screen = crate::ui::Screen::Join;
                 }
                 _ => {}
             }
@@ -183,5 +184,22 @@ impl eframe::App for App {
             capture.tick(ui.ctx());
         }
         diagnostics::mark(Stage::UiDone);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{runtime::Command, ui::Screen};
+
+    #[test]
+    fn command_line_code_starts_on_the_code_screen() {
+        let app = App::new(None, None).queue_commands(vec![Command::JoinCode {
+            relay: "relay.example.com".into(),
+            code: "123".into(),
+        }]);
+        assert_eq!(app.inputs.screen, Screen::Join);
+        assert_eq!(app.inputs.code, "123");
+        assert!(app.inputs.code_entry && app.inputs.joining);
     }
 }

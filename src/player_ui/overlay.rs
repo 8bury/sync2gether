@@ -5,9 +5,12 @@ use crate::{
     ui::{
         Palette,
         kit::{self, Glyph},
+        visuals::{self, Presence},
     },
 };
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke};
+
+const VOLUME_STEP: f64 = 5.0;
 
 pub(super) struct EffectiveStream {
     pub cached_bytes: u64,
@@ -134,6 +137,13 @@ pub(super) fn effective_cached_ranges(view: &View) -> Vec<(f32, f32)> {
     Vec::new()
 }
 
+pub(super) fn peer_position(view: &View) -> Option<f64> {
+    (view.role != Role::Local && view.connected)
+        .then_some(view.peer_drift)
+        .flatten()
+        .map(|drift| view.player.position - drift)
+}
+
 pub(super) fn seek_bar(
     ui: &mut egui::Ui,
     response: &egui::Response,
@@ -141,6 +151,7 @@ pub(super) fn seek_bar(
     duration: f64,
     enabled: bool,
     cached_ranges: &[(f32, f32)],
+    peer: Option<f64>,
 ) {
     let rect = response.rect;
     let active = enabled && (response.hovered() || response.dragged());
@@ -149,37 +160,43 @@ pub(super) fn seek_bar(
         .animate_bool_with_time(response.id.with("seek_hover"), active, 0.12);
     let radius = rect.height() / 2.5;
     let range = rect.x_range().shrink(radius);
-    let fraction = if duration > 0.0 {
-        (seek / duration).clamp(0.0, 1.0) as f32
-    } else {
-        0.0
+    let fraction = |position: f64| {
+        if duration > 0.0 {
+            (position / duration).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        }
     };
-    let x = range.min + range.span() * fraction;
-    let height = 4.0 + 2.0 * hover;
+    let x = range.min + range.span() * fraction(seek);
+    let height = 2.0 + 2.0 * hover;
     let track = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), height));
     let painter = ui.painter();
-    painter.rect_filled(track, height * 0.5, Color32::from_white_alpha(56));
+    painter.rect_filled(track, 0, Color32::from_white_alpha(56));
     draw_cached_ranges(painter, track, height, cached_ranges);
     let mut filled = track;
-    filled.max.x = x.max(track.left() + height);
+    filled.max.x = x.max(track.left());
     painter.rect_filled(
         filled,
-        height * 0.5,
+        0,
         if enabled {
             ACCENT
         } else {
             ACCENT.gamma_multiply(0.6)
         },
     );
-    if enabled {
-        let center = egui::pos2(x, rect.center().y);
+    if let Some(peer) = peer {
+        let peer_x = range.min + range.span() * fraction(peer);
         painter.circle_filled(
-            center + egui::vec2(0.0, 1.0),
-            5.0 + 2.5 * hover,
-            Color32::from_black_alpha(90),
+            egui::pos2(peer_x + 7.0, rect.center().y),
+            6.0,
+            Color32::WHITE.gamma_multiply(0.58),
         );
-        painter.circle_filled(center, 4.5 + 2.5 * hover, Color32::WHITE);
     }
+    painter.circle_filled(
+        egui::pos2(x, rect.center().y),
+        6.0 + hover,
+        Color32::WHITE.gamma_multiply(if enabled { 0.86 } else { 0.5 }),
+    );
     if enabled && let Some(pointer) = response.hover_pos() {
         let at = ((pointer.x - range.min) / range.span().max(1.0)).clamp(0.0, 1.0) as f64;
         let text = super::timestamp(if response.dragged() {
@@ -187,14 +204,211 @@ pub(super) fn seek_bar(
         } else {
             at * duration
         });
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), Color32::WHITE);
+        let galley = painter.layout_no_wrap(text, egui::FontId::monospace(12.0), Color32::WHITE);
         let size = galley.size() + egui::vec2(14.0, 8.0);
         let anchor = if response.dragged() { x } else { pointer.x };
         let left = (anchor - size.x * 0.5).clamp(rect.left(), rect.right() - size.x);
         let bubble = egui::Rect::from_min_size(egui::pos2(left, rect.top() - size.y - 6.0), size);
-        painter.rect_filled(bubble, 6, Color32::from_black_alpha(200));
+        painter.rect_filled(bubble, 6, Color32::from_rgba_unmultiplied(22, 22, 22, 225));
         painter.galley(bubble.min + egui::vec2(7.0, 4.0), galley, Color32::WHITE);
     }
+}
+
+pub(super) fn volume_bar_id() -> egui::Id {
+    egui::Id::new("player_volume_bar")
+}
+
+pub(super) fn volume_bar(ui: &mut egui::Ui, volume: &mut f64, enabled: bool) -> bool {
+    let sense = if enabled {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(86.0, 20.0), egui::Sense::hover());
+    let response = ui.interact(rect, volume_bar_id(), sense);
+    let response = if enabled {
+        response.on_hover_and_drag_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    };
+    let mut next = None;
+    if (response.dragged() || response.clicked())
+        && let Some(pointer) = response.interact_pointer_pos()
+    {
+        next = Some(
+            (((pointer.x - rect.left() - 5.0) / (rect.width() - 10.0)).clamp(0.0, 1.0) * 100.0)
+                as f64,
+        );
+    }
+    if response.has_focus() {
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                response.id,
+                egui::EventFilter {
+                    horizontal_arrows: true,
+                    ..Default::default()
+                },
+            );
+        });
+        let steps = ui.input(|i| {
+            i.num_presses(egui::Key::ArrowRight) as i32 - i.num_presses(egui::Key::ArrowLeft) as i32
+        });
+        if steps != 0 {
+            next = Some((*volume + f64::from(steps) * VOLUME_STEP).clamp(0.0, 100.0));
+        }
+    }
+    let changed = next.is_some_and(|next| (next - *volume).abs() > f64::EPSILON);
+    if changed {
+        *volume = next.unwrap_or(*volume);
+    }
+    let value = *volume;
+    response.widget_info(|| egui::WidgetInfo::slider(enabled, value, "Volume neste PC"));
+    let fraction = (*volume / 100.0).clamp(0.0, 1.0) as f32;
+    let x = rect.left() + 5.0 + (rect.width() - 10.0) * fraction;
+    let y = rect.center().y;
+    let painter = ui.painter();
+    painter.hline(
+        rect.x_range(),
+        y,
+        Stroke::new(2.0, Color32::from_white_alpha(62)),
+    );
+    painter.hline(
+        rect.left()..=x,
+        y,
+        Stroke::new(2.0, Color32::from_rgb(238, 238, 238)),
+    );
+    painter.circle_filled(egui::pos2(x, y), 5.0, Color32::WHITE);
+    if response.has_focus() {
+        painter.circle_stroke(egui::pos2(x, y), 8.0, Stroke::new(2.0, Color32::WHITE));
+    }
+    changed
+}
+
+enum CenterNotice {
+    Paused,
+    Lost,
+}
+
+fn center_notice(view: &View) -> Option<CenterNotice> {
+    if !view.player.loaded
+        || is_center_loading_visible(view)
+        || view.error.is_some()
+        || view.preparing
+        || view.scheduled
+        || view.player.blocked
+    {
+        return None;
+    }
+    if view.role != Role::Local && !view.connected {
+        Some(CenterNotice::Lost)
+    } else if view.player.paused {
+        Some(CenterNotice::Paused)
+    } else {
+        None
+    }
+}
+
+pub(super) fn video_dim(view: &View) -> u8 {
+    match center_notice(view) {
+        Some(CenterNotice::Lost) => 178,
+        Some(CenterNotice::Paused) => 97,
+        None => 0,
+    }
+}
+
+pub(super) fn draw_center_notice(
+    ui: &mut egui::Ui,
+    safe_rect: egui::Rect,
+    view: &View,
+    position: String,
+) {
+    let Some(notice) = center_notice(view) else {
+        return;
+    };
+    let solo = view.role == Role::Local;
+    let peer_label = view.peer_name.as_deref().unwrap_or("Outra pessoa");
+    let peer = view.peer_name.as_deref().unwrap_or("a outra pessoa");
+    let (state, title, detail, diameter) = match notice {
+        CenterNotice::Paused => (
+            (!solo).then_some(Presence::Together),
+            "Pausado".to_owned(),
+            format!("em {position}"),
+            22.0,
+        ),
+        CenterNotice::Lost if view.role == Role::Host => (
+            Some(Presence::Lost),
+            format!("{peer_label} perdeu a conexão"),
+            format!("Esperando {peer} voltar…"),
+            30.0,
+        ),
+        CenterNotice::Lost => (
+            Some(Presence::Lost),
+            "Conexão perdida".to_owned(),
+            format!("Reconectando com {peer}…"),
+            30.0,
+        ),
+    };
+    let colors = Palette::new(true);
+    let max_width = (safe_rect.width() - 32.0).max(120.0);
+    let size = (safe_rect.width() * 0.024).clamp(22.0, 34.0);
+    let title = kit::single_line(
+        ui,
+        RichText::new(title)
+            .size(size)
+            .extra_letter_spacing(-0.03 * size)
+            .color(Color32::WHITE),
+        max_width,
+        egui::TextStyle::Heading,
+    );
+    let detail = kit::single_line(
+        ui,
+        RichText::new(detail)
+            .size(15.0)
+            .color(Color32::from_white_alpha(200)),
+        max_width,
+        egui::TextStyle::Body,
+    );
+    let pair_height = state.map_or(0.0, |_| diameter + 10.0);
+    let height = pair_height + title.size().y + 5.0 + detail.size().y;
+    let mut y = safe_rect.center().y - height * 0.5;
+    let width = title.size().x.max(detail.size().x);
+    let plate = egui::Rect::from_center_size(
+        egui::pos2(safe_rect.center().x, safe_rect.center().y),
+        egui::vec2(width + 40.0, height + 24.0),
+    );
+    let painter = ui.painter();
+    painter.add(
+        egui::Shadow {
+            offset: [0, 0],
+            blur: 48,
+            spread: 4,
+            color: Color32::from_black_alpha(72),
+        }
+        .as_shape(plate, 24),
+    );
+    if let Some(state) = state {
+        let left = safe_rect.center().x - visuals::pair_width(state, diameter) * 0.5;
+        visuals::paint_pair(
+            painter,
+            egui::pos2(left, y + diameter * 0.5),
+            diameter,
+            state,
+            colors,
+        );
+        y += pair_height;
+    }
+    let title_height = title.size().y;
+    painter.galley(
+        egui::pos2(safe_rect.center().x - title.size().x * 0.5, y),
+        title,
+        Color32::WHITE,
+    );
+    y += title_height + 5.0;
+    painter.galley(
+        egui::pos2(safe_rect.center().x - detail.size().x * 0.5, y),
+        detail,
+        Color32::WHITE,
+    );
 }
 
 fn draw_cached_ranges(
@@ -304,8 +518,7 @@ pub(super) fn draw_stream_hud(ui: &mut egui::Ui, text: &str, color: Color32, max
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             egui::Frame::new()
-                .fill(Color32::from_black_alpha(120))
-                .stroke(Stroke::new(1.0, Color32::from_white_alpha(24)))
+                .fill(Color32::from_rgba_unmultiplied(22, 22, 22, 170))
                 .corner_radius(6)
                 .inner_margin(egui::Margin::symmetric(7, 2))
                 .show(ui, |ui| {
@@ -416,9 +629,9 @@ pub(super) fn draw_center_loading(
     let card_rect = ui
         .scope_builder(egui::UiBuilder::new().max_rect(host_rect), |ui| {
             let frame = egui::Frame::new()
-                .fill(Color32::from_black_alpha(196))
-                .stroke(Stroke::new(1.0, accent.gamma_multiply(0.45)))
-                .corner_radius(14)
+                .fill(Color32::from_rgba_unmultiplied(22, 22, 22, 232))
+                .stroke(Stroke::new(1.0, colors.border))
+                .corner_radius(8)
                 .inner_margin(egui::Margin::symmetric(16, 12))
                 .show(ui, |ui| {
                     ui.set_max_width((card_width - 32.0).max(140.0));
@@ -441,7 +654,7 @@ pub(super) fn draw_center_loading(
                         ui.add(
                             egui::Label::new(
                                 crate::ui::strong(ui, &title)
-                                    .size(14.5)
+                                    .size(15.0)
                                     .color(Color32::WHITE),
                             )
                             .wrap(),
@@ -449,12 +662,8 @@ pub(super) fn draw_center_loading(
                     });
                     if let Some(detail) = &detail {
                         ui.add(
-                            egui::Label::new(
-                                RichText::new(detail)
-                                    .size(12.5)
-                                    .color(Color32::from_gray(210)),
-                            )
-                            .wrap(),
+                            egui::Label::new(RichText::new(detail).size(13.0).color(colors.muted))
+                                .wrap(),
                         );
                     }
                     if stream_error.is_some() && view.can_stream {

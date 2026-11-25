@@ -6,22 +6,23 @@ Salas pela internet com código, escolha dos arquivos, controles e salas na rede
 
 ## Usar o aplicativo
 
-A interface tem três etapas, mostradas no cabeçalho: **Sala**, **Filme** e
-**Assistir**. Na tela inicial ficam **Criar sala**, o campo do código com
-**Entrar** e **Abrir filme sozinho**. As salas na rede local ficam nas opções
-avançadas, descritas em [Rede local ou VPN](#rede-local-ou-vpn).
+O fluxo passa por três momentos: **sala**, **filme** e **assistir**. Na tela
+inicial ficam **Criar sala**, **Entrar com código** e **Abrir um filme sozinho**.
+As salas na rede local ficam nas opções avançadas, descritas em
+[Rede local ou VPN](#rede-local-ou-vpn).
 
 1. O anfitrião clica em **Criar sala**. O app abre a sala no relay e mostra o
-   código, como `4821-gato-lua`, em destaque, com o botão **Copiar**, que passa
+   código, como `4821-gato-lua`, em destaque, com o botão **Copiar código**, que passa
    a dizer **Copiado**. Enquanto o código não chega, a tela mostra
    **Gerando o código…**; sem contato com o servidor, avisa e tenta de novo.
    Abaixo, **Esperando alguém entrar…** mostra a vaga ainda livre, e
    **Escolher meu filme** permite escolher a cópia enquanto espera.
-2. O anfitrião envia o código por qualquer mensageiro. O convidado digita o
-   código no campo da tela inicial e clica em **Entrar** (ou Enter). Maiúsculas,
+2. O anfitrião envia o código por qualquer mensageiro. O convidado abre
+   **Entrar com código**, digita o código e clica em **Entrar** (ou Enter). Maiúsculas,
    acentos e espaços no lugar dos hífens são aceitos. O botão só fica disponível
    com o número e duas palavras da lista. Enquanto a sala responde, o botão
-   mostra **Entrando** e **Cancelar** desiste da tentativa.
+   mostra **Entrando** e **Cancelar**, no cabeçalho, desiste da tentativa.
+   **Voltar** retorna à tela inicial.
 3. Quem acerta o código entra direto na etapa **Filme**, sem aprovação. Um
    código errado mostra **Código incorreto** na linha abaixo do campo, mantém o
    texto para correção e avisa o anfitrião; na terceira tentativa errada a sala
@@ -30,7 +31,7 @@ avançadas, descritas em [Rede local ou VPN](#rede-local-ou-vpn).
    **Começar a assistir** só fica disponível quando a sessão estiver pronta;
    qualquer participante pode iniciar. O app não dá play automaticamente.
 
-Depois da entrada, o código da sala fica num selo no cabeçalho; um clique copia.
+Depois da entrada, o código da sala fica discreto no cabeçalho; um clique copia.
 
 Os dois PCs só precisam de TCP de saída para `relay.pedrosales.dev:7843`.
 As mensagens são cifradas de ponta a ponta; o relay não vê o código completo,
@@ -38,19 +39,22 @@ os nomes dos arquivos nem os comandos. Se a conexão cair, o convidado volta
 sozinho, sem digitar o código de novo. Detalhes em [Salas pela internet e relay](relay.md).
 
 A etapa **Filme** mostra os dois arquivos lado a lado, **Você** à esquerda e a
-outra pessoa à direita; em janelas estreitas os cartões ficam empilhados. Cada
-cartão mostra o arquivo com extensão, o estado e, durante a verificação, a
-porcentagem. **Escolher arquivo** fica em destaque quando falta sua cópia;
-depois, **Trocar arquivo** permanece no seu cartão. A escolha da outra pessoa
-não pode ser alterada neste PC. Entre os cartões, um sinal resume a comparação:
-espera, verificação, iguais (✓) ou diferentes (✕).
+outra pessoa à direita; em janelas estreitas as cópias ficam empilhadas. Cada
+cópia mostra o estado, um quadro neutro e o nome do arquivo com extensão; o app
+não exibe prévia do vídeo. Durante a verificação, o quadro mostra a porcentagem.
+**Escolher arquivo** fica em destaque quando falta sua cópia; depois,
+**Trocar arquivo** permanece junto ao nome. A escolha da outra pessoa não pode
+ser alterada neste PC. Entre as cópias, dois círculos resumem a comparação:
+separados enquanto esperam ou conferem, sobrepostos quando são iguais e com o
+contorno de alerta quando são diferentes.
 
-O título acompanha o estado: **Escolham o mesmo filme**, **Conferindo os
-arquivos**, **Os arquivos não batem**, **Quase pronto** ou **Tudo pronto**. O
+O título acompanha o estado: **Escolham o mesmo filme**, **Conferindo as
+cópias**, **As cópias são diferentes**, **Quase pronto** e **Vocês têm o mesmo
+filme** (**Tudo pronto** ao assistir sozinho). O
 estado é dito uma vez, numa frase acima do botão principal. Enquanto não dá
 para começar, o botão fica desativado e diz o que falta, como **Escolha seu
 arquivo para começar** ou **Esperando o arquivo de Ana**. Com conteúdos
-diferentes, os dois cartões mostram **Conteúdo diferente** e o botão vira
+diferentes, as duas cópias mostram **Conteúdo diferente** e o botão vira
 **Trocar meu arquivo**. Quando a sessão está pronta, o botão passa a ser
 **Começar a assistir**.
 
@@ -69,24 +73,28 @@ A verificação mostra porcentagem nos dois PCs. **Cancelar verificação** inte
 a leitura entre blocos, restaura o arquivo anterior e mantém a sala aberta,
 com reprodução pausada. A janela nativa de seleção tem seu próprio cancelamento.
 
-Em janelas altas, o botão principal fica junto aos cartões. O conteúdo pode ser
+Em janelas altas, o botão principal fica junto às cópias. O conteúdo pode ser
 rolado e, abaixo de 600 pixels de altura, a frase de estado e o botão ficam no
 rodapé, inclusive em 480 × 480. Uma solicitação de entrada recebe destaque
-antes dos arquivos. **Detalhes da sala** abre um menu com o participante e os
-detalhes da conexão, mantendo esses dados fora dos cartões.
+antes dos arquivos. Os detalhes da conexão ficam no painel da sala, dentro do
+player.
 
-A seta **←** no canto superior esquerdo volta ao início em todas as etapas,
-inclusive no player, e **Esc** faz o mesmo fora do player. Nas salas, voltar é
-sair: a seta se chama **Encerrar sala** no anfitrião e **Sair da sala** no
-convidado. Com a outra pessoa conectada, o app pergunta antes (**Encerrar a
+A ação no canto superior esquerdo volta ao início em todas as etapas, inclusive
+no player, e **Esc** faz o mesmo fora do player. Nas salas,
+voltar é sair: a ação se chama **Encerrar sala** no anfitrião e **Sair da sala**
+no convidado. Com a outra pessoa conectada, o app pergunta antes (**Encerrar a
 sala?** ou **Sair da sala?**) e oferece **Continuar na sala**; sozinho na sala,
 sai na hora. A tela inicial permite continuar um filme que ficou carregado após
 sair.
-Durante a reprodução, o vídeo ocupa a janela sem rolagem. No canto superior,
-um selo mostra o estado da sala: **Ana · em sincronia** com a conexão ativa ou
-**Reconectando com Ana…** (no anfitrião, **Esperando Ana voltar…**) quando ela
-cai, sem um segundo aviso sobre o vídeo. A seta **←** ao lado do título sai da
-sala, com a mesma confirmação. Um clique no selo abre um painel com
+Durante a reprodução, o vídeo ocupa a janela sem rolagem. No canto superior
+direito, dois círculos, o nome e o estado mostram a presença: **Ana em
+sincronia** com a conexão ativa, ou **reconectando** (no anfitrião,
+**desconectado**) quando ela cai. Nesse caso, um aviso no centro do vídeo diz
+**Reconectando com Ana…** ou **Esperando Ana voltar…**, e os controles
+permanecem visíveis. Na pausa, o vídeo escurece e mostra **Pausado** com a
+posição. A linha do tempo marca a posição da outra pessoa enquanto essa
+informação estiver atualizada. A ação no canto superior esquerdo sai da sala,
+com a mesma confirmação. Um clique na presença abre um painel com
 participante, troca do filme, saída e detalhes da conexão; em janelas
 estreitas, abre uma janela sobre o vídeo. **Trocar filme** pausa a sessão e
 retorna à preparação. Sair da sala retorna ao início e deixa o arquivo
@@ -156,15 +164,18 @@ os controles visíveis. Volume, áudio e legendas afetam somente este PC;
 play, pause e mudanças de posição continuam passando pelo coordenador da sala.
 O menu de faixas mostra os títulos e idiomas fornecidos pelo arquivo.
 
-O tema padrão usa superfícies quase pretas, detalhes em azul e ações principais
-com gradiente azul. O tema claro usa superfícies brancas e cinza-claras, com a
-mesma organização. A tipografia é Inter, incorporada ao executável. Os dois temas
+O tema padrão é minimalista: grafite neutro, texto quase branco, ações
+principais claras e um único tom de alerta, sem gradientes decorativos. O tema
+claro inverte os mesmos neutros. A tipografia é Geist, com Geist Mono em códigos,
+nomes de arquivo e tempos, incorporada ao executável. Os dois temas
 ficam no menu **Configurações**, aberto pelo ícone de engrenagem no cabeçalho,
 inclusive durante a conexão; o menu também reúne as opções avançadas de rede e os atalhos.
 O cabeçalho permanece visível ao rolar o conteúdo. Os controles
 do player usam ícones com dicas e nomes acessíveis para play/pause, saltos de
-10 segundos, volume, áudio/legendas e tela cheia. Os menus de volume e faixas
-abrem ao clicar nos ícones. O título omite a extensão de vídeo. Avisos sobre
+10 segundos, volume, áudio/legendas e tela cheia. Em janelas com 860 pixels ou
+mais, o volume fica numa barra ao lado do ícone, que silencia com um clique; em
+janelas menores, o ícone abre o menu de volume. O ícone de legendas abre o menu
+de faixas. O título omite a extensão de vídeo. Avisos sobre
 reconexão, preparação e falhas aparecem sobre o vídeo quando necessários;
 o estado normal da sessão fica nos detalhes da sala.
 
@@ -179,6 +190,8 @@ nos campos da sala:
 | F | Alternar tela cheia |
 | Esc | Sair da tela cheia, depois de fechar menus abertos |
 | M | Silenciar ou restaurar o volume local |
+
+Com a barra de volume focada pelo teclado, ← e → ajustam o volume em 5%.
 
 A demo usa os mesmos controles visuais, mas as ações de reprodução ficam
 desativadas e nenhum player é iniciado. Tela cheia e ocultação dos controles

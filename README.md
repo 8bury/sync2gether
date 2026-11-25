@@ -8,7 +8,7 @@ VPN, ou pela rede local.
 [Instalar](#instalação) · [Como funciona](#como-funciona) ·
 [Screenshots](#screenshots) · [Desenvolver](#desenvolvimento)
 
-![Tela inicial do sync2gether no tema escuro, com Criar sala e o campo para entrar com um código](docs/images/inicio.png)
+![Tela inicial do sync2gether no tema escuro, com Criar sala, Entrar com código e Abrir um filme sozinho](docs/images/inicio.png)
 
 *Captura do modo demo offline, com dados fictícios. As imagens desta página
 mostram a interface; não demonstram reprodução ou sincronização real.*
@@ -22,7 +22,7 @@ arquivo, o convidado pode assistir por **streaming P2P direto (QUIC cifrado)**
 sem passar vídeo pelo servidor relay.
 
 1. Uma pessoa clica em **Criar sala** e recebe um código como `4821-gato-lua`.
-2. Ela envia o código para a outra pessoa, que o digita na tela inicial e clica em **Entrar**.
+2. Ela envia o código para a outra pessoa, que abre **Entrar com código**, digita e clica em **Entrar**.
 3. Cada pessoa escolhe sua cópia do filme — ou o convidado clica em **Assistir por streaming P2P**
    para receber o arquivo direto do anfitrião com cache progressivo em disco. Quando ambos estão prontos, qualquer participante pode clicar em
    **Começar a assistir**.
@@ -121,7 +121,7 @@ conteúdo entre eles, antes de começar.
 ### Assistam juntos
 
 O player reúne a linha do tempo, play/pause, saltos de 10 segundos, volume,
-faixas de áudio, legendas e tela cheia. O selo da sala, no canto, mostra se a
+faixas de áudio, legendas e tela cheia. A presença, no canto, mostra se a
 outra pessoa está em sincronia e abre os detalhes da sessão.
 
 ![Interface do player no modo demo, com vídeo fictício e controles de reprodução](docs/images/player.png)

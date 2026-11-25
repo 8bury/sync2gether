@@ -27,7 +27,7 @@ pub fn draw_with_inputs(
                     egui::Frame::new()
                         .fill(colors.warning.gamma_multiply(0.14))
                         .stroke(Stroke::new(1.0, colors.warning.gamma_multiply(0.4)))
-                        .corner_radius(6)
+                        .corner_radius(4)
                         .inner_margin(egui::Margin::symmetric(8, 3))
                         .show(ui, |ui| {
                             ui.label(
@@ -52,6 +52,7 @@ pub fn draw_with_inputs(
                                     .clicked()
                                 {
                                     inputs.screen = Screen::Home;
+                                    inputs.joining = false;
                                     inputs.room_panel = false;
                                     actions.push(Action::SetDemoState(candidate));
                                     ui.close();
@@ -62,13 +63,16 @@ pub fn draw_with_inputs(
                 });
             });
     }
+    let state = actions
+        .last()
+        .map_or(state, |Action::SetDemoState(next)| *next);
     let view = demo_view(state);
     if state == SessionState::Browsing {
         inputs.screen = Screen::Browse;
         inputs.lan = true;
     }
     if matches!(state, SessionState::JoinCode | SessionState::Connecting) {
-        inputs.screen = Screen::Home;
+        inputs.screen = Screen::Join;
         inputs.code = "4821-gato-lua".into();
         inputs.joining = state == SessionState::Connecting;
     }
@@ -132,6 +136,9 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
         SessionState::Synchronized | SessionState::Paused | SessionState::Reconnecting
     );
     view.status = state.label().into();
+    if view.watching && view.connected {
+        view.peer_drift = Some(0.0);
+    }
     if state == SessionState::Approval {
         view.join_request = Some(JoinRequest {
             id: 1,

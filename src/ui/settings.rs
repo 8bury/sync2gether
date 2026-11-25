@@ -1,120 +1,91 @@
 use super::{
-    Body, Inputs, Palette, back_label, configure_theme, kit, request_leave, section_label,
-    semibold_family, strong,
+    Body, Inputs, Palette, Screen, back_label, configure_theme, kit, medium_family, request_leave,
+    section_label, visuals,
 };
 use crate::runtime::{Command, Role, View};
-use eframe::egui::{self, Color32, RichText, Stroke};
-
-const STEPS: [&str; 3] = ["Sala", "Filme", "Assistir"];
+use eframe::egui::{self, RichText, Stroke};
 
 pub(super) fn header(
     ui: &mut egui::Ui,
     colors: Palette,
     inputs: &mut Inputs,
     view: &View,
-    step: Option<usize>,
     body: Body,
     actions: &mut Vec<Command>,
 ) {
     ui.horizontal(|ui| {
         ui.set_min_height(36.0);
-        ui.spacing_mut().item_spacing.x = 10.0;
         let wide = ui.available_width() >= 600.0;
-        if let Some(label) = back_label(view, body)
-            && kit::icon_button(ui, colors, kit::Glyph::ArrowLeft, label, 36.0).clicked()
-        {
-            request_leave(view, inputs, actions);
-        }
-        if let Some(step) = step {
-            steps(ui, colors, step, wide);
+        if body == Body::Home {
+            visuals::brand(ui, colors);
+        } else {
+            leave_action(ui, colors, inputs, view, body, actions);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
             let settings = kit::icon_button(ui, colors, kit::Glyph::Gear, "Configurações", 36.0);
             egui::Popup::menu(&settings)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| settings_menu(ui, colors, inputs, view.role));
             if wide
-                && step.is_some()
+                && body == Body::Preparation
                 && let Some(code) = view.room_code.as_deref().filter(|_| view.internet)
             {
-                room_chip(ui, colors, code, view.connected);
+                room_chip(ui, colors, code);
             }
         });
     });
 }
 
-fn steps(ui: &mut egui::Ui, colors: Palette, current: usize, labels: bool) {
-    ui.spacing_mut().item_spacing.x = 8.0;
-    for (index, name) in STEPS.iter().enumerate() {
-        if index > 0 {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
-            ui.painter().hline(
-                rect.x_range(),
-                rect.center().y,
-                Stroke::new(1.0, colors.border_strong),
-            );
+fn leave_action(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    inputs: &mut Inputs,
+    view: &View,
+    body: Body,
+    actions: &mut Vec<Command>,
+) {
+    let joining = inputs.joining && view.role == Role::Guest && !view.connected;
+    let label = match body {
+        Body::Home => return,
+        Body::Browse => "Voltar",
+        Body::Join if joining => "Cancelar",
+        Body::Join => "Voltar",
+        _ => back_label(view, body).unwrap_or("Voltar"),
+    };
+    let clicked = kit::Button::new(kit::Kind::Ghost, label)
+        .glyph(kit::Glyph::ChevronLeft)
+        .size(kit::Size::Small)
+        .show(ui, colors)
+        .clicked();
+    if !clicked {
+        return;
+    }
+    match body {
+        Body::Browse => {
+            inputs.screen = Screen::Home;
+            actions.push(Command::CancelDiscovery);
         }
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-        let center = rect.center();
-        if index < current {
-            ui.painter()
-                .circle_filled(center, 10.0, colors.success.gamma_multiply(0.16));
-            kit::draw(
-                ui.painter(),
-                kit::Glyph::Check,
-                center,
-                11.0,
-                colors.success,
-                0.0,
-            );
-        } else if index == current {
-            ui.painter().circle_filled(center, 10.0, colors.action);
-            ui.painter().text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                (index + 1).to_string(),
-                egui::FontId::new(11.5, semibold_family(ui.ctx())),
-                Color32::WHITE,
-            );
-        } else {
-            ui.painter()
-                .circle_stroke(center, 9.5, Stroke::new(1.0, colors.border_strong));
-            ui.painter().text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                (index + 1).to_string(),
-                egui::FontId::proportional(11.5),
-                colors.faint,
-            );
+        Body::Join if joining => actions.push(Command::Leave),
+        Body::Join => {
+            inputs.screen = Screen::Home;
+            inputs.joining = false;
+            inputs.code_entry = false;
+            inputs.code_edited = false;
+            inputs.dismissed_error = view.error.clone();
         }
-        if labels || index == current {
-            ui.label(
-                strong(ui, *name)
-                    .size(13.5)
-                    .color(match index.cmp(&current) {
-                        std::cmp::Ordering::Less => colors.muted,
-                        std::cmp::Ordering::Equal => colors.text,
-                        std::cmp::Ordering::Greater => colors.faint,
-                    }),
-            );
-        }
+        _ => request_leave(view, inputs, actions),
     }
 }
 
-fn room_chip(ui: &mut egui::Ui, colors: Palette, code: &str, connected: bool) {
-    let prefix = RichText::new("Sala ").size(12.5).color(colors.muted);
-    let font = egui::FontId::new(12.5, semibold_family(ui.ctx()));
+fn room_chip(ui: &mut egui::Ui, colors: Palette, code: &str) {
+    let font = egui::FontId::monospace(13.0);
     let galley = ui
         .painter()
-        .layout_no_wrap(code.to_owned(), font, colors.text);
-    let prefix = egui::WidgetText::from(prefix).into_galley(
-        ui,
-        Some(egui::TextWrapMode::Extend),
-        f32::INFINITY,
-        egui::TextStyle::Body,
-    );
-    let width = 12.0 + 7.0 + 8.0 + prefix.size().x + galley.size().x + 12.0;
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::click());
+        .layout_no_wrap(code.to_owned(), font, colors.muted);
+    let size = galley.size() + egui::vec2(20.0, 14.0);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(size.x, size.y.max(32.0)), egui::Sense::click());
     let label = format!("Copiar código da sala {code}");
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
     let id = ui.id().with(("copied", code));
@@ -131,33 +102,27 @@ fn room_chip(ui: &mut egui::Ui, colors: Palette, code: &str, connected: bool) {
         .is_some_and(|until| until > now);
     let hover =
         ui.ctx()
-            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
-    ui.painter().rect(
-        rect,
-        15,
-        kit::lerp(colors.surface, colors.hover, hover),
-        Stroke::new(1.0, colors.border),
-        egui::StrokeKind::Inside,
-    );
-    let dot = egui::pos2(rect.left() + 12.0 + 3.5, rect.center().y);
-    if connected {
+            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.15);
+    if hover > 0.0 {
         ui.painter()
-            .circle_filled(dot, 6.5, colors.success.gamma_multiply(0.18));
-        ui.painter().circle_filled(dot, 3.5, colors.success);
-    } else {
-        ui.painter().circle_filled(dot, 3.5, colors.faint);
+            .rect_filled(rect, 6, colors.hover.gamma_multiply(hover));
     }
-    let x = rect.left() + 12.0 + 7.0 + 8.0;
-    let prefix_width = prefix.size().x;
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(2.0),
+            8,
+            Stroke::new(2.0, colors.text),
+            egui::StrokeKind::Outside,
+        );
+    }
+    let ink = kit::lerp(colors.muted, colors.text, hover);
     ui.painter().galley(
-        egui::pos2(x, rect.center().y - prefix.size().y * 0.5),
-        prefix,
-        colors.muted,
-    );
-    ui.painter().galley(
-        egui::pos2(x + prefix_width, rect.center().y - galley.size().y * 0.5),
+        egui::pos2(
+            rect.center().x - galley.size().x * 0.5,
+            rect.center().y - galley.size().y * 0.5,
+        ),
         galley,
-        colors.text,
+        ink,
     );
     response
         .on_hover_text(if copied { "Copiado" } else { "Copiar código" })
@@ -172,7 +137,7 @@ fn settings_menu(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: 
     egui::Frame::new()
         .fill(colors.inset)
         .stroke(Stroke::new(1.0, colors.border))
-        .corner_radius(10)
+        .corner_radius(8)
         .inner_margin(3)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
@@ -196,19 +161,19 @@ fn settings_menu(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: 
                     if selected {
                         column.painter().rect(
                             rect,
-                            8,
+                            6,
                             colors.raised,
                             Stroke::new(1.0, colors.border_strong),
                             egui::StrokeKind::Inside,
                         );
                     } else if response.hovered() {
-                        column.painter().rect_filled(rect, 8, colors.hover);
+                        column.painter().rect_filled(rect, 6, colors.hover);
                     }
                     column.painter().text(
                         rect.center(),
                         egui::Align2::CENTER_CENTER,
                         label,
-                        egui::FontId::new(13.5, semibold_family(column.ctx())),
+                        egui::FontId::new(14.0, medium_family(column.ctx())),
                         if selected { colors.text } else { colors.muted },
                     );
                     if response.clicked() && !selected {
@@ -283,7 +248,7 @@ fn settings_menu(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: 
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
                     key,
-                    egui::FontId::proportional(12.0),
+                    egui::FontId::monospace(12.0),
                     colors.text,
                 );
                 ui.label(RichText::new(action).color(colors.muted));

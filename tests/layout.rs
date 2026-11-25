@@ -40,6 +40,7 @@ fn layout_fits_supported_window_sizes_in_both_themes() {
                         "Cada pessoa abre a cópia",
                         "Uma vaga para você",
                         "Aceite para escolherem o filme juntos",
+                        "Cada pessoa usa a própria cópia",
                     ] {
                         assert!(
                             !text.contains(removed),
@@ -529,7 +530,7 @@ fn room_buttons_return_commands_and_play_is_disabled_until_both_are_ready() {
         click_label(&ctx, &view, &mut inputs, "Criar sala").as_slice(),
         [Command::HostInternet(relay)] if relay == sync2gether::network::relay::DEFAULT_RELAY
     ));
-    assert!(text.contains("ou entre com um código"));
+    assert!(text.contains("Entrar com código"));
     assert_eq!(inputs.screen, ui::Screen::Home);
     inputs.lan = true;
     assert!(matches!(
@@ -645,7 +646,7 @@ fn home_actions_are_visible_in_the_smallest_window() {
                 },
             );
             output.textures_delta.clear();
-            for label in ["Criar sala", "Entrar", "Abrir filme sozinho"] {
+            for label in ["Criar sala", "Entrar com código", "Abrir um filme sozinho"] {
                 let clip = output
                     .shapes
                     .iter()
@@ -1251,7 +1252,7 @@ fn preparation_shows_both_files_and_explains_content_comparison_for_both_roles()
             view.peer_file = view.file.clone();
             view.matched = false;
             let text = preparation_frame(&view, [960.0, 1000.0], light);
-            assert!(text.contains("Os arquivos são diferentes"));
+            assert!(text.contains("As cópias são diferentes"));
             assert!(!text.contains("Os arquivos são iguais"));
             assert!(text.contains("Escolham arquivos com o mesmo conteúdo"));
             for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
@@ -1417,6 +1418,7 @@ fn code_entry_validates_joins_and_returns_to_the_code_after_a_refusal() {
         ui::configure_theme(&ctx, light);
         let mut view = View::default();
         let mut inputs = ui::Inputs::default();
+        inputs.screen = ui::Screen::Join;
         inputs.code = "4821-gato-limao".into();
         assert!(click_label(&ctx, &view, &mut inputs, "Entrar").is_empty());
         assert!(preparation_text_of(&ctx, &view, &mut inputs).contains("Digite o código completo"));
@@ -1429,7 +1431,7 @@ fn code_entry_validates_joins_and_returns_to_the_code_after_a_refusal() {
         view.role = Role::Guest;
         view.internet = true;
         let text = preparation_text_of(&ctx, &view, &mut inputs);
-        assert_eq!(inputs.screen, ui::Screen::Home);
+        assert_eq!(inputs.screen, ui::Screen::Join);
         assert!(text.contains("Entrando"));
         assert!(!text.contains("Conectando pela internet"));
         view = View {
@@ -1437,11 +1439,46 @@ fn code_entry_validates_joins_and_returns_to_the_code_after_a_refusal() {
             ..Default::default()
         };
         let text = preparation_text_of(&ctx, &view, &mut inputs);
-        assert_eq!(inputs.screen, ui::Screen::Home);
+        assert_eq!(inputs.screen, ui::Screen::Join);
         assert_eq!(text.matches("Código incorreto").count(), 1);
         assert!(!text.contains("Entrando"));
         assert_eq!(inputs.code, " 4821 Gato LUA ");
     }
+}
+
+#[test]
+fn code_screen_opens_from_home_and_leaving_it_does_not_repeat_the_refusal() {
+    use sync2gether::runtime::{Command, Role, View};
+    let ctx = egui::Context::default();
+    ui::configure_theme(&ctx, false);
+    let mut view = View::default();
+    let mut inputs = ui::Inputs::default();
+    assert!(click_label(&ctx, &view, &mut inputs, "Entrar com código").is_empty());
+    assert_eq!(inputs.screen, ui::Screen::Join);
+    inputs.code = "4821-gato-lua".into();
+    assert!(matches!(
+        click_label(&ctx, &view, &mut inputs, "Entrar").as_slice(),
+        [Command::JoinCode { .. }]
+    ));
+    view.role = Role::Guest;
+    assert!(matches!(
+        click_label(&ctx, &view, &mut inputs, "Cancelar").as_slice(),
+        [Command::Leave]
+    ));
+    view = View {
+        error: Some("Código incorreto. Confira as palavras.".into()),
+        ..Default::default()
+    };
+    let text = preparation_text_of(&ctx, &view, &mut inputs);
+    assert_eq!(inputs.screen, ui::Screen::Join);
+    assert_eq!(text.matches("Código incorreto").count(), 1);
+    assert!(click_label(&ctx, &view, &mut inputs, "Voltar").is_empty());
+    assert_eq!(inputs.screen, ui::Screen::Home);
+    let text = preparation_text_of(&ctx, &view, &mut inputs);
+    assert!(!text.contains("Código incorreto"));
+    view.error = Some("Não foi possível abrir o arquivo.".into());
+    let text = preparation_text_of(&ctx, &view, &mut inputs);
+    assert!(text.contains("Não foi possível abrir o arquivo."));
 }
 
 #[test]
@@ -1450,6 +1487,7 @@ fn code_field_accepts_enter_after_typing_in_the_same_frame() {
     let ctx = egui::Context::default();
     let view = View::default();
     let mut inputs = ui::Inputs::default();
+    inputs.screen = ui::Screen::Join;
     preparation_text_of(&ctx, &view, &mut inputs);
     ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("room_code")));
     let mut actions = Vec::new();
@@ -1534,8 +1572,8 @@ fn mismatch_says_it_once_and_the_main_button_changes_the_local_file() {
             ..Default::default()
         };
         let text = preparation_frame(&view, [960.0, 800.0], light);
-        assert!(text.contains("Os arquivos não batem"));
-        assert_eq!(text.matches("Os arquivos são diferentes").count(), 1);
+        assert_eq!(text.matches("As cópias são diferentes").count(), 1);
+        assert!(text.contains("Escolham arquivos com o mesmo conteúdo"));
         assert!(!text.contains("Conferido"));
         assert!(!text.contains("Começar a assistir"));
         assert!(matches!(
@@ -1566,7 +1604,7 @@ fn host_room_shows_the_invite_until_someone_joins_then_the_film_step() {
     let text = preparation_frame(&view, [960.0, 640.0], false);
     assert!(text.contains("Escolham o mesmo filme"));
     assert!(!text.contains("Esperando alguém entrar"));
-    assert!(text.contains("Filme") && text.contains("4821-gato-lua"));
+    assert!(text.contains("4821-gato-lua"));
 }
 
 fn click_accessible(
@@ -1696,6 +1734,38 @@ fn back_arrow_leaves_the_room_and_asks_first_when_someone_is_there() {
             ));
         }
     }
+}
+
+#[test]
+fn wide_player_volume_bar_sets_the_level_and_the_icon_mutes_locally() {
+    use sync2gether::{
+        player::Status,
+        runtime::{Command, Role, View},
+    };
+    let ctx = egui::Context::default();
+    ui::configure_theme(&ctx, false);
+    let mut inputs = ui::Inputs::default();
+    let view = View {
+        role: Role::Guest,
+        connected: true,
+        watching: true,
+        player: Status {
+            loaded: true,
+            paused: true,
+            duration: 120.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let size = [960.0, 640.0];
+    let commands = click_accessible(&ctx, &view, &mut inputs, "Volume neste PC", size);
+    assert!(matches!(commands.as_slice(), [Command::Volume(level)] if (*level - 50.0).abs() < 2.0));
+    let level = inputs.volume;
+    let commands = click_accessible(&ctx, &view, &mut inputs, "Volume · M para silenciar", size);
+    assert!(matches!(commands.as_slice(), [Command::Volume(level)] if *level == 0.0));
+    assert!(!egui::Popup::is_any_open(&ctx));
+    let commands = click_accessible(&ctx, &view, &mut inputs, "Volume · M para silenciar", size);
+    assert!(matches!(commands.as_slice(), [Command::Volume(restored)] if *restored == level));
 }
 
 #[test]
@@ -1916,4 +1986,315 @@ fn p2p_preparation_card_and_player_buffering_overlay_render_cleanly() {
         [720.0, 540.0],
     );
     assert!(matches!(actions.as_slice(), [Command::StartStream]));
+}
+
+fn review_frame(
+    ctx: &egui::Context,
+    view: &sync2gether::runtime::View,
+    inputs: &mut ui::Inputs,
+    size: [f32; 2],
+    events: Vec<egui::Event>,
+) -> (Vec<sync2gether::runtime::Command>, egui::FullOutput) {
+    let mut actions = Vec::new();
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
+            events,
+            ..Default::default()
+        },
+        |root| {
+            actions = ui::draw_live(root, view, inputs, None);
+        },
+    );
+    output.textures_delta.clear();
+    (actions, output)
+}
+
+fn focused_label(output: &mut egui::FullOutput) -> Option<String> {
+    let update = output.platform_output.accesskit_update.take()?;
+    update
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == update.focus)
+        .and_then(|(_, node)| node.label().map(str::to_owned))
+}
+
+fn accessible_rect(output: &mut egui::FullOutput, label: &str) -> egui::Rect {
+    let update = output.platform_output.accesskit_update.take().unwrap();
+    let bounds = update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(label))
+        .and_then(|(_, node)| node.bounds())
+        .unwrap_or_else(|| panic!("no accessible bounds: {label}"));
+    egui::Rect::from_min_max(
+        egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+        egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+    )
+}
+
+fn tab_to(
+    ctx: &egui::Context,
+    view: &sync2gether::runtime::View,
+    inputs: &mut ui::Inputs,
+    size: [f32; 2],
+    label: &str,
+) {
+    for _ in 0..40 {
+        review_frame(ctx, view, inputs, size, vec![key(egui::Key::Tab)]);
+        let (_, mut output) = review_frame(ctx, view, inputs, size, vec![]);
+        if focused_label(&mut output).as_deref() == Some(label) {
+            return;
+        }
+    }
+    panic!("focus never reached: {label}");
+}
+
+fn count_focus_rings(shape: &egui::Shape) -> usize {
+    match shape {
+        egui::Shape::Rect(rect) if rect.stroke.width == 2.0 => 1,
+        egui::Shape::Vec(shapes) => shapes.iter().map(count_focus_rings).sum(),
+        _ => 0,
+    }
+}
+
+fn paused_player_view() -> sync2gether::runtime::View {
+    sync2gether::runtime::View {
+        watching: true,
+        player: sync2gether::player::Status {
+            loaded: true,
+            paused: true,
+            duration: 120.0,
+            position: 30.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[test]
+fn focused_volume_bar_takes_the_arrows_without_seeking() {
+    use sync2gether::runtime::Command;
+    const VOLUME: &str = "Volume neste PC";
+    let size = [1000.0, 640.0];
+    for fullscreen in [false, true] {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        ui::configure_theme(&ctx, false);
+        let view = paused_player_view();
+        let mut inputs = ui::Inputs::default();
+        inputs.player.fullscreen = fullscreen;
+        tab_to(&ctx, &view, &mut inputs, size, VOLUME);
+        review_frame(&ctx, &view, &mut inputs, size, vec![]);
+        for (pressed, expected) in [
+            (egui::Key::ArrowLeft, Some(95.0)),
+            (egui::Key::ArrowLeft, Some(90.0)),
+            (egui::Key::ArrowRight, Some(95.0)),
+            (egui::Key::ArrowRight, Some(100.0)),
+            (egui::Key::ArrowRight, None),
+        ] {
+            let (actions, _) = review_frame(&ctx, &view, &mut inputs, size, vec![key(pressed)]);
+            match expected {
+                Some(volume) => assert!(
+                    matches!(actions.as_slice(), [Command::Volume(v)] if *v == volume),
+                    "fullscreen {fullscreen}"
+                ),
+                None => assert!(actions.is_empty(), "fullscreen {fullscreen}"),
+            }
+            let (_, mut output) = review_frame(&ctx, &view, &mut inputs, size, vec![]);
+            assert_eq!(focused_label(&mut output).as_deref(), Some(VOLUME));
+        }
+    }
+}
+
+#[test]
+fn volume_bar_shows_a_hand_cursor() {
+    let size = [1000.0, 640.0];
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    ui::configure_theme(&ctx, false);
+    let view = paused_player_view();
+    let mut inputs = ui::Inputs::default();
+    review_frame(&ctx, &view, &mut inputs, size, vec![]);
+    let (_, mut output) = review_frame(&ctx, &view, &mut inputs, size, vec![]);
+    let bar = accessible_rect(&mut output, "Volume neste PC");
+    let moved = vec![egui::Event::PointerMoved(bar.center())];
+    review_frame(&ctx, &view, &mut inputs, size, moved);
+    let (_, output) = review_frame(&ctx, &view, &mut inputs, size, vec![]);
+    assert_eq!(
+        output.platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
+    );
+}
+
+#[test]
+fn keyboard_focus_is_distinct_from_the_active_subtitle_state() {
+    use sync2gether::player::{Track, TrackKind};
+    const CAPTIONS: &str = "Áudio e legendas";
+    let size = [1000.0, 640.0];
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    ui::configure_theme(&ctx, false);
+    let mut view = paused_player_view();
+    view.player.tracks = vec![Track {
+        id: 3,
+        kind: TrackKind::Subtitle,
+        title: Some("Legenda de teste".into()),
+        language: None,
+        selected: true,
+    }];
+    let mut inputs = ui::Inputs::default();
+    let (_, unfocused) = review_frame(&ctx, &view, &mut inputs, size, vec![]);
+    let rings = |output: &egui::FullOutput| {
+        output
+            .shapes
+            .iter()
+            .map(|clipped| count_focus_rings(&clipped.shape))
+            .sum::<usize>()
+    };
+    assert_eq!(rings(&unfocused), 0);
+    tab_to(&ctx, &view, &mut inputs, size, CAPTIONS);
+    let (_, focused) = review_frame(&ctx, &view, &mut inputs, size, vec![]);
+    assert_eq!(rings(&focused), 1);
+}
+
+#[test]
+fn file_menu_shows_keyboard_focus() {
+    use sync2gether::runtime::{Role, View};
+    const MENU: &str = "Opções do seu arquivo";
+    let size = [1000.0, 760.0];
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    ui::configure_theme(&ctx, false);
+    let view = View {
+        role: Role::Host,
+        connected: true,
+        file: Some("Filme de teste.mkv".into()),
+        verified: true,
+        player: sync2gether::player::Status {
+            loaded: true,
+            paused: true,
+            duration: 120.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut inputs = ui::Inputs::default();
+    tab_to(&ctx, &view, &mut inputs, size, MENU);
+    let (_, focused) = review_frame(&ctx, &view, &mut inputs, size, vec![]);
+    let rings: usize = focused
+        .shapes
+        .iter()
+        .map(|clipped| count_focus_rings(&clipped.shape))
+        .sum();
+    assert_eq!(rings, 1);
+}
+
+#[test]
+fn narrow_player_controls_keep_the_wide_bottom_margin() {
+    const FULLSCREEN: &str = "Tela cheia · F";
+    let bottom_gap = |width: f32| {
+        let size = [width, 640.0];
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        ui::configure_theme(&ctx, false);
+        let view = paused_player_view();
+        let mut inputs = ui::Inputs::default();
+        review_frame(&ctx, &view, &mut inputs, size, vec![]);
+        let (_, mut output) = review_frame(&ctx, &view, &mut inputs, size, vec![]);
+        640.0 - accessible_rect(&mut output, FULLSCREEN).bottom()
+    };
+    assert!((bottom_gap(480.0) - bottom_gap(1000.0)).abs() < 1.0);
+}
+
+#[test]
+fn rejected_command_line_code_is_visible_on_the_code_screen() {
+    use sync2gether::runtime::{CODE_HINT, View};
+    let ctx = egui::Context::default();
+    ui::configure_theme(&ctx, false);
+    let view = View {
+        error: Some(CODE_HINT.into()),
+        ..Default::default()
+    };
+    let mut inputs = ui::Inputs::default();
+    inputs.screen = ui::Screen::Join;
+    inputs.code = "123".into();
+    inputs.code_entry = true;
+    inputs.joining = true;
+    let text = preparation_text_of(&ctx, &view, &mut inputs);
+    assert_eq!(inputs.screen, ui::Screen::Join);
+    assert!(text.contains(CODE_HINT));
+}
+
+fn demo_frame(
+    ctx: &egui::Context,
+    state: &mut sync2gether::model::SessionState,
+    inputs: &mut ui::Inputs,
+    events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    use sync2gether::model::Action;
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(960.0, 640.0),
+            )),
+            events,
+            ..Default::default()
+        },
+        |root| {
+            for Action::SetDemoState(next) in ui::draw_with_inputs(root, *state, true, inputs) {
+                *state = next;
+            }
+        },
+    );
+    output.textures_delta.clear();
+    output
+}
+
+fn demo_click(
+    ctx: &egui::Context,
+    state: &mut sync2gether::model::SessionState,
+    inputs: &mut ui::Inputs,
+    label: &str,
+) {
+    let position = demo_frame(ctx, state, inputs, vec![])
+        .shapes
+        .iter()
+        .find_map(|shape| find_label(&shape.shape, label))
+        .unwrap_or_else(|| panic!("label not found: {label}"));
+    for pressed in [true, false] {
+        let events = vec![
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        demo_frame(ctx, state, inputs, events);
+    }
+}
+
+#[test]
+fn leaving_the_connecting_demo_does_not_read_as_a_refused_code() {
+    use sync2gether::model::SessionState;
+    for (target, screen) in [
+        (SessionState::Idle, ui::Screen::Home),
+        (SessionState::PendingApproval, ui::Screen::Preparation),
+    ] {
+        let ctx = egui::Context::default();
+        ui::configure_theme(&ctx, false);
+        let mut inputs = ui::Inputs::default();
+        let mut state = SessionState::Connecting;
+        let current = state.label();
+        demo_click(&ctx, &mut state, &mut inputs, current);
+        demo_click(&ctx, &mut state, &mut inputs, target.label());
+        assert_eq!(state, target);
+        for _ in 0..2 {
+            demo_frame(&ctx, &mut state, &mut inputs, vec![]);
+        }
+        assert_eq!(inputs.screen, screen);
+    }
 }

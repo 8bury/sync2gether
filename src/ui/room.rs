@@ -1,4 +1,7 @@
-use super::{Inputs, Palette, feedback, kit, preparation, quiet, section_label, strong, title};
+use super::{
+    Inputs, Palette, feedback, kit, preparation, quiet, section_label, strong, title,
+    visuals::{self, Presence},
+};
 use crate::runtime::{Command, Role, View};
 use eframe::egui::{self, RichText, Stroke};
 
@@ -30,14 +33,13 @@ pub(super) fn confirm_leave(
             egui::Frame::new()
                 .fill(colors.surface)
                 .stroke(Stroke::new(1.0, colors.border))
-                .corner_radius(16)
+                .corner_radius(10)
                 .inner_margin(24),
         )
         .show(ctx, |ui| {
             ui.set_width(ui.available_width().min(340.0));
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.label(title(
-                ui,
                 if host {
                     "Encerrar a sala?"
                 } else {
@@ -97,7 +99,7 @@ pub(super) fn room_contents(
 ) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(title(ui, "Sala", 20.0));
+            ui.label(title("Sala", 22.0));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if kit::icon_button(ui, colors, kit::Glyph::Close, "Fechar", 32.0).clicked() {
                     inputs.room_panel = false;
@@ -115,7 +117,18 @@ pub(super) fn room_contents(
             });
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
-            kit::avatar(ui, colors, name, 36.0);
+            visuals::pair(
+                ui,
+                colors,
+                if view.connected {
+                    Presence::Together
+                } else if view.role == Role::Local {
+                    Presence::Solo
+                } else {
+                    Presence::Lost
+                },
+                18.0,
+            );
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.add(egui::Label::new(strong(ui, name)).truncate());
@@ -246,10 +259,10 @@ pub(super) fn approval(
     actions: &mut Vec<Command>,
 ) {
     egui::Frame::new()
-        .fill(super::kit::lerp(colors.surface, colors.accent, 0.08))
-        .stroke(Stroke::new(1.0, colors.accent.gamma_multiply(0.55)))
-        .corner_radius(16)
-        .inner_margin(egui::Margin::symmetric(16, 14))
+        .fill(colors.raised)
+        .stroke(Stroke::new(1.0, colors.border_strong))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(16, 12))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             let wide = ui.available_width() >= 460.0;
@@ -259,7 +272,6 @@ pub(super) fn approval(
             let buttons = accept().natural_width(ui) + reject().natural_width(ui) + 8.0;
             let mut answer = None;
             ui.horizontal(|ui| {
-                kit::avatar(ui, colors, &request.name, 36.0);
                 let text_width = (ui.available_width()
                     - if wide {
                         buttons + ui.spacing().item_spacing.x
@@ -301,7 +313,6 @@ pub(super) fn approval(
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    ui.add_space(44.0);
                     if accept().show(ui, colors).clicked() {
                         answer = Some(true);
                     }

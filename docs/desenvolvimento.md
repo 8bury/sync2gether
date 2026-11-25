@@ -74,9 +74,10 @@ do app, com dados fictícios e sem enviar comandos ao runtime. Use `--demo-light
 Para revisar o fluxo inicial, use `idle` para a tela de boas-vindas,
 `browsing` para a lista e conexão manual, `connecting` para a tentativa de
 conexão e `pending-approval` para a espera do convidado. `approval` continua
-mostrando a solicitação na tela do anfitrião. A fonte Inter, nos pesos regular
-e semibold, está incorporada em `assets/fonts/`, com a licença SIL OFL 1.1;
-a interface não lê fontes do disco durante o desenho.
+mostrando a solicitação na tela do anfitrião. `join-code` mostra a entrada com
+código. As fontes Geist (regular e medium) e Geist Mono (regular) estão
+incorporadas em `assets/fonts/`, com a licença SIL OFL 1.1; a interface não lê
+fontes do disco durante o desenho.
 
 Os cenários `choosing`, `verifying`, `ready`, `mismatch` e `player-error`
 permitem revisar a lista de arquivos, progresso, liberação do play e falhas.

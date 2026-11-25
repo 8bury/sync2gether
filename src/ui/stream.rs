@@ -149,9 +149,8 @@ pub(super) fn preparation_strip(
     }
     if let StreamPhase::Error(err) = &view.stream.phase {
         egui::Frame::new()
-            .fill(colors.surface)
             .stroke(Stroke::new(1.0, colors.warning.gamma_multiply(0.5)))
-            .corner_radius(14)
+            .corner_radius(8)
             .inner_margin(egui::Margin::same(14))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
@@ -181,25 +180,22 @@ pub(super) fn preparation_strip(
     if !view.can_stream || view.matched {
         return;
     }
-    let (title, hint, button_label, kind) = if view.role == Role::Guest {
+    let (title, button_label, kind) = if view.role == Role::Guest {
         (
             "Não tem sua cópia do filme?",
-            "Receba direto do anfitrião por túnel QUIC P2P cifrado, sem passar vídeo pelo servidor.",
             "Assistir por streaming P2P",
             kit::Kind::Primary,
         )
     } else {
         (
             "A outra pessoa não tem o arquivo?",
-            "Transmita direto do seu PC por túnel QUIC P2P cifrado com cache progressivo.",
             "Transmitir meu filme (P2P)",
             kit::Kind::Secondary,
         )
     };
     egui::Frame::new()
-        .fill(colors.surface)
         .stroke(Stroke::new(1.0, colors.border))
-        .corner_radius(14)
+        .corner_radius(8)
         .inner_margin(egui::Margin::same(14))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -211,16 +207,7 @@ pub(super) fn preparation_strip(
                     let bw = button.natural_width(ui);
                     let text_w = (ui.available_width() - bw - 16.0).max(120.0);
                     ui.allocate_ui(egui::vec2(text_w, 40.0), |ui| {
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 2.0;
-                            ui.label(strong(ui, title).size(13.5));
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(hint).size(12.5).color(colors.muted),
-                                )
-                                .wrap(),
-                            );
-                        });
+                        ui.label(strong(ui, title).size(13.5));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button.show(ui, colors).clicked() {
@@ -232,9 +219,6 @@ pub(super) fn preparation_strip(
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 8.0;
                     ui.label(strong(ui, title).size(13.5));
-                    ui.add(
-                        egui::Label::new(RichText::new(hint).size(12.5).color(colors.muted)).wrap(),
-                    );
                     if kit::Button::new(kind, button_label)
                         .size(kit::Size::Medium)
                         .fill_width(ui)
@@ -268,12 +252,15 @@ fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Ve
         StreamPhase::Idle | StreamPhase::Error(_) => ("Streaming P2P", false, false),
     };
     egui::Frame::new()
-        .fill(colors.surface)
         .stroke(Stroke::new(
             1.0,
-            if warn { colors.warning } else { colors.accent }.gamma_multiply(0.45),
+            if warn {
+                colors.warning.gamma_multiply(0.45)
+            } else {
+                colors.border
+            },
         ))
-        .corner_radius(14)
+        .corner_radius(8)
         .inner_margin(egui::Margin::same(14))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());

@@ -2,6 +2,7 @@ use crate::protocol::{MAX_MESSAGE, Message, VERSION};
 use std::{
     io,
     net::SocketAddr,
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -115,17 +116,19 @@ async fn exchange(
     if events.send(Event::Connected(tx)).await.is_err() {
         return Ended::Left;
     }
+    let draining = AtomicBool::new(false);
     let incoming = async {
         loop {
             match timeout(SILENCE_TIMEOUT, reader.recv()).await {
                 Ok(Ok(Message::Bye)) => return Ended::PeerLeft,
+                Ok(Ok(_)) if draining.load(Ordering::Relaxed) => {}
                 Ok(Ok(message)) => {
                     if events
                         .send(Event::Message(Box::new(message), Instant::now()))
                         .await
                         .is_err()
                     {
-                        return Ended::Left;
+                        draining.store(true, Ordering::Relaxed);
                     }
                 }
                 _ => return Ended::Lost,
@@ -150,10 +153,17 @@ async fn exchange(
         }
         Ended::Lost
     };
-    let ended = tokio::select! { ended = incoming => ended, ended = outgoing => ended };
-    if ended == Ended::Left {
-        let _ = timeout(FAREWELL, async { while reader.recv().await.is_ok() {} }).await;
-    }
+    tokio::pin!(incoming, outgoing);
+    let ended = tokio::select! {
+        ended = &mut incoming => ended,
+        ended = &mut outgoing => {
+            if ended == Ended::Left {
+                draining.store(true, Ordering::Relaxed);
+                let _ = timeout(FAREWELL, &mut incoming).await;
+            }
+            ended
+        }
+    };
     let _ = events
         .send(match ended {
             Ended::PeerLeft => Event::PeerLeft,

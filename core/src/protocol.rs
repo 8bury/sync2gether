@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub const VERSION: u32 = 5;
 pub const PORT: u16 = 7842;
 pub const MAX_MESSAGE: usize = 16 * 1024;
+pub const MAX_HASH_TABLE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Media {
@@ -28,7 +29,7 @@ pub struct StreamOffer {
 }
 impl StreamOffer {
     pub fn valid(&self) -> bool {
-        let max_chunks = (crate::stream::wire::MAX_HASH_TABLE_BYTES / 32) as u64;
+        let max_chunks = (MAX_HASH_TABLE_BYTES / 32) as u64;
         self.media.valid()
             && self.media.bytes > 0
             && valid_file_name(&self.file_name)
@@ -62,6 +63,57 @@ impl StreamAnswer {
                 .candidates
                 .iter()
                 .all(|c| c.parse::<std::net::SocketAddr>().is_ok())
+    }
+}
+
+pub const MAX_SDP: usize = 12 * 1024;
+
+pub fn valid_sdp(sdp: &str) -> bool {
+    !sdp.is_empty()
+        && sdp.len() <= MAX_SDP
+        && sdp.starts_with("v=0")
+        && sdp
+            .lines()
+            .any(|line| line.trim_end().starts_with("a=fingerprint:sha-256 "))
+        && !sdp
+            .chars()
+            .any(|c| c.is_control() && c != '\r' && c != '\n')
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebStreamOffer {
+    pub id: u64,
+    pub sdp: String,
+}
+impl WebStreamOffer {
+    pub fn valid(&self) -> bool {
+        self.id != 0 && valid_sdp(&self.sdp)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WebStreamAnswer {
+    pub id: u64,
+    pub sdp: String,
+    pub media: Media,
+    pub file_name: String,
+    pub duration: f64,
+    pub chunk_size: u32,
+    pub hash_table_digest: String,
+}
+impl WebStreamAnswer {
+    pub fn valid(&self) -> bool {
+        let max_chunks = (MAX_HASH_TABLE_BYTES / 32) as u64;
+        self.id != 0
+            && valid_sdp(&self.sdp)
+            && self.media.valid()
+            && self.media.bytes > 0
+            && valid_file_name(&self.file_name)
+            && self.duration.is_finite()
+            && self.duration >= 0.0
+            && (4096..=4 * 1024 * 1024).contains(&self.chunk_size)
+            && self.media.bytes.div_ceil(u64::from(self.chunk_size)) <= max_chunks
+            && valid_hex_64(&self.hash_table_digest)
     }
 }
 
@@ -175,6 +227,10 @@ pub struct Presence {
     pub streaming: bool,
     #[serde(default)]
     pub stream_progress: Option<StreamProgress>,
+    #[serde(default)]
+    pub web_guest: bool,
+    #[serde(default)]
+    pub web_stream: bool,
 }
 impl Presence {
     pub fn valid(&self) -> bool {
@@ -309,7 +365,7 @@ pub enum Message {
     Welcome {
         version: u32,
     },
-    Presence(Presence),
+    Presence(Box<Presence>),
     Request(Control),
     State(Box<Snapshot>),
     Prepared {
@@ -336,11 +392,90 @@ pub enum Message {
         id: u64,
     },
     Bye,
+    WebStreamOffer(Box<WebStreamOffer>),
+    WebStreamAnswer(Box<WebStreamAnswer>),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SDP: &str = "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\na=fingerprint:sha-256 AA:BB\r\n";
+
+    #[test]
+    fn web_stream_signaling_is_bounded_and_needs_a_fingerprint() {
+        assert!(
+            WebStreamOffer {
+                id: 1,
+                sdp: SDP.into()
+            }
+            .valid()
+        );
+        assert!(
+            !WebStreamOffer {
+                id: 0,
+                sdp: SDP.into()
+            }
+            .valid()
+        );
+        assert!(
+            !WebStreamOffer {
+                id: 1,
+                sdp: "v=0\r\n".into()
+            }
+            .valid()
+        );
+        assert!(
+            !WebStreamOffer {
+                id: 1,
+                sdp: format!("{SDP}{}", "a".repeat(MAX_SDP))
+            }
+            .valid()
+        );
+        assert!(
+            !WebStreamOffer {
+                id: 1,
+                sdp: format!("{SDP}\u{0}")
+            }
+            .valid()
+        );
+        let answer = WebStreamAnswer {
+            id: 1,
+            sdp: SDP.into(),
+            media: Media {
+                hash: "a".repeat(64),
+                bytes: 10,
+            },
+            file_name: "Filme.mp4".into(),
+            duration: 60.0,
+            chunk_size: 256 * 1024,
+            hash_table_digest: "b".repeat(64),
+        };
+        assert!(answer.valid());
+        assert!(
+            !WebStreamAnswer {
+                file_name: "/home/x.mp4".into(),
+                ..answer.clone()
+            }
+            .valid()
+        );
+        assert!(
+            !WebStreamAnswer {
+                chunk_size: 1,
+                ..answer.clone()
+            }
+            .valid()
+        );
+        let json = serde_json::to_string(&Message::WebStreamOffer(Box::new(WebStreamOffer {
+            id: 9,
+            sdp: SDP.into(),
+        })))
+        .unwrap();
+        assert!(matches!(
+            serde_json::from_str::<Message>(&json).unwrap(),
+            Message::WebStreamOffer(offer) if offer.id == 9
+        ));
+    }
 
     #[test]
     fn presentation_metadata_is_bounded_and_never_accepts_paths() {

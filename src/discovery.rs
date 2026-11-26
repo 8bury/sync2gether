@@ -18,8 +18,8 @@ pub struct Room {
     pub address: SocketAddr,
 }
 pub fn device_name(name: &str) -> String {
-    let name: String = name.chars().filter(|c| !c.is_control()).take(64).collect();
-    if name.trim().is_empty() {
+    let name = sync2gether_core::device_name(name);
+    if name == sync2gether_core::UNNAMED {
         crate::i18n::text().errors.other_computer.into()
     } else {
         name

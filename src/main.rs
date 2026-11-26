@@ -20,6 +20,8 @@ struct Args {
     code: Option<String>,
     #[arg(long, value_name = "NOME[:PORTA]", env = "SYNC2GETHER_RELAY", default_value = sync2gether::network::relay::DEFAULT_RELAY)]
     relay: String,
+    #[arg(long, value_name = "URL", env = "SYNC2GETHER_WEB_URL")]
+    web_url: Option<String>,
     #[arg(long, value_name = "IP[:PORTA]", conflicts_with = "join", num_args = 0..=1, default_missing_value = "auto")]
     host: Option<String>,
     #[arg(long, requires = "host", default_value_t = sync2gether::protocol::PORT)]
@@ -113,7 +115,9 @@ fn main() -> eframe::Result {
                 });
             }
             Ok(Box::new(
-                App::with_commands_gl(cc, commands)?.with_relay(_args.relay),
+                App::with_commands_gl(cc, commands)?
+                    .with_relay(_args.relay)
+                    .with_web_url(_args.web_url),
             ))
         }),
     );

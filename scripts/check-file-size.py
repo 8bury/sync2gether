@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 MAX_LINES = 950
-SOURCE_DIRS = ("src", "relay/src")
+SOURCE_DIRS = ("src", "relay/src", "core/src", "web/src")
 
 
 def production_lines(src: str) -> int:

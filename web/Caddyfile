@@ -1,0 +1,27 @@
+{
+	admin off
+	persist_config off
+	auto_https off
+}
+
+:8080 {
+	encode zstd gzip
+
+	@relay path /relay
+	handle @relay {
+		reverse_proxy {$RELAY_UPSTREAM}
+	}
+
+	handle {
+		root * /srv
+		file_server
+		header {
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+			Referrer-Policy "no-referrer"
+			X-Content-Type-Options "nosniff"
+			Cross-Origin-Opener-Policy "same-origin"
+			Permissions-Policy "camera=(), microphone=(), geolocation=()"
+			Cache-Control "no-cache"
+		}
+	}
+}

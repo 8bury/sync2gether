@@ -7,7 +7,7 @@ description = "Assista a filmes locais em sincronia com outra pessoa pela intern
 publish = false
 
 [workspace]
-members = ["relay"]
+members = ["core", "relay", "web"]
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "deny"
@@ -28,8 +28,8 @@ rcgen = "0.14.10"
 rfd = "0.17.2"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2.2.0"
-snow = "0.10.0"
-spake2 = "0.4.0"
+str0m = { version = "0.25.0", default-features = false, features = ["rust-crypto"] }
+sync2gether-core = { path = "core" }
 sys-locale = "0.3.2"
 sync2gether-relay = { path = "relay" }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -47,3 +47,8 @@ demo = ["dep:image"]
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[dev-dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+sync2gether-web = { path = "web" }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }

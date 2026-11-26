@@ -11,6 +11,7 @@ pub struct App {
     runtime: Option<Runtime>,
     view: View,
     inputs: crate::ui::Inputs,
+    web_url: Option<String>,
     texture: Option<egui::TextureHandle>,
     renderer: Option<crate::player::GlRenderer>,
     fullscreen_applied: bool,
@@ -31,6 +32,7 @@ impl App {
             renderer,
             view: View::default(),
             inputs: crate::ui::Inputs::default(),
+            web_url: None,
             texture: None,
             fullscreen_applied: false,
             #[cfg(feature = "demo")]
@@ -49,6 +51,10 @@ impl App {
     }
     pub fn with_relay(mut self, relay: String) -> Self {
         self.inputs.relay = relay;
+        self
+    }
+    pub fn with_web_url(mut self, web_url: Option<String>) -> Self {
+        self.web_url = web_url;
         self
     }
     fn queue_commands(mut self, commands: Vec<crate::runtime::Command>) -> Self {
@@ -95,6 +101,7 @@ impl App {
             runtime: None,
             view: View::default(),
             inputs: crate::ui::Inputs::default(),
+            web_url: None,
             texture: None,
             renderer: None,
             fullscreen_applied: false,
@@ -126,6 +133,8 @@ impl eframe::App for App {
         if let Some(runtime) = &self.runtime {
             while let Ok(view) = runtime.views.try_recv() {
                 self.view = view;
+                let base = crate::ui::web_base(self.web_url.as_deref(), &self.inputs.relay);
+                self.view.web_link = crate::ui::web_link(base, &self.view);
             }
             let frame = runtime
                 .frames

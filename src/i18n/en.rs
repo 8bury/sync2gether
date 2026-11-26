@@ -158,6 +158,8 @@ pub static STRINGS: Strings = Strings {
         click_to_copy: "Click to copy",
         name_copied: "Name copied",
         generating_code: "Generating the code…",
+        browser_hint: "No app? They can watch in the browser.",
+        copy_browser_link: "Copy browser link",
     },
     copies: Copies {
         not_joined: "Hasn't joined yet",
@@ -411,6 +413,7 @@ pub static STRINGS: Strings = Strings {
         unknown_operation: "Unknown streaming operation",
         chunk_refused: "Peer refused the chunk request",
         response_too_large: "Response exceeds the expected limit",
+        web_answer: "Couldn't answer the browser's streaming offer.",
     },
     player_errors: PlayerErrors {
         libmpv_missing_windows: "libmpv not found. Make sure libmpv-2.dll is in the same folder as sync2gether.exe.",

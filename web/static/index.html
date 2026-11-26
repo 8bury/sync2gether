@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark light">
+  <title>sync2gether no navegador</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <span class="brand">sync2gether</span>
+    <span class="peer" id="peer" hidden></span>
+    <button class="ghost small" id="leave" type="button" hidden>Sair da sala</button>
+  </header>
+
+  <main id="main">
+    <section class="card" id="entry" hidden>
+      <h1>Entrar na sala</h1>
+      <p class="muted">Cole o link ou o código que a outra pessoa enviou, como <span class="mono">4821-gato-lua</span>.</p>
+      <form id="entry-form" autocomplete="off">
+        <input id="entry-code" class="mono" type="text" inputmode="text" spellcheck="false" placeholder="4821-gato-lua" aria-label="Código da sala" required>
+        <button class="primary" type="submit">Entrar</button>
+      </form>
+      <p class="error" id="entry-error" hidden></p>
+    </section>
+
+    <section class="card" id="connecting" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <p id="connecting-text">Conectando à sala…</p>
+    </section>
+
+    <section class="card" id="ended" hidden>
+      <h1 id="ended-title">Sala encerrada</h1>
+      <p class="muted" id="ended-text"></p>
+      <button class="secondary" id="again" type="button">Entrar em outra sala</button>
+    </section>
+
+    <section id="room" hidden>
+      <div class="card" id="prepare">
+        <p class="label">Filme do anfitrião</p>
+        <p class="title" id="host-file">Esperando o anfitrião escolher o filme…</p>
+        <p class="warning" id="format-warning" hidden></p>
+        <div class="choices" id="choices">
+          <label class="primary file" id="pick-label">
+            <input id="pick" type="file" accept="video/*,.mkv,.mp4,.webm,.mov,.m4v">
+            <span>Usar minha cópia</span>
+          </label>
+          <button class="secondary" id="stream" type="button" hidden>Assistir por streaming</button>
+        </div>
+        <div class="progress" id="hashing" hidden>
+          <p class="muted" id="hashing-text">Conferindo seu arquivo…</p>
+          <div class="bar"><div id="hashing-bar"></div></div>
+        </div>
+        <p class="muted" id="copy-status" hidden></p>
+      </div>
+
+      <div class="stage" id="stage">
+        <video id="video" playsinline preload="auto"></video>
+        <button class="overlay" id="unlock" type="button" hidden>Toque para iniciar</button>
+        <button class="overlay small" id="unmute" type="button" hidden>Toque para ativar o som</button>
+        <div class="controls" id="controls">
+          <button class="icon" id="toggle" type="button" aria-label="Reproduzir">▶</button>
+          <span class="time mono" id="time">0:00</span>
+          <input id="seekbar" type="range" min="0" max="1000" value="0" step="1" aria-label="Posição">
+          <span class="time mono" id="duration">0:00</span>
+          <input id="volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="Volume">
+          <button class="icon" id="fullscreen" type="button" aria-label="Tela cheia">⛶</button>
+        </div>
+      </div>
+      <p class="status" id="status"></p>
+      <p class="notice" id="notice" hidden></p>
+    </section>
+  </main>
+
+  <footer class="foot muted">
+    Cifrado de ponta a ponta. O código da sala fica só no seu navegador.
+  </footer>
+</body>
+</html>

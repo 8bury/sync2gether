@@ -1,25 +1,10 @@
 use super::{Inbound, Outbound};
-use crate::protocol::{MAX_MESSAGE, Message};
-use serde::{Deserialize, Serialize};
-use spake2::{Ed25519Group, Identity, Password, Spake2};
-use std::{io, sync::Arc};
+use crate::protocol::Message;
+use std::io;
+pub use sync2gether_core::secure::{
+    Cipher, INTRO_PAKE, INTRO_RESUME, Initiator, Key, MAX_FRAME, Pake, WRONG_KEY, pake_start,
+};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-
-pub type Key = [u8; 32];
-
-const NOISE: &str = "Noise_NNpsk0_25519_ChaChaPoly_BLAKE2s";
-const PROLOGUE: &[u8] = b"sync2gether relay 1";
-const TAG: usize = 16;
-const MAX_FRAME: usize = MAX_MESSAGE + 256;
-
-pub const INTRO_PAKE: u8 = 1;
-pub const INTRO_RESUME: u8 = 2;
-const WRONG_KEY: u8 = 0xff;
-
-#[derive(Serialize, Deserialize)]
-struct Hello {
-    name: String,
-}
 
 pub async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
     if bytes.is_empty() || bytes.len() > MAX_FRAME {
@@ -39,43 +24,20 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Vec<
     Ok(bytes)
 }
 
-fn rejected() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        crate::i18n::text().errors.key_mismatch,
-    )
-}
-fn noise(error: snow::Error) -> io::Error {
-    io::Error::other(error)
-}
-
-pub fn pake_start(room: &str, password: &str) -> (Spake2<Ed25519Group>, Vec<u8>) {
-    Spake2::<Ed25519Group>::start_symmetric(
-        &Password::new(password.as_bytes()),
-        &Identity::new(format!("sync2gether/{room}").as_bytes()),
-    )
-}
-pub fn pake_finish(state: Spake2<Ed25519Group>, inbound: &[u8]) -> io::Result<Key> {
-    let key = state
-        .finish(inbound)
-        .map_err(|_| io::Error::other(crate::i18n::text().errors.invalid_spake))?;
-    key.try_into()
-        .map_err(|_| io::Error::other(crate::i18n::text().errors.spake_key_size))
+fn localized(error: io::Error) -> io::Error {
+    let errors = &crate::i18n::text().errors;
+    match error.kind() {
+        io::ErrorKind::PermissionDenied => {
+            io::Error::new(io::ErrorKind::PermissionDenied, errors.key_mismatch)
+        }
+        io::ErrorKind::InvalidInput => io::Error::other(errors.message_too_large),
+        _ => error,
+    }
 }
 
-fn builder(psk: &Key) -> io::Result<snow::Builder<'_>> {
-    snow::Builder::new(NOISE.parse().map_err(noise)?)
-        .prologue(PROLOGUE)
-        .map_err(noise)?
-        .psk(0, psk)
-        .map_err(noise)
-}
-fn hello(name: &str) -> io::Result<Vec<u8>> {
-    serde_json::to_vec(&Hello { name: name.into() }).map_err(io::Error::other)
-}
-fn peer_name(payload: &[u8]) -> io::Result<String> {
-    let hello: Hello = serde_json::from_slice(payload).map_err(io::Error::other)?;
-    Ok(crate::discovery::device_name(&hello.name))
+pub fn pake_finish(state: Pake, inbound: &[u8]) -> io::Result<Key> {
+    sync2gether_core::secure::pake_finish(state, inbound)
+        .map_err(|_| io::Error::other(crate::i18n::text().errors.invalid_spake))
 }
 
 pub struct Channel<R, W> {
@@ -84,26 +46,20 @@ pub struct Channel<R, W> {
     pub peer: String,
 }
 
-fn channel<R, W>(
-    reader: R,
-    writer: W,
-    state: snow::HandshakeState,
-    peer: String,
-) -> io::Result<Channel<R, W>> {
-    let transport = Arc::new(state.into_stateless_transport_mode().map_err(noise)?);
-    Ok(Channel {
+fn channel<R, W>(reader: R, writer: W, cipher: Cipher, peer: String) -> Channel<R, W> {
+    Channel {
         reader: SecureReader {
             inner: reader,
-            transport: transport.clone(),
+            cipher: cipher.clone(),
             nonce: 0,
         },
         writer: SecureWriter {
             inner: writer,
-            transport,
+            cipher,
             nonce: 0,
         },
         peer,
-    })
+    }
 }
 
 pub async fn initiate<R, W>(
@@ -116,21 +72,12 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut state = builder(psk)?.build_initiator().map_err(noise)?;
-    let mut buffer = vec![0; MAX_FRAME];
-    let written = state
-        .write_message(&hello(name)?, &mut buffer)
-        .map_err(noise)?;
-    write_frame(&mut writer, &buffer[..written]).await?;
+    let (initiator, first) = Initiator::start(psk, name)?;
+    write_frame(&mut writer, &first).await?;
     let answer = read_frame(&mut reader).await?;
-    if answer == [WRONG_KEY] {
-        return Err(rejected());
-    }
-    let read = state
-        .read_message(&answer, &mut buffer)
-        .map_err(|_| rejected())?;
-    let peer = peer_name(&buffer[..read])?;
-    channel(reader, writer, state, peer)
+    let (cipher, peer) = initiator.finish(&answer).map_err(localized)?;
+    let peer = crate::discovery::device_name(&peer);
+    Ok(channel(reader, writer, cipher, peer))
 }
 
 pub async fn respond<R, W>(
@@ -143,62 +90,49 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut state = builder(psk)?.build_responder().map_err(noise)?;
-    let mut buffer = vec![0; MAX_FRAME];
     let first = read_frame(&mut reader).await?;
-    let read = match state.read_message(&first, &mut buffer) {
-        Ok(read) => read,
-        Err(_) => {
-            let _ = write_frame(&mut writer, &[WRONG_KEY]).await;
-            return Err(rejected());
+    match sync2gether_core::secure::respond(psk, name, &first) {
+        Ok(responded) => {
+            write_frame(&mut writer, &responded.answer).await?;
+            let peer = crate::discovery::device_name(&responded.peer);
+            Ok(channel(reader, writer, responded.cipher, peer))
         }
-    };
-    let peer = peer_name(&buffer[..read])?;
-    let written = state
-        .write_message(&hello(name)?, &mut buffer)
-        .map_err(noise)?;
-    write_frame(&mut writer, &buffer[..written]).await?;
-    channel(reader, writer, state, peer)
+        Err(error) => {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                let _ = write_frame(&mut writer, &[WRONG_KEY]).await;
+            }
+            Err(localized(error))
+        }
+    }
 }
 
 pub struct SecureReader<R> {
     inner: R,
-    transport: Arc<snow::StatelessTransportState>,
+    cipher: Cipher,
     nonce: u64,
 }
 pub struct SecureWriter<W> {
     inner: W,
-    transport: Arc<snow::StatelessTransportState>,
+    cipher: Cipher,
     nonce: u64,
 }
 
 impl<R: AsyncRead + Unpin + Send> Inbound for SecureReader<R> {
     async fn recv(&mut self) -> io::Result<Message> {
         let frame = read_frame(&mut self.inner).await?;
-        let mut plain = vec![0; frame.len()];
-        let read = self
-            .transport
-            .read_message(self.nonce, &frame, &mut plain)
+        let message = self
+            .cipher
+            .open(self.nonce, &frame)
             .map_err(|_| io::Error::other(crate::i18n::text().errors.invalid_encrypted))?;
         self.nonce += 1;
-        serde_json::from_slice(&plain[..read]).map_err(io::Error::other)
+        Ok(message)
     }
 }
 impl<W: AsyncWrite + Unpin + Send> Outbound for SecureWriter<W> {
     async fn send(&mut self, message: &Message) -> io::Result<()> {
-        let plain = serde_json::to_vec(message).map_err(io::Error::other)?;
-        if plain.len() > MAX_MESSAGE {
-            return Err(io::Error::other(
-                crate::i18n::text().errors.message_too_large,
-            ));
-        }
-        let mut frame = vec![0; plain.len() + TAG];
-        let written = self
-            .transport
-            .write_message(self.nonce, &plain, &mut frame)
-            .map_err(noise)?;
+        let frame = self.cipher.seal(self.nonce, message).map_err(localized)?;
         self.nonce += 1;
-        write_frame(&mut self.inner, &frame[..written]).await
+        write_frame(&mut self.inner, &frame).await
     }
 }
 
@@ -274,7 +208,7 @@ mod tests {
         let (mut capture, mut source) = tokio::io::duplex(64 * 1024);
         let mut writer = SecureWriter {
             inner: &mut source,
-            transport: guest.writer.transport.clone(),
+            cipher: guest.writer.cipher.clone(),
             nonce: 0,
         };
         writer.send(&Message::Bye).await.unwrap();
@@ -282,7 +216,7 @@ mod tests {
         let (mut feed, inbox) = tokio::io::duplex(64 * 1024);
         let mut reader = SecureReader {
             inner: inbox,
-            transport: host.reader.transport.clone(),
+            cipher: host.reader.cipher.clone(),
             nonce: 0,
         };
         write_frame(&mut feed, &frame).await.unwrap();
@@ -297,7 +231,7 @@ mod tests {
                 write_frame(&mut feed, &tampered).await.unwrap();
                 inbox
             },
-            transport: host.reader.transport.clone(),
+            cipher: host.reader.cipher.clone(),
             nonce: 0,
         };
         assert!(fresh.recv().await.is_err(), "tampered frame accepted");

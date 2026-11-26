@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Serialize, de::DeserializeOwned};
 use std::{
     collections::HashMap,
     io,
@@ -17,56 +17,16 @@ use tokio::{
 use tokio_rustls::TlsAcceptor;
 
 pub mod tls;
+pub mod ws;
 
-pub const VERSION: u32 = 1;
-pub const PORT: u16 = 7843;
-pub const MAX_CONTROL: usize = 1024;
+pub use sync2gether_core::relay_wire::{
+    MAX_CONTROL, PORT, Reply, Request, VERSION, valid_room, valid_secret,
+};
 pub const KEEPALIVE: Duration = Duration::from_secs(15);
 pub const CONTROL_SILENCE: Duration = Duration::from_secs(45);
 const FIRST_REQUEST: Duration = Duration::from_secs(5);
 const WRITE: Duration = Duration::from_secs(5);
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Request {
-    Host {
-        version: u32,
-        room: Option<String>,
-        secret: String,
-    },
-    Alive,
-    Accept {
-        version: u32,
-        room: String,
-        secret: String,
-        ticket: u64,
-    },
-    Join {
-        version: u32,
-        room: String,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Reply {
-    Hosting { room: String },
-    Incoming { ticket: u64 },
-    Alive,
-    Paired,
-    Unknown,
-    Away,
-    Taken,
-    Limited,
-    Outdated { version: u32 },
-}
-
-pub fn valid_room(room: &str) -> bool {
-    (4..=8).contains(&room.len())
-        && room.bytes().all(|b| b.is_ascii_digit())
-        && !room.starts_with('0')
-}
-pub fn valid_secret(secret: &str) -> bool {
-    secret.len() == 32 && secret.bytes().all(|b| b.is_ascii_hexdigit())
-}
 fn same_secret(a: &str, b: &str) -> bool {
     a.len() == b.len()
         && a.bytes()
@@ -129,9 +89,10 @@ impl Default for Limits {
     }
 }
 
-enum RelayStream {
+pub(crate) enum RelayStream {
     Plain(TcpStream),
     Tls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
+    Ws(Box<ws::WsStream>),
 }
 
 impl AsyncRead for RelayStream {
@@ -143,6 +104,7 @@ impl AsyncRead for RelayStream {
         match &mut *self {
             Self::Plain(stream) => Pin::new(stream).poll_read(cx, buf),
             Self::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Ws(stream) => Pin::new(stream).poll_read(cx, buf),
         }
     }
 }
@@ -156,6 +118,7 @@ impl AsyncWrite for RelayStream {
         match &mut *self {
             Self::Plain(stream) => Pin::new(stream).poll_write(cx, buf),
             Self::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::Ws(stream) => Pin::new(stream).poll_write(cx, buf),
         }
     }
 
@@ -163,6 +126,7 @@ impl AsyncWrite for RelayStream {
         match &mut *self {
             Self::Plain(stream) => Pin::new(stream).poll_flush(cx),
             Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
+            Self::Ws(stream) => Pin::new(stream).poll_flush(cx),
         }
     }
 
@@ -170,6 +134,7 @@ impl AsyncWrite for RelayStream {
         match &mut *self {
             Self::Plain(stream) => Pin::new(stream).poll_shutdown(cx),
             Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Ws(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
 }
@@ -194,13 +159,13 @@ struct State {
     pipes: usize,
     next: u64,
 }
-struct Server {
+pub(crate) struct Server {
     limits: Limits,
     tls: Option<TlsAcceptor>,
     state: Mutex<State>,
 }
 
-struct Admission {
+pub(crate) struct Admission {
     server: Arc<Server>,
     address: IpAddr,
 }
@@ -230,6 +195,51 @@ pub struct Stats {
     pub pipes: usize,
 }
 
+#[derive(Clone)]
+pub struct Relay(Arc<Server>);
+
+impl Relay {
+    pub fn new(limits: Limits, tls: Option<TlsAcceptor>) -> Self {
+        Self(Arc::new(Server {
+            limits,
+            tls,
+            state: Mutex::new(State::default()),
+        }))
+    }
+    pub fn stats(&self) -> Stats {
+        self.0.stats()
+    }
+    pub async fn report(&self, report: impl Fn(Stats)) {
+        let mut interval = tokio::time::interval(Duration::from_secs(3600));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            report(self.stats());
+        }
+    }
+    pub async fn serve(&self, listener: TcpListener) {
+        loop {
+            let (stream, address) = match listener.accept().await {
+                Ok(accepted) => accepted,
+                Err(_) => {
+                    sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            };
+            let Some(admission) = self.0.admit(address.ip().to_canonical()) else {
+                continue;
+            };
+            let server = self.0.clone();
+            tokio::spawn(async move {
+                let _ = server.handle(stream, admission).await;
+            });
+        }
+    }
+    pub async fn serve_ws(&self, listener: TcpListener, config: ws::Config) {
+        ws::serve(self.0.clone(), listener, config).await
+    }
+}
+
 pub async fn serve(listener: TcpListener, limits: Limits) {
     serve_with_stats(listener, limits, |_| {}).await
 }
@@ -239,7 +249,7 @@ pub async fn serve_with_stats(
     limits: Limits,
     report: impl Fn(Stats) + Send + 'static,
 ) {
-    serve_inner(listener, limits, None, report).await
+    serve_inner(listener, Relay::new(limits, None), report).await
 }
 
 pub async fn serve_tls(listener: TcpListener, limits: Limits, tls: TlsAcceptor) {
@@ -252,45 +262,13 @@ pub async fn serve_tls_with_stats(
     tls: TlsAcceptor,
     report: impl Fn(Stats) + Send + 'static,
 ) {
-    serve_inner(listener, limits, Some(tls), report).await
+    serve_inner(listener, Relay::new(limits, Some(tls)), report).await
 }
 
-async fn serve_inner(
-    listener: TcpListener,
-    limits: Limits,
-    tls: Option<TlsAcceptor>,
-    report: impl Fn(Stats) + Send + 'static,
-) {
-    let server = Arc::new(Server {
-        limits,
-        tls,
-        state: Mutex::new(State::default()),
-    });
-    let reporting = server.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(3600));
-        interval.tick().await;
-        loop {
-            interval.tick().await;
-            report(reporting.stats());
-        }
-    });
-    loop {
-        let (stream, address) = match listener.accept().await {
-            Ok(accepted) => accepted,
-            Err(_) => {
-                sleep(Duration::from_millis(100)).await;
-                continue;
-            }
-        };
-        let Some(admission) = server.admit(address.ip().to_canonical()) else {
-            continue;
-        };
-        let server = server.clone();
-        tokio::spawn(async move {
-            let _ = server.handle(stream, admission).await;
-        });
-    }
+async fn serve_inner(listener: TcpListener, relay: Relay, report: impl Fn(Stats) + Send + 'static) {
+    let reporting = relay.clone();
+    tokio::spawn(async move { reporting.report(report).await });
+    relay.serve(listener).await
 }
 
 impl Server {
@@ -302,7 +280,7 @@ impl Server {
             pipes: state.pipes,
         }
     }
-    fn admit(self: &Arc<Self>, address: IpAddr) -> Option<Admission> {
+    pub(crate) fn admit(self: &Arc<Self>, address: IpAddr) -> Option<Admission> {
         let mut state = self.state.lock().unwrap();
         let from_address = state.addresses.get(&address).copied().unwrap_or(0);
         if state.connections >= self.limits.connections || from_address >= self.limits.per_address {
@@ -356,6 +334,21 @@ impl Server {
             Request::Join { room, .. } => self.join(stream, room).await,
             Request::Alive => Ok(()),
         }
+    }
+
+    pub(crate) async fn handle_web(
+        self: Arc<Self>,
+        mut stream: RelayStream,
+        admission: Admission,
+    ) -> io::Result<()> {
+        let request: Request = timeout(FIRST_REQUEST, read_frame(&mut stream)).await??;
+        let result = match request {
+            Request::Join { version, room } if version == VERSION => self.join(stream, room).await,
+            Request::Join { .. } => reply(&mut stream, &Reply::Outdated { version: VERSION }).await,
+            _ => reply(&mut stream, &Reply::Unknown).await,
+        };
+        drop(admission);
+        result
     }
 
     fn new_room(&self, state: &State) -> Option<String> {
@@ -671,16 +664,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rooms_and_secrets_are_validated() {
-        for room in ["1000", "4821", "99999999"] {
-            assert!(valid_room(room));
-        }
-        for room in ["", "123", "0123", "123456789", "12a4", " 1234"] {
-            assert!(!valid_room(room));
-        }
-        assert!(valid_secret(&"a".repeat(32)));
-        assert!(!valid_secret(&"g".repeat(32)));
-        assert!(!valid_secret(&"a".repeat(31)));
+    fn secrets_compare_in_constant_time_shape() {
         assert!(same_secret("abc", "abc"));
         assert!(!same_secret("abc", "abd"));
         assert!(!same_secret("abc", "abcd"));

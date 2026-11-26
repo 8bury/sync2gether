@@ -135,6 +135,7 @@ fn demo_view(t: &'static crate::i18n::Strings, state: SessionState) -> crate::ru
     } else {
         view.internet = true;
         view.room_code = Some(t.common.example_code.into());
+        view.web_link = crate::ui::web_link(Some("https://assistir.example"), &view);
     }
     view.matched = view.connected;
     view.ready = view.connected;

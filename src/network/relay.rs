@@ -4,7 +4,6 @@ use super::{
 };
 use rustls::pki_types::{CertificateDer, ServerName};
 use std::{
-    fmt,
     io::{self, Cursor},
     net::{IpAddr, Ipv6Addr, SocketAddr},
     pin::Pin,
@@ -15,6 +14,7 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
+pub use sync2gether_core::code::Code;
 use sync2gether_relay::{self as wire, Reply, Request};
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf, ReadHalf, WriteHalf},
@@ -26,6 +26,7 @@ use tokio::{
 use tokio_rustls::TlsConnector;
 
 pub const DEFAULT_RELAY: &str = "relay.pedrosales.dev:7843";
+pub const DEFAULT_WEB_URL: &str = "https://sync2gether.pedrosales.dev";
 pub const MAX_WRONG_CODES: u32 = 3;
 const CONNECT: Duration = Duration::from_secs(5);
 const STEP: Duration = Duration::from_secs(10);
@@ -33,88 +34,8 @@ const JOIN_REPLY: Duration = Duration::from_secs(15);
 const FIRST_ENTRY: Duration = Duration::from_secs(30);
 const GONE: Duration = Duration::from_secs(45);
 
-const WORDS: [&str; 256] = [
-    "agua", "alho", "amora", "anel", "anjo", "arco", "areia", "arroz", "asa", "aveia", "azul",
-    "bala", "balde", "banco", "barco", "bico", "bolo", "bola", "bota", "brisa", "cabra", "cacau",
-    "caju", "calor", "cama", "campo", "caneca", "canoa", "capa", "carta", "casa", "cavalo",
-    "cedro", "cebola", "cereja", "chave", "chuva", "cinema", "circo", "cisne", "coco", "cofre",
-    "cola", "cometa", "copo", "coral", "corda", "coruja", "cravo", "cubo", "dado", "dedal",
-    "disco", "doce", "dueto", "duna", "eco", "elmo", "escova", "estrela", "faca", "fada", "farol",
-    "fava", "feira", "fenda", "ferro", "festa", "figo", "filme", "flauta", "flor", "foca", "fogo",
-    "folha", "fonte", "forno", "fruta", "funil", "gaita", "galo", "garfo", "gato", "gelo",
-    "girafa", "globo", "goiaba", "gota", "grama", "grilo", "gruta", "guia", "harpa", "hino",
-    "horta", "ilha", "janela", "jarra", "jardim", "jipe", "joia", "jogo", "kiwi", "lago", "lama",
-    "lanche", "laranja", "lata", "leite", "lenha", "leque", "lima", "lince", "linha", "livro",
-    "lobo", "lontra", "lousa", "lua", "luva", "macaco", "mala", "manga", "mapa", "mar", "massa",
-    "mel", "menta", "mesa", "milho", "moeda", "mola", "morango", "motor", "mula", "muro", "nabo",
-    "navio", "neve", "ninho", "noz", "nuvem", "oca", "ovo", "onda", "ostra", "ouro", "palco",
-    "palha", "pano", "papel", "pato", "pedra", "peixe", "pena", "pera", "peteca", "piano", "pilha",
-    "pincel", "pinha", "pipa", "pipoca", "pires", "placa", "planta", "pneu", "polvo", "ponte",
-    "porta", "pote", "praia", "prato", "queijo", "quiabo", "raio", "ramo", "raposa", "rede",
-    "remo", "rio", "roda", "rosa", "roupa", "rua", "sacola", "sal", "salsa", "sapo", "selo",
-    "serra", "sino", "sol", "sopa", "tatu", "teia", "telha", "tenda", "terra", "tigre", "tijolo",
-    "tinta", "toalha", "tomate", "torre", "trem", "trevo", "trigo", "tucano", "tulipa", "uva",
-    "vaca", "vagem", "vale", "vaso", "vela", "vento", "verde", "vidro", "vinho", "viola", "xale",
-    "xadrez", "zebra", "baleia", "bambu", "banana", "barro", "batata", "bigode", "bonde", "bosque",
-    "broto", "bule", "cacto", "cadeira", "caderno", "camelo", "caneta", "canela", "cesta",
-    "chinelo", "colher", "concha", "cupim", "delta", "elefante", "esquilo", "fivela", "formiga",
-    "galho", "girassol", "iogurte", "lagarto", "lagoa", "marfim",
-];
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Code {
-    room: String,
-    words: [&'static str; 2],
-}
-impl Code {
-    #[cfg(test)]
-    fn random(room: String) -> Self {
-        Self {
-            room,
-            words: random_words(),
-        }
-    }
-    pub fn parse(input: &str) -> Option<Self> {
-        let folded: String = input.trim().chars().map(fold).collect();
-        let parts: Vec<&str> = folded
-            .split(|c: char| c == '-' || c == '.' || c.is_whitespace())
-            .filter(|part| !part.is_empty())
-            .collect();
-        let [room, first, second] = parts.as_slice() else {
-            return None;
-        };
-        let word = |input: &str| WORDS.iter().copied().find(|word| *word == input);
-        wire::valid_room(room).then_some(())?;
-        Some(Self {
-            room: (*room).to_owned(),
-            words: [word(first)?, word(second)?],
-        })
-    }
-    pub fn room(&self) -> &str {
-        &self.room
-    }
-}
-impl fmt::Display for Code {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}-{}", self.room, self.words[0], self.words[1])
-    }
-}
 fn random_words() -> [&'static str; 2] {
-    [
-        WORDS[rand::random::<u8>() as usize],
-        WORDS[rand::random::<u8>() as usize],
-    ]
-}
-fn fold(c: char) -> char {
-    match c.to_lowercase().next().unwrap_or(c) {
-        'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
-        'é' | 'è' | 'ê' | 'ë' => 'e',
-        'í' | 'ì' | 'î' | 'ï' => 'i',
-        'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
-        'ú' | 'ù' | 'û' | 'ü' => 'u',
-        'ç' => 'c',
-        other => other,
-    }
+    Code::from_indices("", [rand::random::<u8>(), rand::random::<u8>()]).words()
 }
 
 #[derive(Clone)]
@@ -430,10 +351,7 @@ pub async fn host_with_tls(
     loop {
         match open(&host, room.as_deref()).await {
             Opened::Room(stream, assigned) => {
-                let code = Code {
-                    room: assigned.clone(),
-                    words: host.words,
-                };
+                let code = Code::new(assigned.clone(), host.words);
                 if host
                     .events
                     .send(Event::RoomCode(code.to_string()))
@@ -575,10 +493,7 @@ async fn admit(host: &Host, room: &str, ticket: u64) -> io::Result<()> {
             if host.wrong.load(Ordering::Relaxed) >= MAX_WRONG_CODES {
                 return Ok(());
             }
-            let code = Code {
-                room: room.into(),
-                words: host.words,
-            };
+            let code = Code::new(room, host.words);
             let (state, outbound) = secure::pake_start(room, &code.to_string());
             let mut answer = vec![INTRO_PAKE];
             answer.extend(outbound);
@@ -644,7 +559,7 @@ async fn enter(
         &mut stream,
         &Request::Join {
             version: wire::VERSION,
-            room: code.room.clone(),
+            room: code.room().to_owned(),
         },
     )
     .await
@@ -670,7 +585,7 @@ async fn enter(
             *key
         }
         None => {
-            let (state, outbound) = secure::pake_start(&code.room, &code.to_string());
+            let (state, outbound) = secure::pake_start(code.room(), &code.to_string());
             let mut intro = vec![INTRO_PAKE];
             intro.extend(outbound);
             secure::write_frame(&mut writer, &intro)
@@ -795,46 +710,6 @@ pub async fn guest_with_tls(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn words_are_unique_short_and_ascii() {
-        let mut sorted = WORDS.to_vec();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(sorted.len(), WORDS.len());
-        assert!(
-            WORDS
-                .iter()
-                .all(|w| (2..=9).contains(&w.len()) && w.bytes().all(|b| b.is_ascii_lowercase()))
-        );
-    }
-
-    #[test]
-    fn codes_roundtrip_and_tolerate_typing_variations() {
-        let code = Code::random("4821".into());
-        assert_eq!(Code::parse(&code.to_string()), Some(code.clone()));
-        let expected = Code::parse("4821-agua-limao").map(|c| c.to_string());
-        assert_eq!(expected, None, "palavras fora da lista são recusadas");
-        let code = Code::parse("4821-agua-lua").unwrap();
-        for typed in [
-            "  4821 Água LUA ",
-            "4821-agua-lua",
-            "4821.agua.lua",
-            "4821 - agua - lua",
-        ] {
-            assert_eq!(Code::parse(typed).as_ref(), Some(&code), "{typed}");
-        }
-        for invalid in [
-            "",
-            "4821",
-            "4821-agua",
-            "0821-agua-lua",
-            "4821-agua-lua-sol",
-            "abc-agua-lua",
-        ] {
-            assert!(Code::parse(invalid).is_none(), "{invalid}");
-        }
-    }
 
     #[test]
     fn relay_addresses_default_the_port_and_reject_garbage() {

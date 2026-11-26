@@ -183,6 +183,8 @@ pub struct Preparation {
     pub click_to_copy: &'static str,
     pub name_copied: &'static str,
     pub generating_code: &'static str,
+    pub browser_hint: &'static str,
+    pub copy_browser_link: &'static str,
 }
 
 pub struct Copies {
@@ -440,6 +442,7 @@ pub struct StreamErrors {
     pub unknown_operation: &'static str,
     pub chunk_refused: &'static str,
     pub response_too_large: &'static str,
+    pub web_answer: &'static str,
 }
 
 pub struct PlayerErrors {

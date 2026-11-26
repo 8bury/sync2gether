@@ -1,7 +1,5 @@
-# Só o código e o Cargo.lock entram no build do relay.
+/target/
+/.cache/
+/prototype/node_modules/
+/prototype/dist/
 .git
-.cache
-target
-docs
-packaging
-assets

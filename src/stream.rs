@@ -5,6 +5,7 @@ pub mod host;
 pub mod http;
 pub mod nat;
 pub mod tls;
+pub mod webrtc;
 pub mod wire;
 
 use crate::protocol::Media;
@@ -16,7 +17,7 @@ use std::{
     sync::Arc,
 };
 
-pub const CHUNK_SIZE: u32 = 256 * 1024;
+pub use sync2gether_core::chunks::CHUNK_SIZE;
 
 #[derive(Clone, Debug)]
 pub struct ChunkIndex {
@@ -28,11 +29,7 @@ pub struct ChunkIndex {
 
 impl ChunkIndex {
     pub fn from_hashes(chunk_size: u32, file_size: u64, hashes: Vec<[u8; 32]>) -> Self {
-        let mut hasher = blake3::Hasher::new();
-        for hash in &hashes {
-            hasher.update(hash);
-        }
-        let digest = hasher.finalize().to_hex().to_string();
+        let digest = sync2gether_core::chunks::table_digest(&hashes);
         Self {
             chunk_size,
             file_size,
@@ -55,26 +52,21 @@ impl ChunkIndex {
         file_size: u64,
         chunk_size: u32,
     ) -> io::Result<Vec<[u8; 32]>> {
-        let expected_chunks = if file_size == 0 {
-            0
-        } else {
-            file_size.div_ceil(u64::from(chunk_size)) as usize
-        };
-        if raw.len() != expected_chunks * 32 {
+        let t = crate::i18n::text();
+        if raw.len() != sync2gether_core::chunks::chunk_count(file_size, chunk_size) * 32 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                crate::i18n::text().stream_errors.hash_table_size,
+                t.stream_errors.hash_table_size,
             ));
         }
-        let actual = blake3::hash(raw).to_hex().to_string();
-        if !actual.eq_ignore_ascii_case(expected_digest) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                crate::i18n::text().stream_errors.hash_table_integrity,
-            ));
-        }
-        let hashes = raw.as_chunks::<32>().0.to_vec();
-        Ok(hashes)
+        sync2gether_core::chunks::verify_table(raw, expected_digest, file_size, chunk_size).map_err(
+            |_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    t.stream_errors.hash_table_integrity,
+                )
+            },
+        )
     }
 
     pub fn compute_file(path: &Path, chunk_size: u32) -> io::Result<(Media, Self)> {

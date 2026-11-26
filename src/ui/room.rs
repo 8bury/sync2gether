@@ -218,6 +218,9 @@ pub(super) fn connection_details(ui: &mut egui::Ui, view: &View, actions: &mut V
                 if view.role == Role::Host {
                     preparation::copy_button(ui, strings.common.copy_code, code);
                 }
+                if let Some(link) = &view.web_link {
+                    preparation::copy_button(ui, strings.preparation.copy_browser_link, link);
+                }
             }
             if view.relay_offline {
                 ui.label(strings.common.relay_offline);

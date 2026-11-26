@@ -3,7 +3,8 @@ use crate::{
     player,
     protocol::{Control, Media, Message, StreamAnswer, StreamOffer},
     stream::{
-        StreamEvent, StreamPhase, StreamTelemetry, cache::ChunkCache, guest, host, http::LocalProxy,
+        StreamEvent, StreamPhase, StreamTelemetry, cache::ChunkCache, guest, host,
+        http::LocalProxy, webrtc,
     },
 };
 use std::{
@@ -45,6 +46,11 @@ pub(super) enum StreamPrepResult {
         answer: Box<StreamAnswer>,
         pending: Box<guest::GuestPending>,
     },
+    WebReady {
+        id: u64,
+        answer: Box<crate::protocol::WebStreamAnswer>,
+        host: Box<webrtc::WebHost>,
+    },
     Failed {
         id: u64,
         error: String,
@@ -52,7 +58,7 @@ pub(super) enum StreamPrepResult {
 }
 
 impl Worker {
-    fn stop_stream_transport(&mut self) -> (u64, bool) {
+    pub(super) fn stop_stream_transport(&mut self) -> (u64, bool) {
         let active_id = self.stream_id;
         let was_active =
             self.stream_task.is_some() || self.stream_pending.is_some() || self.view.stream.active;
@@ -447,11 +453,15 @@ impl Worker {
                 self.send(Message::StreamAnswer(answer));
                 self.stream_task = Some(pending.connect(self.stream_tx.clone()));
             }
+            StreamPrepResult::WebReady { id, answer, host } if id == self.stream_id => {
+                self.web_stream_ready(*answer, *host);
+            }
             StreamPrepResult::Failed { id, error } if id == self.stream_id => {
                 if self.view.role == Role::Guest && self.guest_stream.is_some() {
                     self.schedule_stream_reconnect(error);
                 } else {
-                    let notify = self.view.role == Role::Guest;
+                    let notify =
+                        self.view.role == Role::Guest || self.session.state.guest.web_guest;
                     self.stop_stream(notify);
                     self.view.stream.phase = StreamPhase::Error(error.clone());
                     self.view.notice = Some(error);
@@ -538,7 +548,8 @@ impl Worker {
                 {
                     self.schedule_stream_reconnect(error);
                 } else {
-                    let notify = self.view.role == Role::Guest;
+                    let notify =
+                        self.view.role == Role::Guest || self.session.state.guest.web_guest;
                     self.stop_stream(notify);
                     self.view.stream.phase = StreamPhase::Error(error.clone());
                     self.view.notice = Some(error);

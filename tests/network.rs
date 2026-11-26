@@ -124,7 +124,7 @@ async fn approved_peers_exchange_file_names_and_verification_progress() {
         ..Default::default()
     };
     guest_out
-        .send(Message::Presence(presence.clone()))
+        .send(Message::Presence(Box::new(presence.clone())))
         .await
         .unwrap();
     let Event::Message(message, _) = next(&mut host_rx).await else {
@@ -141,7 +141,7 @@ async fn approved_peers_exchange_file_names_and_verification_progress() {
         file_name: Some("Outro.nome.mkv".into()),
         ..presence
     };
-    state.guest = received;
+    state.guest = *received;
     host_out
         .send(Message::State(Box::new(state)))
         .await

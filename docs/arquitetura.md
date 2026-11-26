@@ -121,7 +121,25 @@ vídeo, GPU ou sincronização entre PCs.
   controle. Depende de Tokio, Serde e `tokio-rustls`/`rustls` (`ring`), aceita
   TLS nativo opcional (`--tls-cert`/`--tls-key` ou
   `RELAY_TLS_CERT`/`RELAY_TLS_KEY`) ou TCP puro atrás de proxy TLS, e não
-  conhece as mensagens da sala.
+  conhece as mensagens da sala. `relay/src/ws.rs` adiciona a entrada por
+  WebSocket para navegadores (`tokio-tungstenite`), só com `Join`.
+- `core/` (crate `sync2gether-core`) reúne o que roda igual no app, no relay e
+  no navegador, sem Tokio nem I/O: mensagens (`protocol.rs`), relógio e
+  correção (`sync.rs`), código da sala, tipos de controle do relay,
+  enquadramento, handshake SPAKE2/Noise em passos (`secure.rs`), hashes de
+  blocos e o formato do canal de dados WebRTC. O app reexporta `protocol` e
+  `sync`; o relay usa o core sem a feature `crypto`.
+- `web/` (crate `sync2gether-web`) compila para WebAssembly o convidado do
+  navegador: `link.rs` (Join, SPAKE2, Noise, retomada e regras de nova
+  tentativa), `guest.rs` (presença, relógio, preparação, início agendado e
+  correção, como o convidado do runtime) e `stream.rs` (cache de blocos
+  verificados em memória). `web/static/` tem a página em JavaScript simples,
+  o adaptador do `<video>` e o Service Worker. Veja
+  [Convidado no navegador](navegador.md).
+- `stream/webrtc.rs` e `runtime/web_stream.rs` servem o streaming para o
+  navegador com `str0m` (sem OpenSSL): uma porta UDP por interface IPv4,
+  candidatos STUN, oferta e resposta pelo canal Noise, fragmentos de 16 KiB e
+  cancelamento quando o navegador pula para outro trecho.
 - `network.rs` implementa TCP com mensagens enquadradas, limite de tamanho,
   autenticação da sala, timeout de heartbeat e reconexão.
 - `protocol.rs` define as mensagens Serde e a versão do protocolo.

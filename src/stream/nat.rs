@@ -226,7 +226,7 @@ fn parse_mapped(val: &[u8]) -> Option<SocketAddr> {
     }
 }
 
-async fn stun_discover(socket: &UdpSocket, servers: &[&str]) -> Option<SocketAddr> {
+pub(crate) async fn stun_discover(socket: &UdpSocket, servers: &[&str]) -> Option<SocketAddr> {
     let cloned = socket.try_clone().ok()?;
     let local = cloned.local_addr().ok()?;
     let async_sock = tokio::net::UdpSocket::from_std(cloned).ok()?;

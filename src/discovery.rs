@@ -17,7 +17,14 @@ pub struct Room {
     pub name: String,
     pub address: SocketAddr,
 }
-pub use sync2gether_core::device_name;
+pub fn device_name(name: &str) -> String {
+    let name = sync2gether_core::device_name(name);
+    if name == sync2gether_core::UNNAMED {
+        crate::i18n::text().errors.other_computer.into()
+    } else {
+        name
+    }
+}
 pub fn local_name() -> String {
     device_name(hostname().as_deref().unwrap_or("sync2gether").trim())
 }
@@ -115,9 +122,7 @@ impl Lan {
             }
         }
         if senders.is_empty() {
-            return Err(io::Error::other(
-                "Nenhuma interface disponível para descoberta.",
-            ));
+            return Err(io::Error::other(crate::i18n::text().errors.no_interface));
         }
         let receiver = UdpSocket::from_std(socket.into())?;
         let port = receiver.local_addr()?.port();
@@ -270,6 +275,9 @@ mod tests {
             "invalid packets must never cause TCP probes"
         );
         assert_eq!(device_name("a\nb"), "ab");
-        assert_eq!(device_name("\n\t"), "Outro computador");
+        assert_eq!(
+            device_name("\n\t"),
+            crate::i18n::text().errors.other_computer
+        );
     }
 }

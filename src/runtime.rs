@@ -72,6 +72,7 @@ pub struct View {
     pub buffering: bool,
     pub peer_buffering: bool,
     pub waiting_buffer: bool,
+    pub paused_by: Option<crate::protocol::Side>,
     pub loading: bool,
     pub player: player::Status,
     pub matched: bool,
@@ -119,6 +120,7 @@ pub enum Command {
     Subtitle,
     AudioTrack(i64),
     SubtitleTrack(Option<i64>),
+    SetLanguage(crate::i18n::Language),
     Shutdown,
 }
 
@@ -165,7 +167,7 @@ impl Runtime {
                 }
                 Err(_) => {
                     let _ = views.send(View {
-                        error: Some("Não foi possível iniciar o runtime".into()),
+                        error: Some(crate::i18n::text().errors.runtime_start.into()),
                         ..Default::default()
                     });
                 }
@@ -262,7 +264,7 @@ impl Worker {
             approval: None,
             origin,
             view: View {
-                status: "Reprodução local".into(),
+                status: crate::i18n::text().common.local_playback.into(),
                 ..Default::default()
             },
             session: Session::default(),
@@ -316,9 +318,8 @@ impl Worker {
 
     fn player(&mut self, command: player::Command) {
         if self.player.commands.send(command).is_err() {
-            self.fatal_error.get_or_insert_with(|| {
-                "Player indisponível. Confira libmpv e reinicie o app.".into()
-            });
+            self.fatal_error
+                .get_or_insert_with(|| crate::i18n::text().errors.player_unavailable.into());
         }
     }
 
@@ -393,6 +394,15 @@ impl Worker {
             Command::Subtitle => self.player(player::Command::Subtitle),
             Command::AudioTrack(id) => self.player(player::Command::AudioTrack(id)),
             Command::SubtitleTrack(id) => self.player(player::Command::SubtitleTrack(id)),
+            Command::SetLanguage(language) => {
+                crate::i18n::set(language);
+                self.update_view();
+                tokio::task::spawn_blocking(move || {
+                    let mut preferences = crate::preferences::Preferences::load();
+                    preferences.language = Some(language);
+                    let _ = preferences.save();
+                });
+            }
         }
         true
     }
@@ -465,9 +475,6 @@ async fn recv_network(rx: &mut Option<mpsc::Receiver<network::Event>>) -> networ
     }
 }
 
-pub const CODE_HINT: &str =
-    "Digite o código completo, com o número e as duas palavras, como 4821-gato-lua.";
-
 pub fn parse_address(input: &str) -> Result<SocketAddr, String> {
     let input = input.trim();
     let addr = input
@@ -477,12 +484,9 @@ pub fn parse_address(input: &str) -> Result<SocketAddr, String> {
                 .parse::<std::net::IpAddr>()
                 .map(|ip| SocketAddr::new(ip, PORT))
         })
-        .map_err(|_| {
-            "Informe o IP do anfitrião, com porta opcional. Para IPv6 com porta, use [IP]:porta."
-                .to_owned()
-        })?;
+        .map_err(|_| crate::i18n::text().errors.address_format.to_owned())?;
     if addr.port() == 0 || !network::allowed_address(addr) {
-        return Err("Use um endereço IP de destino e uma porta válida.".into());
+        return Err(crate::i18n::text().errors.invalid_address.into());
     }
     Ok(addr)
 }

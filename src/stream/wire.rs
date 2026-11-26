@@ -42,14 +42,14 @@ pub async fn read_request<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Re
             if bytes == 0 || bytes > MAX_PROBE_BYTES {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Tamanho de teste inválido",
+                    crate::i18n::text().stream_errors.invalid_probe_size,
                 ));
             }
             Ok(Request::Probe(bytes))
         }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Operação de streaming desconhecida",
+            crate::i18n::text().stream_errors.unknown_operation,
         )),
     }
 }
@@ -91,13 +91,15 @@ pub async fn read_ok_payload<R: AsyncRead + Unpin>(
 ) -> io::Result<Vec<u8>> {
     let status = reader.read_u8().await?;
     if status != STATUS_OK {
-        return Err(io::Error::other("Peer recusou a solicitação do bloco"));
+        return Err(io::Error::other(
+            crate::i18n::text().stream_errors.chunk_refused,
+        ));
     }
     let len = reader.read_u32().await? as usize;
     if len > max_len {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Resposta excede o limite esperado",
+            crate::i18n::text().stream_errors.response_too_large,
         ));
     }
     let mut data = vec![0u8; len];

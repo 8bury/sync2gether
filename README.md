@@ -42,6 +42,11 @@ que o anfitrião copia na sala: com a própria cópia do filme ou por streaming
 P2P direto (WebRTC). O navegador só toca os formatos que ele mesmo suporta,
 em geral MP4 com H.264 e AAC; veja [Convidado no navegador](docs/navegador.md).
 
+A interface está disponível em português (Brasil) e inglês. Na primeira
+abertura, o app segue o idioma do sistema (inglês quando ele não é português);
+a escolha em **Configurações → Idioma** fica salva. O código da sala é o mesmo
+nos dois idiomas, então pessoas com idiomas diferentes entram na mesma sala.
+
 ## Instalação
 
 Baixe o pacote para seu sistema operacional e o arquivo `SHA256SUMS` em

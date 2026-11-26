@@ -2,13 +2,13 @@ use super::{Inbound, Outbound};
 use crate::protocol::Message;
 use std::io;
 pub use sync2gether_core::secure::{
-    Cipher, INTRO_PAKE, INTRO_RESUME, Initiator, Key, MAX_FRAME, WRONG_KEY, pake_finish, pake_start,
+    Cipher, INTRO_PAKE, INTRO_RESUME, Initiator, Key, MAX_FRAME, Pake, WRONG_KEY, pake_start,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
     if bytes.is_empty() || bytes.len() > MAX_FRAME {
-        return Err(io::Error::other("Quadro cifrado com tamanho inválido"));
+        return Err(io::Error::other(crate::i18n::text().errors.invalid_frame));
     }
     writer.write_u32(bytes.len() as u32).await?;
     writer.write_all(bytes).await?;
@@ -17,11 +17,27 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) ->
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Vec<u8>> {
     let size = reader.read_u32().await? as usize;
     if size == 0 || size > MAX_FRAME {
-        return Err(io::Error::other("Quadro cifrado com tamanho inválido"));
+        return Err(io::Error::other(crate::i18n::text().errors.invalid_frame));
     }
     let mut bytes = vec![0; size];
     reader.read_exact(&mut bytes).await?;
     Ok(bytes)
+}
+
+fn localized(error: io::Error) -> io::Error {
+    let errors = &crate::i18n::text().errors;
+    match error.kind() {
+        io::ErrorKind::PermissionDenied => {
+            io::Error::new(io::ErrorKind::PermissionDenied, errors.key_mismatch)
+        }
+        io::ErrorKind::InvalidInput => io::Error::other(errors.message_too_large),
+        _ => error,
+    }
+}
+
+pub fn pake_finish(state: Pake, inbound: &[u8]) -> io::Result<Key> {
+    sync2gether_core::secure::pake_finish(state, inbound)
+        .map_err(|_| io::Error::other(crate::i18n::text().errors.invalid_spake))
 }
 
 pub struct Channel<R, W> {
@@ -59,7 +75,8 @@ where
     let (initiator, first) = Initiator::start(psk, name)?;
     write_frame(&mut writer, &first).await?;
     let answer = read_frame(&mut reader).await?;
-    let (cipher, peer) = initiator.finish(&answer)?;
+    let (cipher, peer) = initiator.finish(&answer).map_err(localized)?;
+    let peer = crate::discovery::device_name(&peer);
     Ok(channel(reader, writer, cipher, peer))
 }
 
@@ -77,13 +94,14 @@ where
     match sync2gether_core::secure::respond(psk, name, &first) {
         Ok(responded) => {
             write_frame(&mut writer, &responded.answer).await?;
-            Ok(channel(reader, writer, responded.cipher, responded.peer))
+            let peer = crate::discovery::device_name(&responded.peer);
+            Ok(channel(reader, writer, responded.cipher, peer))
         }
         Err(error) => {
             if error.kind() == io::ErrorKind::PermissionDenied {
                 let _ = write_frame(&mut writer, &[WRONG_KEY]).await;
             }
-            Err(error)
+            Err(localized(error))
         }
     }
 }
@@ -102,14 +120,17 @@ pub struct SecureWriter<W> {
 impl<R: AsyncRead + Unpin + Send> Inbound for SecureReader<R> {
     async fn recv(&mut self) -> io::Result<Message> {
         let frame = read_frame(&mut self.inner).await?;
-        let message = self.cipher.open(self.nonce, &frame)?;
+        let message = self
+            .cipher
+            .open(self.nonce, &frame)
+            .map_err(|_| io::Error::other(crate::i18n::text().errors.invalid_encrypted))?;
         self.nonce += 1;
         Ok(message)
     }
 }
 impl<W: AsyncWrite + Unpin + Send> Outbound for SecureWriter<W> {
     async fn send(&mut self, message: &Message) -> io::Result<()> {
-        let frame = self.cipher.seal(self.nonce, message)?;
+        let frame = self.cipher.seal(self.nonce, message).map_err(localized)?;
         self.nonce += 1;
         write_frame(&mut self.inner, &frame).await
     }

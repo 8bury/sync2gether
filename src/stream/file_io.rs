@@ -20,7 +20,7 @@ pub(crate) fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) ->
             Ok(0) => {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "Fim inesperado do arquivo",
+                    crate::i18n::text().stream_errors.unexpected_eof,
                 ));
             }
             Ok(n) => {
@@ -42,7 +42,7 @@ pub(crate) fn write_all_at(file: &File, mut buf: &[u8], mut offset: u64) -> io::
             Ok(0) => {
                 return Err(io::Error::new(
                     io::ErrorKind::WriteZero,
-                    "Falha ao gravar no arquivo",
+                    crate::i18n::text().stream_errors.write_failed,
                 ));
             }
             Ok(n) => {

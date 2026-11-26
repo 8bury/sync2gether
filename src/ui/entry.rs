@@ -1,12 +1,11 @@
 use super::{
-    Inputs, Palette, Screen, feedback, kit, messages, quiet,
+    Inputs, Palette, Screen, feedback, kit, messages, quiet, tr,
     visuals::{self, Presence},
 };
 use crate::runtime::{Command, Role, View};
 use eframe::egui::{self, RichText, Stroke};
 
-const LEAD: &str = "O mesmo filme,\nno mesmo segundo.";
-const CODE_PLACEHOLDER: &str = "0000-palavra-palavra";
+const CODE_FIELD_CHARS: f32 = 20.0;
 const CONTENT_WIDTH: f32 = 1144.0;
 
 fn lead_text(text: &str, size: f32) -> RichText {
@@ -23,14 +22,15 @@ pub(super) fn home(
     inputs: &mut Inputs,
     actions: &mut Vec<Command>,
 ) {
+    let lead = tr(ui).home.lead;
     let window = ui.ctx().content_rect();
     let compact = window.height() < 560.0;
     let available = ui.available_width();
     let width = available.min(CONTENT_WIDTH);
     let target = (window.width() * 0.047).clamp(if compact { 32.0 } else { 40.0 }, 68.0);
     if window.width() < 860.0 {
-        let size = kit::fitted_size(ui, LEAD, target, width, lead_text);
-        ui.add(egui::Label::new(lead_text(LEAD, size)).wrap_mode(egui::TextWrapMode::Extend));
+        let size = kit::fitted_size(ui, lead, target, width, lead_text);
+        ui.add(egui::Label::new(lead_text(lead, size)).wrap_mode(egui::TextWrapMode::Extend));
         ui.add_space(if compact { 16.0 } else { 36.0 });
         start_actions(ui, colors, view, inputs, compact, actions);
         return;
@@ -38,7 +38,7 @@ pub(super) fn home(
     let gap = (window.width() * 0.08).clamp(48.0, 128.0);
     let column = 400.0_f32.min((width - gap) * 0.48).max(320.0);
     let lead_width = width - gap - column;
-    let size = kit::fitted_size(ui, LEAD, target, lead_width, lead_text);
+    let size = kit::fitted_size(ui, lead, target, lead_width, lead_text);
     let origin = ui.cursor().min + egui::vec2((available - width) * 0.5, 0.0);
     let column_rect = egui::Rect::from_min_size(
         origin + egui::vec2(lead_width + gap, 0.0),
@@ -51,7 +51,7 @@ pub(super) fn home(
         })
         .response
         .rect;
-    let height = egui::WidgetText::from(lead_text(LEAD, size))
+    let height = egui::WidgetText::from(lead_text(lead, size))
         .into_galley(
             ui,
             Some(egui::TextWrapMode::Extend),
@@ -65,7 +65,7 @@ pub(super) fn home(
         egui::vec2(lead_width, height),
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(lead_rect), |ui| {
-        ui.add(egui::Label::new(lead_text(LEAD, size)).wrap_mode(egui::TextWrapMode::Extend));
+        ui.add(egui::Label::new(lead_text(lead, size)).wrap_mode(egui::TextWrapMode::Extend));
     });
     ui.advance_cursor_after_rect(placed.union(lead_rect));
 }
@@ -78,6 +78,7 @@ fn start_actions(
     compact: bool,
     actions: &mut Vec<Command>,
 ) {
+    let t = &tr(ui).home;
     let busy = view.hosting;
     ui.spacing_mut().item_spacing.y = 0.0;
     let error = view
@@ -94,9 +95,9 @@ fn start_actions(
     let create = kit::Button::new(
         kit::Kind::Primary,
         if view.hosting {
-            "Criando sala…"
+            t.creating_room
         } else {
-            "Criar sala"
+            t.create_room
         },
     )
     .trailing(kit::Glyph::ArrowRight)
@@ -114,8 +115,8 @@ fn start_actions(
     if kit::row(
         ui,
         colors,
-        "Entrar com código",
-        "Recebeu um convite",
+        t.join_with_code,
+        t.join_with_code_hint,
         compact,
         !busy,
     )
@@ -127,8 +128,8 @@ fn start_actions(
     if kit::row(
         ui,
         colors,
-        "Abrir um filme sozinho",
-        "Sem sala, só o player",
+        t.watch_alone,
+        t.watch_alone_hint,
         compact,
         !busy,
     )
@@ -137,35 +138,17 @@ fn start_actions(
         actions.push(Command::Open);
     }
     if inputs.lan {
-        if kit::row(
-            ui,
-            colors,
-            "Criar sala na rede local",
-            "Para quem está na mesma rede ou VPN",
-            compact,
-            !busy,
-        )
-        .clicked()
-        {
+        if kit::row(ui, colors, t.lan_host, t.lan_host_hint, compact, !busy).clicked() {
             actions.push(Command::HostAuto(inputs.port));
         }
-        if kit::row(
-            ui,
-            colors,
-            "Procurar na rede local",
-            "Ver salas ou entrar por endereço",
-            compact,
-            !busy,
-        )
-        .clicked()
-        {
+        if kit::row(ui, colors, t.lan_browse, t.lan_browse_hint, compact, !busy).clicked() {
             inputs.screen = Screen::Browse;
             actions.push(Command::Discover);
         }
     }
     if view.player.loaded
         && let Some(file) = view.file.as_deref()
-        && kit::row(ui, colors, "Continuar filme aberto", file, compact, true).clicked()
+        && kit::row(ui, colors, t.resume_movie, file, compact, true).clicked()
     {
         actions.push(crate::runtime::Command::Control(
             crate::protocol::Control::Play,
@@ -174,7 +157,7 @@ fn start_actions(
     kit::rule(ui, colors);
     if view.hosting {
         ui.add_space(10.0);
-        if quiet(ui, colors, "Cancelar").clicked() {
+        if quiet(ui, colors, tr(ui).common.cancel).clicked() {
             actions.push(Command::Leave);
         }
     }
@@ -188,6 +171,8 @@ pub(super) fn join(
     actions: &mut Vec<Command>,
 ) {
     let joining = inputs.joining && view.role == Role::Guest && !view.connected;
+    let strings = tr(ui);
+    let t = &strings.home;
     let window = ui.ctx().content_rect();
     let compact = window.height() < 560.0;
     let refused = inputs.code_entry && !inputs.code_edited && !joining && view.role == Role::Local;
@@ -213,7 +198,7 @@ pub(super) fn join(
         );
         ui.add_space(if compact { 12.0 } else { 30.0 });
         let label = ui.label(
-            RichText::new("Qual é o código da sala?")
+            RichText::new(t.code_question)
                 .size(16.0)
                 .color(colors.muted),
         );
@@ -221,7 +206,7 @@ pub(super) fn join(
         let width = ui.available_width();
         let size = (window.width() * 0.038)
             .clamp(26.0, 50.0)
-            .min(width / (CODE_PLACEHOLDER.chars().count() as f32 * 0.63));
+            .min(width / (CODE_FIELD_CHARS * 0.63));
         let font = egui::FontId::monospace(size);
         let field = ui
             .add_enabled_ui(!joining, |ui| {
@@ -236,7 +221,7 @@ pub(super) fn join(
                         .margin(egui::vec2(0.0, 6.0)),
                 )
                 .labelled_by(label.id)
-                .on_hover_text("Número e duas palavras, como 4821-gato-lua")
+                .on_hover_text(t.code_tooltip)
             })
             .inner;
         if std::mem::take(&mut inputs.focus_code) {
@@ -246,7 +231,7 @@ pub(super) fn join(
             ui.painter().text(
                 field.rect.center(),
                 egui::Align2::CENTER_CENTER,
-                CODE_PLACEHOLDER,
+                t.code_placeholder,
                 font,
                 colors.faint.gamma_multiply(0.62),
             );
@@ -270,9 +255,9 @@ pub(super) fn join(
         let (help, color) = if let Some(error) = error_text {
             (error, colors.error)
         } else if hint {
-            (crate::runtime::CODE_HINT, colors.warning)
+            (strings.errors.code_hint, colors.warning)
         } else {
-            ("Peça o código para quem criou a sala.", colors.muted)
+            (t.code_help, colors.muted)
         };
         ui.add(
             egui::Label::new(RichText::new(help).size(14.0).color(color))
@@ -284,11 +269,11 @@ pub(super) fn join(
         let button = kit::Button::new(
             kit::Kind::Primary,
             if joining {
-                "Entrando"
+                t.joining
             } else if error_text.is_some() {
-                "Tentar de novo"
+                t.try_again
             } else {
-                "Entrar"
+                t.join
             },
         )
         .trailing(kit::Glyph::ArrowRight)

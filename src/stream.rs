@@ -52,7 +52,21 @@ impl ChunkIndex {
         file_size: u64,
         chunk_size: u32,
     ) -> io::Result<Vec<[u8; 32]>> {
-        sync2gether_core::chunks::verify_table(raw, expected_digest, file_size, chunk_size)
+        let t = crate::i18n::text();
+        if raw.len() != sync2gether_core::chunks::chunk_count(file_size, chunk_size) * 32 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                t.stream_errors.hash_table_size,
+            ));
+        }
+        sync2gether_core::chunks::verify_table(raw, expected_digest, file_size, chunk_size).map_err(
+            |_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    t.stream_errors.hash_table_integrity,
+                )
+            },
+        )
     }
 
     pub fn compute_file(path: &Path, chunk_size: u32) -> io::Result<(Media, Self)> {
@@ -79,7 +93,9 @@ impl ChunkIndex {
             total += filled as u64;
         }
         if total != meta.len() {
-            return Err(io::Error::other("Arquivo mudou durante a indexação"));
+            return Err(io::Error::other(
+                crate::i18n::text().stream_errors.file_changed_indexing,
+            ));
         }
         let media = Media {
             hash: whole.finalize().to_hex().to_string(),

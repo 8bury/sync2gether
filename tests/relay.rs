@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sync2gether::{
+    i18n::text,
     network::{
         self, Event,
         relay::{ClientTls, Code, MAX_WRONG_CODES},
@@ -212,7 +213,7 @@ async fn wrong_codes_are_refused_and_the_third_closes_the_room() {
             guest_tx,
             Instant::now(),
         ));
-        assert!(rejected(&mut guest_rx).await.contains("Código incorreto"));
+        assert_eq!(rejected(&mut guest_rx).await, text().errors.wrong_code);
         if attempt < MAX_WRONG_CODES {
             loop {
                 match next(&mut host_rx).await {
@@ -224,7 +225,10 @@ async fn wrong_codes_are_refused_and_the_third_closes_the_room() {
         }
         guest.abort();
     }
-    assert!(rejected(&mut host_rx).await.contains("três tentativas"));
+    assert_eq!(
+        rejected(&mut host_rx).await,
+        text().errors.too_many_attempts
+    );
     host.abort();
 }
 
@@ -239,7 +243,7 @@ async fn unknown_rooms_and_incompatible_versions_are_reported() {
         guest_tx,
         Instant::now(),
     ));
-    assert!(rejected(&mut guest_rx).await.contains("Não há sala"));
+    assert_eq!(rejected(&mut guest_rx).await, text().errors.no_room);
     guest.abort();
 
     let mut stream = TcpStream::connect(relay).await.unwrap();
@@ -357,7 +361,7 @@ async fn leaving_host_closes_the_room_for_new_entries() {
         guest_tx,
         Instant::now(),
     ));
-    assert!(rejected(&mut guest_rx).await.contains("Não há sala"));
+    assert_eq!(rejected(&mut guest_rx).await, text().errors.no_room);
     guest.abort();
 }
 
@@ -538,7 +542,7 @@ async fn tls_rejects_untrusted_certificate_and_wrong_hostname_without_downgrade(
         host_tx,
         Instant::now(),
     ));
-    assert!(rejected(&mut host_rx).await.contains("certificado"));
+    assert_eq!(rejected(&mut host_rx).await, text().errors.tls_error);
     host.abort();
 
     let (guest_tx, mut guest_rx) = mpsc::channel(64);
@@ -548,7 +552,7 @@ async fn tls_rejects_untrusted_certificate_and_wrong_hostname_without_downgrade(
         guest_tx,
         Instant::now(),
     ));
-    assert!(rejected(&mut guest_rx).await.contains("certificado"));
+    assert_eq!(rejected(&mut guest_rx).await, text().errors.tls_error);
     guest.abort();
 
     let wrong_host_pki = generate_pki(&["outro-relay.exemplo.invalid"]);
@@ -567,7 +571,7 @@ async fn tls_rejects_untrusted_certificate_and_wrong_hostname_without_downgrade(
         host_tx,
         Instant::now(),
     ));
-    assert!(rejected(&mut host_rx).await.contains("certificado"));
+    assert_eq!(rejected(&mut host_rx).await, text().errors.tls_error);
     host.abort();
 
     let (guest_tx, mut guest_rx) = mpsc::channel(64);
@@ -578,7 +582,7 @@ async fn tls_rejects_untrusted_certificate_and_wrong_hostname_without_downgrade(
         guest_tx,
         Instant::now(),
     ));
-    assert!(rejected(&mut guest_rx).await.contains("certificado"));
+    assert_eq!(rejected(&mut guest_rx).await, text().errors.tls_error);
     guest.abort();
 
     let (host_tx, mut host_rx) = mpsc::channel(64);
@@ -588,7 +592,7 @@ async fn tls_rejects_untrusted_certificate_and_wrong_hostname_without_downgrade(
         host_tx,
         Instant::now(),
     ));
-    assert!(rejected(&mut host_rx).await.contains("certificado"));
+    assert_eq!(rejected(&mut host_rx).await, text().errors.tls_error);
     host.abort();
 
     let plain_relay = free_address();

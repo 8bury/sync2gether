@@ -33,8 +33,6 @@ const STEP: Duration = Duration::from_secs(10);
 const JOIN_REPLY: Duration = Duration::from_secs(15);
 const FIRST_ENTRY: Duration = Duration::from_secs(30);
 const GONE: Duration = Duration::from_secs(45);
-const OUTDATED: &str = "O servidor exige outra versão do sync2gether. Atualize o aplicativo.";
-const TLS_ERROR: &str = "Não foi possível verificar o certificado de segurança do servidor.";
 
 fn random_words() -> [&'static str; 2] {
     Code::from_indices("", [rand::random::<u8>(), rand::random::<u8>()]).words()
@@ -65,13 +63,13 @@ impl ClientTls {
             .map_err(|error| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Certificado CA inválido: {error}"),
+                    (crate::i18n::text().errors.invalid_ca)(&error.to_string()),
                 )
             })?;
         if certs.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Nenhum certificado CA encontrado no PEM",
+                crate::i18n::text().errors.no_ca_found,
             ));
         }
         let mut roots = rustls::RootCertStore::empty();
@@ -79,7 +77,7 @@ impl ClientTls {
         if added == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Nenhum certificado CA válido encontrado",
+                crate::i18n::text().errors.no_valid_ca,
             ));
         }
         Self::from_roots(roots)
@@ -121,8 +119,7 @@ struct Endpoint {
 impl Endpoint {
     fn parse(input: &str) -> Result<Self, String> {
         let input = input.trim();
-        let invalid =
-            || "Informe o servidor como nome:porta, por exemplo relay.exemplo.com:7843.".to_owned();
+        let invalid = || crate::i18n::text().errors.relay_format.to_owned();
         let (scheme, rest) = match input.split_once("://") {
             Some((scheme, rest)) => {
                 let scheme = if scheme.eq_ignore_ascii_case("tls") {
@@ -201,7 +198,10 @@ impl Endpoint {
 
     fn server_name(&self) -> io::Result<ServerName<'static>> {
         ServerName::try_from(self.host.clone()).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidInput, "Nome de servidor TLS inválido")
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                crate::i18n::text().errors.invalid_tls_name,
+            )
         })
     }
 }
@@ -385,7 +385,9 @@ pub async fn host_with_tls(
 async fn open(host: &Host, room: Option<&str>) -> Opened {
     let mut stream = match connect(&host.endpoint, &host.tls).await {
         Ok(stream) => stream,
-        Err(ConnectError::Certificate) => return Opened::Fatal(TLS_ERROR.into()),
+        Err(ConnectError::Certificate) => {
+            return Opened::Fatal(crate::i18n::text().errors.tls_error.into());
+        }
         Err(ConnectError::Transient) => return Opened::Retry,
     };
     let result = async {
@@ -407,7 +409,9 @@ async fn open(host: &Host, room: Option<&str>) -> Opened {
             Opened::Room(stream, room)
         }
         Ok((_, Reply::Taken)) => Opened::Taken,
-        Ok((_, Reply::Outdated { .. })) => Opened::Fatal(OUTDATED.into()),
+        Ok((_, Reply::Outdated { .. })) => {
+            Opened::Fatal(crate::i18n::text().errors.outdated.into())
+        }
         _ => Opened::Retry,
     }
 }
@@ -464,7 +468,7 @@ async fn control(stream: RelayStream, host: &Arc<Host>, room: &str, tasks: &mut 
 async fn admit(host: &Host, room: &str, ticket: u64) -> io::Result<()> {
     let mut stream = connect(&host.endpoint, &host.tls)
         .await
-        .map_err(|_| io::Error::other("Falha ao conectar ao servidor"))?;
+        .map_err(|_| io::Error::other(crate::i18n::text().errors.relay_connect_failed))?;
     wire::write_frame(
         &mut stream,
         &Request::Accept {
@@ -516,10 +520,7 @@ async fn admit(host: &Host, room: &str, ticket: u64) -> io::Result<()> {
             let _ = host
                 .events
                 .send(if wrong >= MAX_WRONG_CODES {
-                    Event::Rejected(
-                        "Houve três tentativas com código errado. A sala foi fechada por segurança; crie outra."
-                            .into(),
-                    )
+                    Event::Rejected(crate::i18n::text().errors.too_many_attempts.into())
                 } else {
                     Event::WrongCode
                 })
@@ -640,20 +641,14 @@ pub async fn guest_with_tls(
             }
             Err(failure) => {
                 let error = match failure {
-                    Failure::Unknown => Some(
-                        "Não há sala com esse código. Confira o número ou peça um código novo.",
-                    ),
-                    Failure::WrongKey => {
-                        Some("Código incorreto. Confira as palavras ou peça um código novo.")
+                    Failure::Unknown => Some(crate::i18n::text().errors.no_room),
+                    Failure::WrongKey => Some(crate::i18n::text().errors.wrong_code),
+                    Failure::Outdated => Some(crate::i18n::text().errors.outdated),
+                    Failure::Limited => Some(crate::i18n::text().errors.relay_busy),
+                    Failure::Certificate => Some(crate::i18n::text().errors.tls_error),
+                    Failure::Away | Failure::Retry if started.elapsed() > FIRST_ENTRY => {
+                        Some(crate::i18n::text().errors.host_unreachable)
                     }
-                    Failure::Outdated => Some(OUTDATED),
-                    Failure::Limited => {
-                        Some("O servidor está ocupado. Tente de novo em alguns minutos.")
-                    }
-                    Failure::Certificate => Some(TLS_ERROR),
-                    Failure::Away | Failure::Retry if started.elapsed() > FIRST_ENTRY => Some(
-                        "Não foi possível falar com o anfitrião. Confira a internet e se a sala continua aberta.",
-                    ),
                     Failure::Away | Failure::Retry => None,
                 };
                 if let Some(error) = error {
@@ -678,23 +673,27 @@ pub async fn guest_with_tls(
             Err(Failure::WrongKey) => {
                 let _ = events
                     .send(Event::Rejected(
-                        "A sala não aceita mais esta conexão. Entre de novo com o código.".into(),
+                        crate::i18n::text().errors.connection_not_accepted.into(),
                     ))
                     .await;
                 return;
             }
             Err(Failure::Outdated) => {
-                let _ = events.send(Event::Rejected(OUTDATED.into())).await;
+                let _ = events
+                    .send(Event::Rejected(crate::i18n::text().errors.outdated.into()))
+                    .await;
                 return;
             }
             Err(Failure::Certificate) => {
-                let _ = events.send(Event::Rejected(TLS_ERROR.into())).await;
+                let _ = events
+                    .send(Event::Rejected(crate::i18n::text().errors.tls_error.into()))
+                    .await;
                 return;
             }
             Err(Failure::Unknown) if gone.get_or_insert_with(Instant::now).elapsed() > GONE => {
                 let _ = events
                     .send(Event::Rejected(
-                        "A sala foi encerrada pelo anfitrião.".into(),
+                        crate::i18n::text().errors.room_closed_by_host.into(),
                     ))
                     .await;
                 return;
@@ -773,7 +772,10 @@ mod tests {
             "relay..example.com:7843",
         ] {
             let error = relay_address(invalid).expect_err(invalid);
-            assert!(error.contains("Informe o servidor"), "{invalid}: {error}");
+            assert!(
+                error == crate::i18n::text().errors.relay_format,
+                "{invalid}: {error}"
+            );
         }
     }
 

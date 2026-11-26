@@ -15,12 +15,12 @@ pub struct Track {
     pub selected: bool,
 }
 impl Track {
-    pub fn label(&self) -> String {
+    pub fn label(&self, untitled: fn(i64) -> String) -> String {
         match (&self.title, &self.language) {
             (Some(title), Some(language)) => format!("{title} · {language}"),
             (Some(title), None) => title.clone(),
             (None, Some(language)) => language.clone(),
-            (None, None) => format!("Faixa {}", self.id),
+            (None, None) => untitled(self.id),
         }
     }
 }

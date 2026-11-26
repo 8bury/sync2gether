@@ -40,7 +40,8 @@ impl Drop for CacheGuard {
         if let Some(proxy) = &self.proxy
             && proxy.strong_count() == 0
         {
-            self.cache.close_with_error("Streaming encerrado".into());
+            self.cache
+                .close_with_error(crate::i18n::text().stream_errors.ended.into());
         }
     }
 }
@@ -130,10 +131,10 @@ async fn run_guest(
     let reconnecting = existing_cache.is_some();
     let local_addr = socket
         .local_addr()
-        .map_err(|_| "Não foi possível obter porta UDP local.".to_owned())?;
+        .map_err(|_| crate::i18n::text().stream_errors.no_udp_port.to_owned())?;
     let remote_candidates = nat::filter_remote_candidates(&offer.candidates, !stun_enabled);
     if remote_candidates.is_empty() {
-        return Err("Anfitrião não enviou endereços P2P válidos.".into());
+        return Err(crate::i18n::text().stream_errors.host_no_addresses.into());
     }
 
     let file_bitrate = file_bitrate_bps(offer.media.bytes, offer.duration);
@@ -166,18 +167,18 @@ async fn run_guest(
 
     let punch_sock = socket
         .try_clone()
-        .map_err(|_| "Falha ao clonar socket UDP para hole-punching.".to_owned())?;
+        .map_err(|_| crate::i18n::text().stream_errors.clone_socket.to_owned())?;
     nat::send_hole_punches(&punch_sock, &remote_candidates);
 
     let client_config = tls::client_config(&identity, &offer.cert_fingerprint)
-        .map_err(|e| format!("Falha ao configurar cliente TLS P2P: {e}"))?;
+        .map_err(|e| (crate::i18n::text().stream_errors.tls_client)(&e.to_string()))?;
     let mut endpoint = quinn::Endpoint::new(
         quinn::EndpointConfig::default(),
         None,
         socket,
         Arc::new(quinn::TokioRuntime),
     )
-    .map_err(|e| format!("Falha ao abrir endpoint QUIC: {e}"))?;
+    .map_err(|e| (crate::i18n::text().stream_errors.quic_endpoint)(&e.to_string()))?;
     endpoint.set_default_client_config(client_config);
     let endpoint_guard = EndpointGuard(endpoint.clone());
 
@@ -234,11 +235,11 @@ async fn run_guest(
             hashes.unwrap(),
         )
         .await
-        .map_err(|e| format!("Não foi possível abrir o cache local: {e}"))?;
+        .map_err(|e| (crate::i18n::text().stream_errors.open_cache)(&e.to_string()))?;
         let proxy = Arc::new(
             http::start(cache.clone(), &offer.file_name)
                 .await
-                .map_err(|e| format!("Não foi possível iniciar o proxy local do player: {e}"))?,
+                .map_err(|e| (crate::i18n::text().stream_errors.start_proxy)(&e.to_string()))?,
         );
         (cache, Some(proxy))
     };
@@ -325,7 +326,7 @@ async fn run_guest(
                         return Err(reason);
                     }
                     return Ok(GuestOutcome::Disconnected(
-                        "A conexão P2P direta foi interrompida.".into(),
+                        crate::i18n::text().stream_errors.interrupted.into(),
                     ));
                 }
                 break;
@@ -431,13 +432,17 @@ async fn verify_complete_or_wipe(cache: &ChunkCache) -> Result<(), String> {
     match cache.verify_full_file_hash().await {
         Ok(true) => Ok(()),
         Ok(false) => {
-            cache.close_with_error("Hash do arquivo não confere.".into());
+            cache.close_with_error(crate::i18n::text().stream_errors.hash_mismatch.into());
             cache.wipe_cache().await;
-            Err("O conteúdo recebido não confere com o hash informado pelo anfitrião.".into())
+            Err(crate::i18n::text().stream_errors.content_mismatch.into())
         }
         Err(err) => {
-            cache.close_with_error(format!("Erro ao verificar cache: {err}"));
-            Err(format!("Falha ao verificar integridade do filme: {err}"))
+            cache.close_with_error((crate::i18n::text().stream_errors.cache_verify)(
+                &err.to_string(),
+            ));
+            Err((crate::i18n::text().stream_errors.integrity_failed)(
+                &err.to_string(),
+            ))
         }
     }
 }
@@ -453,7 +458,10 @@ async fn connect_any(
         .filter_map(|&c| nat::normalize_for_socket(local_addr, c))
         .collect();
     if targets.is_empty() {
-        return Err("Nenhum endereço P2P compatível com a pilha de rede local.".into());
+        return Err(crate::i18n::text()
+            .stream_errors
+            .no_compatible_address
+            .into());
     }
 
     let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
@@ -483,10 +491,7 @@ async fn connect_any(
         handles.abort_all();
         attempt += 1;
     }
-    Err(
-        "Não foi possível conectar P2P direto ao anfitrião (NAT restrito ou firewall). Tente na rede local, IPv6 ou VPN."
-            .into(),
-    )
+    Err(crate::i18n::text().stream_errors.guest_nat.into())
 }
 
 async fn fetch_hash_table(
@@ -496,25 +501,25 @@ async fn fetch_hash_table(
     let (mut send, mut recv) = conn
         .open_bi()
         .await
-        .map_err(|_| "Falha ao abrir canal QUIC para tabela de blocos.".to_owned())?;
+        .map_err(|_| crate::i18n::text().stream_errors.table_channel.to_owned())?;
     wire::write_request(&mut send, wire::Request::HashTable)
         .await
-        .map_err(|_| "Falha ao solicitar tabela de blocos.".to_owned())?;
+        .map_err(|_| crate::i18n::text().stream_errors.table_request.to_owned())?;
     let _ = send.finish();
     let raw = tokio::time::timeout(
         Duration::from_secs(10),
         wire::read_ok_payload(&mut recv, wire::MAX_HASH_TABLE_BYTES),
     )
     .await
-    .map_err(|_| "Tempo esgotado ao baixar tabela de blocos.".to_owned())?
-    .map_err(|e| format!("Falha ao receber tabela de blocos: {e}"))?;
+    .map_err(|_| crate::i18n::text().stream_errors.table_timeout.to_owned())?
+    .map_err(|e| (crate::i18n::text().stream_errors.table_receive)(&e.to_string()))?;
     ChunkIndex::deserialize_verified(
         &raw,
         &offer.hash_table_digest,
         offer.media.bytes,
         offer.chunk_size,
     )
-    .map_err(|e| format!("Tabela de blocos inválida: {e}"))
+    .map_err(|e| (crate::i18n::text().stream_errors.table_invalid)(&e.to_string()))
 }
 
 async fn measure_throughput(conn: &quinn::Connection, file_bytes: u64) -> io::Result<u64> {
@@ -528,7 +533,12 @@ async fn measure_throughput(conn: &quinn::Connection, file_bytes: u64) -> io::Re
         wire::read_ok_payload(&mut recv, wire::MAX_PROBE_BYTES as usize),
     )
     .await
-    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Sonda de velocidade expirou"))??;
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            crate::i18n::text().stream_errors.probe_timeout,
+        )
+    })??;
     let elapsed = started.elapsed().as_secs_f64().max(0.001);
     Ok(((data.len() as f64 * 8.0) / elapsed) as u64)
 }
@@ -591,7 +601,7 @@ async fn fetch_one_chunk(
             let _ = recv.stop(1u32.into());
             Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "Tempo esgotado ao ler bloco",
+                crate::i18n::text().stream_errors.chunk_timeout,
             ))
         }
     }

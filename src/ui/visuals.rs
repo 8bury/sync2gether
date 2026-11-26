@@ -107,12 +107,12 @@ pub(super) fn brand(ui: &mut egui::Ui, colors: Palette) {
     );
 }
 
-pub(super) fn demo_video(painter: &egui::Painter, rect: egui::Rect) {
+pub(super) fn demo_video(painter: &egui::Painter, rect: egui::Rect, label: &str) {
     painter.rect_filled(rect, 0, Color32::from_rgb(26, 26, 26));
     painter.text(
         rect.center() - egui::vec2(0.0, rect.height() * 0.3),
         egui::Align2::CENTER_CENTER,
-        "Vídeo fictício",
+        label,
         egui::FontId::proportional(14.0),
         Color32::from_white_alpha(70),
     );

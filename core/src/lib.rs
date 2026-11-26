@@ -9,10 +9,12 @@ pub mod relay_wire;
 pub mod secure;
 pub mod sync;
 
+pub const UNNAMED: &str = "Outro computador";
+
 pub fn device_name(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_control()).take(64).collect();
     if name.trim().is_empty() {
-        "Outro computador".into()
+        UNNAMED.into()
     } else {
         name
     }

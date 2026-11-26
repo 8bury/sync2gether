@@ -1,4 +1,4 @@
-use super::{Inputs, Palette, Screen, draw_flow, strong};
+use super::{Inputs, Palette, Screen, draw_flow, strong, tr};
 use crate::model::{Action, SessionState};
 use eframe::egui::{self, RichText, Stroke};
 
@@ -12,6 +12,7 @@ pub fn draw_with_inputs(
     demo: bool,
     inputs: &mut Inputs,
 ) -> Vec<Action> {
+    let t = tr(ui);
     let mut actions = Vec::new();
     if demo {
         let colors = Palette::new(ui.visuals().dark_mode);
@@ -31,24 +32,20 @@ pub fn draw_with_inputs(
                         .inner_margin(egui::Margin::symmetric(8, 3))
                         .show(ui, |ui| {
                             ui.label(
-                                strong(ui, "DEMO OFFLINE")
+                                strong(ui, t.demo.badge)
                                     .size(10.5)
                                     .extra_letter_spacing(0.6)
                                     .color(colors.warning),
                             );
                         });
                     ui.menu_button(
-                        RichText::new(state.label()).size(13.5).color(colors.muted),
+                        RichText::new(state.label(t)).size(13.5).color(colors.muted),
                         |ui| {
-                            ui.label(
-                                RichText::new("Cenários fictícios, sem player ou rede")
-                                    .small()
-                                    .color(colors.muted),
-                            );
+                            ui.label(RichText::new(t.demo.scenarios).small().color(colors.muted));
                             ui.separator();
                             for candidate in SessionState::ALL {
                                 if ui
-                                    .selectable_label(state == candidate, candidate.label())
+                                    .selectable_label(state == candidate, candidate.label(t))
                                     .clicked()
                                 {
                                     inputs.screen = Screen::Home;
@@ -66,37 +63,37 @@ pub fn draw_with_inputs(
     let state = actions
         .last()
         .map_or(state, |Action::SetDemoState(next)| *next);
-    let view = demo_view(state);
+    let view = demo_view(t, state);
     if state == SessionState::Browsing {
         inputs.screen = Screen::Browse;
         inputs.lan = true;
     }
     if matches!(state, SessionState::JoinCode | SessionState::Connecting) {
         inputs.screen = Screen::Join;
-        inputs.code = "4821-gato-lua".into();
+        inputs.code = t.common.example_code.into();
         inputs.joining = state == SessionState::Connecting;
     }
     let _ = draw_flow(ui, &view, inputs, None, demo);
     actions
 }
 
-fn demo_view(state: SessionState) -> crate::runtime::View {
+fn demo_view(t: &'static crate::i18n::Strings, state: SessionState) -> crate::runtime::View {
     use crate::runtime::{JoinRequest, Role, View};
     let mut view = View::default();
     if matches!(state, SessionState::Idle | SessionState::JoinCode) {
         return view;
     }
     if state == SessionState::RoomClosed {
-        view.file = Some("Filme de demonstração.mkv".into());
+        view.file = Some(t.demo.file.into());
         view.player.loaded = true;
         view.player.paused = true;
-        view.notice = Some("notebook-ana encerrou a sala.".into());
+        view.notice = Some((t.room.closed_by)("notebook-ana"));
         return view;
     }
     if state == SessionState::Connecting {
         view.role = Role::Guest;
         view.internet = true;
-        view.room_code = Some("4821-gato-lua".into());
+        view.room_code = Some(t.common.example_code.into());
         return view;
     }
     if state == SessionState::PendingApproval {
@@ -114,10 +111,11 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
         return view;
     }
     view.role = Role::Host;
-    view.file = Some("Filme de demonstração.mkv".into());
+    view.file = Some(t.demo.file.into());
     view.verified = true;
     view.player.loaded = true;
     view.player.paused = state != SessionState::Synchronized;
+    view.paused_by = (state == SessionState::Paused).then_some(crate::protocol::Side::Guest);
     view.player.duration = 5400.0;
     view.player.position = 754.0;
     view.connected = !matches!(
@@ -131,14 +129,12 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
     view.peer_name = Some("notebook-ana".into());
     view.peer_ready = view.connected;
     view.peer_verified = view.connected;
-    view.peer_file = view
-        .connected
-        .then(|| "Filme.de.demonstração.1080p.mkv".into());
+    view.peer_file = view.connected.then(|| t.demo.peer_file.into());
     if state == SessionState::Approval {
         view.room_address = Some("192.168.1.10:7842".parse().unwrap());
     } else {
         view.internet = true;
-        view.room_code = Some("4821-gato-lua".into());
+        view.room_code = Some(t.common.example_code.into());
         view.web_link = crate::ui::web_link(Some("https://assistir.example"), &view);
     }
     view.matched = view.connected;
@@ -150,7 +146,7 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
             | SessionState::Reconnecting
             | SessionState::PeerLeft
     );
-    view.status = state.label().into();
+    view.status = state.label(t).into();
     if view.watching && view.connected {
         view.peer_drift = Some(0.0);
     }
@@ -190,7 +186,7 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
             view.matched = false;
         }
         SessionState::Mismatch => {
-            view.peer_file = Some("Filme.de.demonstração.720p.mp4".into());
+            view.peer_file = Some(t.demo.peer_other_file.into());
             view.ready = false;
             view.matched = false;
         }
@@ -198,10 +194,7 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
             view.ready = false;
         }
         SessionState::PlayerError => {
-            view.error = Some(
-                "Não foi possível abrir o vídeo. Confira o arquivo e tente escolher outra cópia."
-                    .into(),
-            );
+            view.error = Some(t.demo.error.into());
             view.player.blocked = true;
             view.ready = false;
         }

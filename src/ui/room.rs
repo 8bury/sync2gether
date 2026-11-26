@@ -1,5 +1,5 @@
 use super::{
-    Inputs, Palette, feedback, kit, preparation, quiet, section_label, strong, title,
+    Inputs, Palette, feedback, kit, preparation, quiet, section_label, strong, title, tr,
     visuals::{self, Presence},
 };
 use crate::runtime::{Command, Role, View};
@@ -26,8 +26,13 @@ pub(super) fn confirm_leave(
         inputs.confirm_leave = false;
         return;
     }
+    let strings = super::language(ctx).strings();
+    let t = &strings.room;
     let host = view.role == Role::Host;
-    let peer = view.peer_name.as_deref().unwrap_or("A outra pessoa");
+    let peer = view
+        .peer_name
+        .as_deref()
+        .unwrap_or(strings.common.other_person_object);
     let modal = egui::Modal::new(egui::Id::new("confirm_leave"))
         .frame(
             egui::Frame::new()
@@ -41,30 +46,30 @@ pub(super) fn confirm_leave(
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.label(title(
                 if host {
-                    "Encerrar a sala?"
+                    t.end_question
                 } else {
-                    "Sair da sala?"
+                    t.leave_question
                 },
                 20.0,
             ));
             ui.add(
                 egui::Label::new(
                     RichText::new(if host {
-                        format!("A sala fecha e a conexão com {peer} termina.")
+                        (t.end_detail)(peer)
                     } else {
-                        format!("Você deixa a sala de {peer} e volta ao início.")
+                        (t.leave_detail)(peer)
                     })
                     .color(colors.muted),
                 )
                 .wrap(),
             );
             ui.add_space(10.0);
-            let leave = if host { "Encerrar" } else { "Sair" };
+            let leave = if host { t.end } else { t.leave };
             let mut stay = false;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if kit::Button::new(kit::Kind::Primary, "Continuar na sala")
+                    if kit::Button::new(kit::Kind::Primary, t.stay)
                         .size(kit::Size::Medium)
                         .show(ui, colors)
                         .clicked()
@@ -97,11 +102,13 @@ pub(super) fn room_contents(
     inputs: &mut Inputs,
     actions: &mut Vec<Command>,
 ) {
+    let strings = tr(ui);
+    let t = &strings.room;
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(title("Sala", 22.0));
+            ui.label(title(t.title, 22.0));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if kit::icon_button(ui, colors, kit::Glyph::Close, "Fechar", 32.0).clicked() {
+                if kit::icon_button(ui, colors, kit::Glyph::Close, t.close, 32.0).clicked() {
                     inputs.room_panel = false;
                 }
             });
@@ -111,9 +118,9 @@ pub(super) fn room_contents(
             .peer_name
             .as_deref()
             .unwrap_or(if view.role == Role::Local {
-                "Assistindo sozinho"
+                t.watching_alone
             } else {
-                "Outra pessoa"
+                strings.common.other_person
             });
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -133,32 +140,31 @@ pub(super) fn room_contents(
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.add(egui::Label::new(strong(ui, name)).truncate());
                 let (label, color) = if view.connected {
-                    ("Conectado", colors.success)
+                    (t.connected, colors.success)
                 } else if view.role == Role::Local {
-                    ("Reprodução local", colors.muted)
+                    (strings.common.local_playback, colors.muted)
                 } else if view.peer_left {
-                    ("Saiu da sala", colors.muted)
+                    (t.left_room, colors.muted)
                 } else {
-                    ("Desconectado", colors.warning)
+                    (t.disconnected, colors.warning)
                 };
                 kit::status(ui, None, label, color);
             });
         });
         ui.add_space(18.0);
-        section_label(ui, colors, "Seu arquivo");
-        ui.add(egui::Label::new(view.file.as_deref().unwrap_or("Nenhum arquivo")).truncate())
+        section_label(ui, colors, t.your_file);
+        ui.add(egui::Label::new(view.file.as_deref().unwrap_or(t.no_file)).truncate())
             .on_hover_text(view.file.as_deref().unwrap_or_default());
         if view.role != Role::Local {
             ui.add_space(4.0);
-            section_label(ui, colors, "Arquivo da outra pessoa");
+            section_label(ui, colors, t.peer_file);
             ui.add(
-                egui::Label::new(view.peer_file.as_deref().unwrap_or("Aguardando arquivo"))
-                    .truncate(),
+                egui::Label::new(view.peer_file.as_deref().unwrap_or(t.waiting_file)).truncate(),
             )
             .on_hover_text(view.peer_file.as_deref().unwrap_or_default());
         }
         ui.add_space(12.0);
-        if kit::Button::new(kit::Kind::Secondary, "Trocar filme")
+        if kit::Button::new(kit::Kind::Secondary, t.change_movie)
             .size(kit::Size::Medium)
             .fill_width(ui)
             .show(ui, colors)
@@ -173,14 +179,17 @@ pub(super) fn room_contents(
         feedback(ui, view);
         connection_details(ui, view, actions);
         ui.add_space(12.0);
-        if quiet(ui, colors, preparation::leave_label(view.role)).clicked() {
+        if quiet(ui, colors, preparation::leave_label(strings, view.role)).clicked() {
             request_leave(view, inputs, actions);
         }
     });
 }
 
-pub(crate) fn preparation_leave_label(role: Role) -> &'static str {
-    preparation::leave_label(role)
+pub(crate) fn preparation_leave_label(
+    t: &'static crate::i18n::Strings,
+    role: Role,
+) -> &'static str {
+    preparation::leave_label(t, role)
 }
 
 pub(crate) fn media_title(file: &str) -> &str {
@@ -199,20 +208,22 @@ pub(crate) fn media_title(file: &str) -> &str {
 }
 
 pub(super) fn connection_details(ui: &mut egui::Ui, view: &View, actions: &mut Vec<Command>) {
-    egui::CollapsingHeader::new("Detalhes da conexão").show(ui, |ui| {
+    let strings = tr(ui);
+    let t = &strings.room;
+    egui::CollapsingHeader::new(t.connection_details).show(ui, |ui| {
         if view.internet {
-            ui.label("Sala pela internet, cifrada de ponta a ponta");
+            ui.label(t.internet_room);
             if let Some(code) = &view.room_code {
-                ui.label(format!("Código: {code}"));
+                ui.label((t.code)(code));
                 if view.role == Role::Host {
-                    preparation::copy_button(ui, "Copiar código", code);
+                    preparation::copy_button(ui, strings.common.copy_code, code);
                 }
                 if let Some(link) = &view.web_link {
-                    preparation::copy_button(ui, "Copiar link para navegador", link);
+                    preparation::copy_button(ui, strings.preparation.copy_browser_link, link);
                 }
             }
             if view.relay_offline {
-                ui.label("Sem contato com o servidor. Tentando de novo…");
+                ui.label(strings.common.relay_offline);
             }
         }
         let addresses = if view.internet {
@@ -221,26 +232,23 @@ pub(super) fn connection_details(ui: &mut egui::Ui, view: &View, actions: &mut V
             room_addresses(view)
         };
         if let Some(address) = view.room_address.filter(|addr| addr.ip().is_unspecified()) {
-            ui.label(format!("Porta: {}", address.port()));
+            ui.label((t.port)(address.port()));
         }
         for address in addresses {
-            ui.label(format!("Endereço: {address}"));
-            preparation::copy_button(ui, "Copiar endereço", &address.to_string());
+            ui.label((t.address)(&address.to_string()));
+            preparation::copy_button(ui, strings.common.copy_address, &address.to_string());
         }
         if let Some(error) = &view.discovery_error {
             ui.label(error);
         }
         ui.label(&view.status);
         if let Some(drift) = view.peer_drift {
-            ui.label(format!(
-                "Diferença estimada entre players: {:.0} ms",
-                drift.abs() * 1000.0
-            ));
+            ui.label((t.drift)(drift.abs() * 1000.0));
         }
         if view.connected && view.role == Role::Guest {
-            ui.label(format!("Ida e volta: {:.0} ms", view.rtt_ms));
+            ui.label((t.rtt)(view.rtt_ms));
         }
-        if view.role == Role::Local && ui.button("Atualizar salas").clicked() {
+        if view.role == Role::Local && ui.button(strings.common.refresh_rooms).clicked() {
             actions.push(Command::Discover);
         }
     });
@@ -270,10 +278,10 @@ pub(super) fn approval(
         .inner_margin(egui::Margin::symmetric(16, 12))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
+            let t = &tr(ui).room;
             let wide = ui.available_width() >= 460.0;
-            let accept = || kit::Button::new(kit::Kind::Primary, "Aceitar").size(kit::Size::Small);
-            let reject =
-                || kit::Button::new(kit::Kind::Secondary, "Recusar").size(kit::Size::Small);
+            let accept = || kit::Button::new(kit::Kind::Primary, t.accept).size(kit::Size::Small);
+            let reject = || kit::Button::new(kit::Kind::Secondary, t.reject).size(kit::Size::Small);
             let buttons = accept().natural_width(ui) + reject().natural_width(ui) + 8.0;
             let mut answer = None;
             ui.horizontal(|ui| {
@@ -291,11 +299,7 @@ pub(super) fn approval(
                         ui.set_min_width(text_width);
                         ui.spacing_mut().item_spacing.y = 1.0;
                         ui.add(
-                            egui::Label::new(strong(
-                                ui,
-                                format!("{} quer entrar na sala", request.name),
-                            ))
-                            .wrap(),
+                            egui::Label::new(strong(ui, (t.wants_to_join)(&request.name))).wrap(),
                         );
                         ui.label(
                             RichText::new(request.address.ip().to_string())

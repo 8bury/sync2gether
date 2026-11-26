@@ -80,7 +80,7 @@ pub async fn prepare(
         bound.push((socket, local, reflexive));
     }
     if bound.is_empty() {
-        return Err("Não foi possível abrir uma porta UDP para o streaming.".into());
+        return Err(crate::i18n::text().stream_errors.no_udp_port.into());
     }
     let mut host = WebHost {
         rtc: Rtc::builder().build(Instant::now()),
@@ -103,10 +103,11 @@ pub async fn prepare(
             host.drain(&mut Vec::new())?;
         }
     }
-    let answer =
-        host.rtc.sdp_api().accept_offer(offer).map_err(|_| {
-            "Não foi possível responder à oferta de streaming do navegador.".to_owned()
-        })?;
+    let answer = host
+        .rtc
+        .sdp_api()
+        .accept_offer(offer)
+        .map_err(|_| crate::i18n::text().stream_errors.web_answer.to_owned())?;
     host.drain(&mut Vec::new())?;
     Ok((answer.to_sdp_string(), host))
 }
@@ -172,7 +173,7 @@ impl WebHost {
     async fn serve(mut self, id: u64, events: &mpsc::Sender<StreamEvent>) -> Result<(), String> {
         let file = Arc::new(
             File::open(&self.path)
-                .map_err(|_| "Não foi possível abrir o arquivo para streaming.".to_owned())?,
+                .map_err(|_| crate::i18n::text().stream_errors.open_file.to_owned())?,
         );
         let (packets_tx, mut packets) = mpsc::channel::<(SocketAddr, SocketAddr, Vec<u8>)>(256);
         let mut readers = Vec::new();
@@ -316,7 +317,12 @@ impl WebHost {
         let len = chunks.file_size.saturating_sub(offset).min(chunk_size) as usize;
         tokio::task::spawn_blocking(move || {
             if !valid {
-                return (index, Err(io::Error::other("Bloco inexistente")));
+                return (
+                    index,
+                    Err(io::Error::other(
+                        crate::i18n::text().stream_errors.chunk_out_of_file,
+                    )),
+                );
             }
             let mut buffer = vec![0; len];
             let result = file_io::read_exact_at(&file, &mut buffer, offset).map(|()| buffer);

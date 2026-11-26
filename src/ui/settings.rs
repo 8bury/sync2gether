@@ -1,7 +1,8 @@
 use super::{
-    Body, Inputs, Palette, Screen, back_label, configure_theme, kit, medium_family, request_leave,
-    section_label, visuals,
+    Body, Inputs, Palette, Screen, back_label, configure_language, configure_theme, kit,
+    medium_family, request_leave, section_label, tr, visuals,
 };
+use crate::i18n::Language;
 use crate::runtime::{Command, Role, View};
 use eframe::egui::{self, RichText, Stroke};
 
@@ -23,10 +24,11 @@ pub(super) fn header(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            let settings = kit::icon_button(ui, colors, kit::Glyph::Gear, "Configurações", 36.0);
+            let settings =
+                kit::icon_button(ui, colors, kit::Glyph::Gear, tr(ui).settings.title, 36.0);
             egui::Popup::menu(&settings)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| settings_menu(ui, colors, inputs, view.role));
+                .show(|ui| settings_menu(ui, colors, inputs, view.role, actions));
             if wide
                 && body == Body::Preparation
                 && let Some(code) = view.room_code.as_deref().filter(|_| view.internet)
@@ -46,12 +48,13 @@ fn leave_action(
     actions: &mut Vec<Command>,
 ) {
     let joining = inputs.joining && view.role == Role::Guest && !view.connected;
+    let t = tr(ui);
     let label = match body {
         Body::Home => return,
-        Body::Browse => "Voltar",
-        Body::Join if joining => "Cancelar",
-        Body::Join => "Voltar",
-        _ => back_label(view, body).unwrap_or("Voltar"),
+        Body::Browse => t.common.back,
+        Body::Join if joining => t.common.cancel,
+        Body::Join => t.common.back,
+        _ => back_label(t, view, body).unwrap_or(t.common.back),
     };
     let clicked = kit::Button::new(kit::Kind::Ghost, label)
         .glyph(kit::Glyph::ChevronLeft)
@@ -86,7 +89,8 @@ fn room_chip(ui: &mut egui::Ui, colors: Palette, code: &str) {
     let size = galley.size() + egui::vec2(20.0, 14.0);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(size.x, size.y.max(32.0)), egui::Sense::click());
-    let label = format!("Copiar código da sala {code}");
+    let t = tr(ui);
+    let label = (t.settings.copy_room_code)(code);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
     let id = ui.id().with(("copied", code));
     let now = ui.input(|i| i.time);
@@ -125,15 +129,55 @@ fn room_chip(ui: &mut egui::Ui, colors: Palette, code: &str) {
         ink,
     );
     response
-        .on_hover_text(if copied { "Copiado" } else { "Copiar código" })
+        .on_hover_text(if copied {
+            t.common.copied
+        } else {
+            t.common.copy_code
+        })
         .on_hover_cursor(egui::CursorIcon::PointingHand);
 }
 
-fn settings_menu(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: Role) {
+fn settings_menu(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    inputs: &mut Inputs,
+    role: Role,
+    actions: &mut Vec<Command>,
+) {
+    let t = tr(ui);
     ui.set_width(250.0);
     ui.spacing_mut().item_spacing.y = 8.0;
-    section_label(ui, colors, "Aparência");
+    section_label(ui, colors, t.settings.appearance);
     let dark = ui.visuals().dark_mode;
+    if let Some(index) = segmented(
+        ui,
+        colors,
+        [(t.settings.dark, dark), (t.settings.light, !dark)],
+    ) {
+        configure_theme(ui.ctx(), index == 1);
+    }
+    ui.add_space(4.0);
+    section_label(ui, colors, t.settings.language);
+    let current = super::language(ui.ctx());
+    if let Some(index) = segmented(
+        ui,
+        colors,
+        Language::ALL.map(|language| (language.native_name(), language == current)),
+    ) {
+        let language = Language::ALL[index];
+        configure_language(ui.ctx(), language);
+        actions.push(Command::SetLanguage(language));
+    }
+    network_settings(ui, colors, inputs, role);
+    shortcuts(ui, colors);
+}
+
+fn segmented<const N: usize>(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    options: [(&str, bool); N],
+) -> Option<usize> {
+    let mut chosen = None;
     egui::Frame::new()
         .fill(colors.inset)
         .stroke(Stroke::new(1.0, colors.border))
@@ -141,11 +185,10 @@ fn settings_menu(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: 
         .inner_margin(3)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
-            ui.columns(2, |columns| {
-                for (column, (label, light)) in
-                    columns.iter_mut().zip([("Escuro", false), ("Claro", true)])
+            ui.columns(N, |columns| {
+                for (index, (column, (label, selected))) in
+                    columns.iter_mut().zip(options).enumerate()
                 {
-                    let selected = dark != light;
                     let (rect, response) = column.allocate_exact_size(
                         egui::vec2(column.available_width(), 30.0),
                         egui::Sense::click(),
@@ -177,22 +220,27 @@ fn settings_menu(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: 
                         if selected { colors.text } else { colors.muted },
                     );
                     if response.clicked() && !selected {
-                        configure_theme(column.ctx(), light);
+                        chosen = Some(index);
                     }
                 }
             });
         });
+    chosen
+}
+
+fn network_settings(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: Role) {
+    let t = tr(ui);
     ui.add_space(4.0);
-    section_label(ui, colors, "Rede");
+    section_label(ui, colors, t.settings.network);
     let local = role == Role::Local;
     ui.add_enabled(
         local,
-        egui::Checkbox::new(&mut inputs.lan, "Opções avançadas de rede"),
+        egui::Checkbox::new(&mut inputs.lan, t.settings.advanced_network),
     )
-    .on_hover_text("Salas na rede local ou VPN, entrada por endereço e servidor próprio");
+    .on_hover_text(t.settings.advanced_network_hint);
     if inputs.lan {
         ui.label(
-            RichText::new("Porta das salas na rede local")
+            RichText::new(t.settings.lan_port)
                 .small()
                 .color(colors.muted),
         );
@@ -201,7 +249,7 @@ fn settings_menu(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: 
             egui::DragValue::new(&mut inputs.port).range(1..=65535),
         );
         let label = ui.label(
-            RichText::new("Servidor das salas pela internet")
+            RichText::new(t.settings.relay_server)
                 .small()
                 .color(colors.muted),
         );
@@ -218,22 +266,26 @@ fn settings_menu(ui: &mut egui::Ui, colors: Palette, inputs: &mut Inputs, role: 
     }
     if !local {
         ui.label(
-            RichText::new("Altere antes de criar ou entrar em outra sala.")
+            RichText::new(t.settings.change_before_room)
                 .small()
                 .color(colors.muted),
         );
     }
+}
+
+fn shortcuts(ui: &mut egui::Ui, colors: Palette) {
+    let t = tr(ui);
     ui.add_space(4.0);
-    section_label(ui, colors, "Atalhos do player");
+    section_label(ui, colors, t.settings.shortcuts);
     egui::Grid::new("shortcuts")
         .num_columns(2)
         .spacing(egui::vec2(12.0, 6.0))
         .show(ui, |ui| {
             for (key, action) in [
-                ("Espaço", "play / pausa"),
-                ("← / →", "voltar / avançar 10 s"),
-                ("F", "tela cheia"),
-                ("M", "silenciar"),
+                (t.settings.space_key, t.settings.play_pause),
+                ("← / →", t.settings.seek),
+                ("F", t.settings.fullscreen),
+                ("M", t.settings.mute),
             ] {
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(52.0, 22.0), egui::Sense::hover());

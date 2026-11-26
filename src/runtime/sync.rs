@@ -1,7 +1,7 @@
 use super::{Role, Worker};
 use crate::{
     player,
-    protocol::{Control, Message, Playback, Snapshot, StreamProgress},
+    protocol::{Control, Message, Playback, Side, Snapshot, StreamProgress},
     stream::{CHUNK_SIZE, StreamPhase},
     sync::Correction,
 };
@@ -23,6 +23,10 @@ pub(super) enum BufferLatch {
 
 impl Worker {
     pub(super) fn control(&mut self, control: Control) {
+        self.control_by(control, Side::Host);
+    }
+
+    pub(super) fn control_by(&mut self, control: Control, by: Side) {
         if !control.valid() {
             return;
         }
@@ -46,7 +50,7 @@ impl Worker {
             },
             Role::Host => {
                 self.refresh_presence();
-                if self.session.apply(control, self.now()) {
+                if self.session.request(control, by, self.now()) {
                     if matches!(control, Control::Play) {
                         self.view.watching = true;
                         self.watching_media = self.presence.media.clone();
@@ -247,8 +251,7 @@ impl Worker {
         }
         self.reset_operation();
         self.failed = Some(id);
-        self.view.notice =
-            Some("Início cancelado. A sessão está pausada; tente reproduzir novamente.".into());
+        self.view.notice = Some(crate::i18n::text().errors.start_cancelled.into());
         if self.view.role == Role::Host {
             self.session.fail(id, self.now());
             self.publish();
@@ -364,9 +367,7 @@ impl Worker {
                     .apply(Control::Seek(self.session.position(self.now())), self.now());
             }
             if self.session.advance(self.now()) {
-                self.view.notice = Some(
-                    "Os players não confirmaram o início a tempo. A sessão está pausada.".into(),
-                );
+                self.view.notice = Some(crate::i18n::text().errors.start_timeout.into());
             }
             if self.session.state.revision != before {
                 self.publish();

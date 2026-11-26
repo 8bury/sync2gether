@@ -1,4 +1,4 @@
-use super::{CODE_HINT, JoinRequest, Role, Worker, parse_address};
+use super::{JoinRequest, Role, Worker, parse_address};
 use crate::{discovery, network, protocol::Message, session::Session, sync::Clock};
 use std::future::Future;
 use tokio::sync::mpsc;
@@ -30,14 +30,12 @@ impl Worker {
         self.background = Some(tokio::spawn(async move {
             if let Some(port) = port {
                 let result = if port == 0 {
-                    Err("Escolha uma porta entre 1 e 65535.".into())
+                    Err(crate::i18n::text().errors.port_range.into())
                 } else {
                     tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port))
                         .await
                         .map(|listener| (listener, discovery::local_name()))
-                        .map_err(|_| {
-                            "Não foi possível abrir a sala. Verifique se a porta está livre.".into()
-                        })
+                        .map_err(|_| crate::i18n::text().errors.open_room_failed.into())
                 };
                 let _ = tx.send((id, BackgroundResult::Host(result))).await;
             } else {
@@ -56,10 +54,10 @@ impl Worker {
                         let _ = tx
                             .send((
                                 id,
-                                BackgroundResult::Rooms(Err(
-                                    "Não foi possível buscar na rede. Você pode conectar por endereço."
-                                        .into(),
-                                )),
+                                BackgroundResult::Rooms(Err(crate::i18n::text()
+                                    .errors
+                                    .discovery_failed
+                                    .into())),
                             ))
                             .await;
                     }
@@ -116,8 +114,8 @@ impl Worker {
             self.player(crate::player::Command::Pause(true));
             self.leave();
             self.view.notice = Some(match peer {
-                Some(peer) => format!("{peer} encerrou a sala."),
-                None => "O anfitrião encerrou a sala.".into(),
+                Some(peer) => (crate::i18n::text().room.closed_by)(&peer),
+                None => crate::i18n::text().room.closed_by_host.into(),
             });
         } else {
             self.disconnected();
@@ -169,8 +167,7 @@ impl Worker {
                     });
                 }
                 Err(_) => {
-                    self.view.error =
-                        Some("Não foi possível abrir a sala nesse endereço e porta.".into());
+                    self.view.error = Some(crate::i18n::text().errors.open_room_at_failed.into());
                 }
             },
             Err(error) => self.view.error = Some(error),
@@ -208,8 +205,7 @@ impl Worker {
                     self.spawn_network(|tx| network::host(listener, key, tx, origin));
                 }
                 Err(_) => {
-                    self.view.error =
-                        Some("Não foi possível abrir a sala nesse endereço e porta.".into());
+                    self.view.error = Some(crate::i18n::text().errors.open_room_at_failed.into());
                 }
             },
             Err(error) => self.view.error = Some(error),
@@ -225,8 +221,7 @@ impl Worker {
                 self.spawn_network(|tx| network::guest(address, key, tx, origin));
             }
             Ok(_) => {
-                self.view.error =
-                    Some("O código da sala deve ter 32 caracteres hexadecimais.".into());
+                self.view.error = Some(crate::i18n::text().errors.room_key_format.into());
             }
             Err(error) => self.view.error = Some(error),
         }
@@ -259,7 +254,7 @@ impl Worker {
                 self.spawn_network(|tx| network::relay::guest(relay, code, tx, origin));
             }
             (Err(error), _) => self.view.error = Some(error),
-            (_, None) => self.view.error = Some(CODE_HINT.into()),
+            (_, None) => self.view.error = Some(crate::i18n::text().errors.code_hint.into()),
         }
     }
 
@@ -318,9 +313,7 @@ impl Worker {
             }
             network::Event::RelayOffline => self.view.relay_offline = true,
             network::Event::WrongCode => {
-                self.view.notice = Some(
-                    "Alguém tentou entrar com um código errado. Confira o código enviado.".into(),
-                )
+                self.view.notice = Some(crate::i18n::text().errors.wrong_code_attempt.into())
             }
             network::Event::PeerName(name) => self.view.peer_name = Some(name),
             network::Event::Rejected(error) => {
@@ -330,8 +323,7 @@ impl Worker {
             network::Event::Connected(tx) => {
                 self.view.waiting_approval = false;
                 if self.view.watching {
-                    self.view.notice =
-                        Some("Conexão restabelecida. Aperte reproduzir para continuar.".into());
+                    self.view.notice = Some(crate::i18n::text().errors.reconnected.into());
                 }
                 self.disconnected();
                 self.outgoing = Some(tx);
@@ -353,10 +345,8 @@ impl Worker {
             network::Event::PeerLeft => self.peer_left(),
             network::Event::Error(error) => self.view.error = Some(error),
             network::Event::DiscoveryUnavailable => {
-                self.view.discovery_error = Some(
-                    "A sala está aberta, mas a descoberta não está disponível. Compartilhe um endereço nos detalhes da conexão."
-                        .into(),
-                )
+                self.view.discovery_error =
+                    Some(crate::i18n::text().errors.discovery_unavailable.into())
             }
             network::Event::Message(message, received_at) => {
                 let received_ms = received_at.duration_since(self.origin).as_secs_f64() * 1000.0;
@@ -365,7 +355,9 @@ impl Worker {
                         self.session.state.guest = *p;
                         self.progress();
                     }
-                    (Role::Host, Message::Request(c)) => self.control(c),
+                    (Role::Host, Message::Request(c)) => {
+                        self.control_by(c, crate::protocol::Side::Guest)
+                    }
                     (Role::Host, Message::Prepared { id }) => {
                         self.refresh_presence();
                         self.session.prepared(id, true, self.now());

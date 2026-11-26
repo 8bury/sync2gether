@@ -213,13 +213,17 @@ pub async fn guest(address: SocketAddr, events: mpsc::Sender<Event>, origin: Ins
         Ok(None) => {
             let _ = events
                 .send(Event::Rejected(
-                    "A solicitação foi recusada, expirou ou a sala está ocupada.".into(),
+                    crate::i18n::text().errors.request_refused.into(),
                 ))
                 .await;
             return;
         }
         Err(_) => {
-            let _ = events.send(Event::Rejected("Não foi possível entrar. Confira o endereço, a conexão e a versão dos aplicativos.".into())).await;
+            let _ = events
+                .send(Event::Rejected(
+                    crate::i18n::text().errors.join_failed.into(),
+                ))
+                .await;
             return;
         }
     };
@@ -251,7 +255,7 @@ pub async fn guest(address: SocketAddr, events: mpsc::Sender<Event>, origin: Ins
             Ok(Ok((_, Message::Rejected))) => {
                 let _ = events
                     .send(Event::Rejected(
-                        "A sala foi encerrada ou está ocupada. Solicite entrada novamente.".into(),
+                        crate::i18n::text().errors.room_closed_or_busy.into(),
                     ))
                     .await;
                 return;

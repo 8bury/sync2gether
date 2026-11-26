@@ -254,7 +254,7 @@ pub(super) fn messages(ui: &mut egui::Ui, error: Option<&str>, notice: Option<&s
             );
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                ui.label(strong(ui, "Não foi possível continuar").color(colors.error));
+                ui.label(strong(ui, super::tr(ui).common.cannot_continue).color(colors.error));
                 ui.add(egui::Label::new(RichText::new(error).color(colors.muted)).wrap());
             });
         });

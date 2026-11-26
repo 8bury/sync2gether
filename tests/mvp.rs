@@ -149,7 +149,7 @@ fn host_closed_the_room(guest: &Runtime) {
     assert!(
         view.notice
             .as_deref()
-            .is_some_and(|notice| notice.contains("encerrou a sala")),
+            .is_some_and(|notice| notice.ends_with(&(sync2gether::i18n::text().room.closed_by)(""))),
         "{:?}",
         view.notice
     );

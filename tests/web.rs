@@ -192,6 +192,7 @@ fn snapshot(revision: u64, host_ms: f64, transition: Option<Transition>) -> Snap
         revision,
         position: 0.0,
         paused: true,
+        paused_by: None,
         waiting_buffer: false,
         host_ms,
         transition,

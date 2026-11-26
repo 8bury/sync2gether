@@ -182,7 +182,7 @@ pub fn server_config(identity: &Identity, expected_client_fp: &str) -> io::Resul
     if !valid_fingerprint(expected_client_fp) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "Impressão digital do cliente inválida",
+            crate::i18n::text().stream_errors.invalid_client_fingerprint,
         ));
     }
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -207,7 +207,7 @@ pub fn client_config(identity: &Identity, expected_server_fp: &str) -> io::Resul
     if !valid_fingerprint(expected_server_fp) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "Impressão digital do servidor inválida",
+            crate::i18n::text().stream_errors.invalid_server_fingerprint,
         ));
     }
     let provider = Arc::new(rustls::crypto::ring::default_provider());

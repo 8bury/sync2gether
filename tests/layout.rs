@@ -1,14 +1,27 @@
 use eframe::egui;
-use sync2gether::{model::SessionState, ui};
+use sync2gether::{i18n::Language, model::SessionState, ui};
+
+fn context(language: Language) -> egui::Context {
+    let ctx = egui::Context::default();
+    ui::configure_language(&ctx, language);
+    ctx
+}
+
+fn pt_br() -> egui::Context {
+    context(Language::PtBr)
+}
 
 #[test]
-fn layout_fits_supported_window_sizes_in_both_themes() {
-    for light in [false, true] {
+fn layout_fits_supported_window_sizes_in_both_themes_and_languages() {
+    for (light, language) in [false, true]
+        .into_iter()
+        .flat_map(|light| Language::ALL.map(|language| (light, language)))
+    {
         for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
             for (state, demo) in std::iter::once((SessionState::Idle, false))
                 .chain(SessionState::ALL.map(|state| (state, true)))
             {
-                let ctx = egui::Context::default();
+                let ctx = context(language);
                 ui::configure_theme(&ctx, light);
                 for _ in 0..3 {
                     let mut output = ctx.run_ui(
@@ -24,7 +37,7 @@ fn layout_fits_supported_window_sizes_in_both_themes() {
                             assert!(actions.is_empty());
                             assert!(
                                 root.min_rect().width() <= size[0] + 1.0,
-                                "horizontal overflow: {state:?}, demo={demo} at {size:?}: {:?}",
+                                "horizontal overflow: {state:?}, demo={demo}, {language:?} at {size:?}: {:?}",
                                 root.min_rect()
                             );
                         },
@@ -60,11 +73,14 @@ fn real_session_layout_fits_without_starting_io() {
         player::Status,
         runtime::{Role, View},
     };
-    for light in [false, true] {
+    for (light, language) in [false, true]
+        .into_iter()
+        .flat_map(|light| Language::ALL.map(|language| (light, language)))
+    {
         for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
             for role in [Role::Local, Role::Host, Role::Guest] {
                 let view = View { role, connected: true, status: "Aguardando os dois players ficarem prontos".into(), file: Some("Filme sintético.mkv".into()), room_key: "a".repeat(32), player: Status { loaded: true, paused: true, duration: 5400.0, position: 754.0, ..Default::default() }, error: Some("Erro de teste com texto longo para verificar a quebra de linha em janelas estreitas.".into()), ..Default::default() };
-                let ctx = egui::Context::default();
+                let ctx = context(language);
                 ui::configure_theme(&ctx, light);
                 let mut inputs = ui::Inputs::default();
                 let mut output = ctx.run_ui(
@@ -124,7 +140,7 @@ fn player_controls_hide_reappear_and_keep_room_commands_coordinated() {
         protocol::Control,
         runtime::{Command, Role, View},
     };
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     let mut inputs = ui::Inputs::default();
     inputs.player.fullscreen = true;
     let mut view = View {
@@ -196,7 +212,7 @@ fn dragging_progress_commits_once_without_toggling_playback() {
         protocol::Control,
         runtime::{Command, View},
     };
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     let mut inputs = ui::Inputs::default();
     inputs.player.fullscreen = true;
     let view = View {
@@ -263,7 +279,7 @@ fn dragging_progress_commits_once_without_toggling_playback() {
 #[test]
 fn media_shortcuts_do_not_intercept_focused_text_fields() {
     use sync2gether::{player::Status, runtime::View};
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     let view = View {
         player: Status {
             loaded: true,
@@ -378,7 +394,7 @@ fn stages_and_room_panel_fit_without_exposing_codes_or_statistics() {
                             });
                         }
                     }
-                    let ctx = egui::Context::default();
+                    let ctx = pt_br();
                     ui::configure_theme(&ctx, light);
                     let mut inputs = ui::Inputs::default();
                     inputs.screen = screen;
@@ -421,7 +437,7 @@ fn reconnection_keeps_the_player_and_changing_media_returns_to_preparation() {
         player::Status,
         runtime::{Role, View},
     };
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     let mut inputs = ui::Inputs::default();
     let mut view = View {
         role: Role::Guest,
@@ -518,7 +534,7 @@ fn room_buttons_return_commands_and_play_is_disabled_until_both_are_ready() {
         protocol::{Control, PORT},
         runtime::{Command, JoinRequest, Role, View},
     };
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     let mut inputs = ui::Inputs::default();
     let mut view = View::default();
     let text = preparation_text_of(&ctx, &view, &mut inputs);
@@ -570,7 +586,7 @@ fn room_buttons_return_commands_and_play_is_disabled_until_both_are_ready() {
 fn preparation_primary_action_is_visible_at_supported_sizes() {
     for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
         for light in [false, true] {
-            let ctx = egui::Context::default();
+            let ctx = pt_br();
             ctx.enable_accesskit();
             ui::configure_theme(&ctx, light);
             let mut inputs = ui::Inputs::default();
@@ -629,7 +645,7 @@ fn preparation_primary_action_is_visible_at_supported_sizes() {
 #[test]
 fn home_actions_are_visible_in_the_smallest_window() {
     for light in [false, true] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ctx.enable_accesskit();
         ui::configure_theme(&ctx, light);
         for _ in 0..3 {
@@ -742,7 +758,7 @@ fn player_icon_menus_keep_audio_and_volume_local() {
         player::{Status, Track, TrackKind},
         runtime::{Command, Role, View},
     };
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ui::configure_theme(&ctx, false);
     let mut inputs = ui::Inputs::default();
     let view = View {
@@ -801,7 +817,7 @@ fn player_shows_actionable_notices_and_omits_routine_status() {
         ..Default::default()
     };
     for light in [false, true] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ui::configure_theme(&ctx, light);
         let mut inputs = ui::Inputs::default();
         for disconnected in [false, true] {
@@ -849,7 +865,7 @@ fn player_shows_actionable_notices_and_omits_routine_status() {
 }
 
 fn preparation_frame(view: &sync2gether::runtime::View, size: [f32; 2], light: bool) -> String {
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ui::configure_theme(&ctx, light);
     let mut inputs = ui::Inputs::default();
     let mut text = String::new();
@@ -942,11 +958,11 @@ fn click_preparation_widget(
 }
 
 #[test]
-fn each_file_menu_copies_the_full_name_without_changing_playback() {
+fn clicking_each_file_name_copies_it_without_changing_playback() {
     use sync2gether::runtime::{Role, View};
     for light in [false, true] {
         for local in [false, true] {
-            let ctx = egui::Context::default();
+            let ctx = pt_br();
             ui::configure_theme(&ctx, light);
             let mut inputs = ui::Inputs::default();
             let view = View {
@@ -957,26 +973,16 @@ fn each_file_menu_copies_the_full_name_without_changing_playback() {
                 peer_name: Some("Ana".into()),
                 ..Default::default()
             };
-            let _ = click_preparation_widget(
+            let output = click_preparation_widget(
                 &ctx,
                 &view,
                 &mut inputs,
                 if local {
-                    "Opções do seu arquivo"
+                    "Copiar nome do seu arquivo"
                 } else {
-                    "Opções do arquivo da outra pessoa"
+                    "Copiar nome do arquivo da outra pessoa"
                 },
             );
-            assert!(egui::Popup::is_any_open(&ctx));
-            let (output, actions) = preparation_output(&ctx, &view, &mut inputs, vec![]);
-            assert!(actions.is_empty());
-            assert!(
-                visible_text(&output.shapes).contains("Nome completo"),
-                "menu not shown: local={local}, light={light}, popup={}, text={}",
-                egui::Popup::is_any_open(&ctx),
-                visible_text(&output.shapes)
-            );
-            let output = click_preparation_widget(&ctx, &view, &mut inputs, "Copiar nome");
             let expected = if local {
                 view.file.as_ref().unwrap()
             } else {
@@ -987,7 +993,9 @@ fn each_file_menu_copies_the_full_name_without_changing_playback() {
             ));
             let (output, actions) = preparation_output(&ctx, &view, &mut inputs, vec![]);
             assert!(actions.is_empty());
-            assert!(visible_text(&output.shapes).contains("Copiado"));
+            let text = visible_text(&output.shapes);
+            assert!(!text.contains("Nome completo") && !text.contains("Copiar nome"));
+            assert!(text.contains("Nome copiado"));
             assert!(!inputs.player.fullscreen);
         }
     }
@@ -1000,7 +1008,7 @@ fn preparation_changes_only_the_local_file_and_cancels_scheduled_start() {
         runtime::{Command, Role, View},
     };
     for light in [false, true] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ui::configure_theme(&ctx, light);
         let mut inputs = ui::Inputs::default();
         let mut view = View {
@@ -1045,7 +1053,7 @@ fn connection_screen_reports_only_confirmed_stages_and_keeps_cancellation_visibl
     use sync2gether::runtime::{Command, Role, View};
     for light in [false, true] {
         for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
-            let ctx = egui::Context::default();
+            let ctx = pt_br();
             ctx.enable_accesskit();
             ui::configure_theme(&ctx, light);
             let mut inputs = ui::Inputs::default();
@@ -1137,7 +1145,7 @@ fn room_browser_selects_the_room_and_preserves_manual_entry_after_discovery_fail
         runtime::{Command, View},
     };
     for light in [false, true] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ui::configure_theme(&ctx, light);
         let mut inputs = ui::Inputs::default();
         inputs.lan = true;
@@ -1173,7 +1181,7 @@ fn room_browser_selects_the_room_and_preserves_manual_entry_after_discovery_fail
 #[test]
 fn manual_address_accepts_enter_after_editing_in_the_same_frame() {
     use sync2gether::runtime::{Command, View};
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ui::configure_theme(&ctx, true);
     let view = View::default();
     let mut inputs = ui::Inputs::default();
@@ -1270,7 +1278,7 @@ fn cancelling_verification_keeps_the_room_and_start_is_blocked() {
         protocol::Verification,
         runtime::{Command, Role, View},
     };
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     let mut inputs = ui::Inputs::default();
     let view = View {
         role: Role::Host,
@@ -1313,7 +1321,7 @@ fn cancelling_verification_keeps_the_room_and_start_is_blocked() {
 #[test]
 fn approval_actions_remain_visible_in_the_smallest_window() {
     for light in [false, true] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ctx.enable_accesskit();
         ui::configure_theme(&ctx, light);
         for _ in 0..3 {
@@ -1363,7 +1371,7 @@ fn approval_actions_remain_visible_in_the_smallest_window() {
 fn settings_icon_keeps_its_accessible_name_and_switches_the_theme() {
     let view = sync2gether::runtime::View::default();
     for light in [false, true] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ui::configure_theme(&ctx, light);
         let mut inputs = ui::Inputs::default();
         let _ = click_preparation_widget(&ctx, &view, &mut inputs, "Configurações");
@@ -1414,7 +1422,7 @@ fn preparation_text_of(
 fn code_entry_validates_joins_and_returns_to_the_code_after_a_refusal() {
     use sync2gether::runtime::{Command, Role, View};
     for light in [false, true] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ui::configure_theme(&ctx, light);
         let mut view = View::default();
         let mut inputs = ui::Inputs::default();
@@ -1449,7 +1457,7 @@ fn code_entry_validates_joins_and_returns_to_the_code_after_a_refusal() {
 #[test]
 fn code_screen_opens_from_home_and_leaving_it_does_not_repeat_the_refusal() {
     use sync2gether::runtime::{Command, Role, View};
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ui::configure_theme(&ctx, false);
     let mut view = View::default();
     let mut inputs = ui::Inputs::default();
@@ -1484,7 +1492,7 @@ fn code_screen_opens_from_home_and_leaving_it_does_not_repeat_the_refusal() {
 #[test]
 fn code_field_accepts_enter_after_typing_in_the_same_frame() {
     use sync2gether::runtime::{Command, View};
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     let view = View::default();
     let mut inputs = ui::Inputs::default();
     inputs.screen = ui::Screen::Join;
@@ -1531,7 +1539,7 @@ fn internet_room_invites_with_the_code_and_never_with_addresses() {
             let text = preparation_frame(&view, size, light);
             assert!(text.contains("Envie este código"));
             assert!(text.contains("4821-gato-lua"));
-            assert!(text.contains("Copiar"));
+            assert!(text.contains("Copiar código"));
             assert!(text.contains("Sem contato com o servidor"));
             assert!(!text.contains("192.168.1.10"));
         }
@@ -1540,7 +1548,7 @@ fn internet_room_invites_with_the_code_and_never_with_addresses() {
 
 #[test]
 fn advanced_network_settings_reveal_the_relay_and_validate_it() {
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     let view = sync2gether::runtime::View::default();
     let mut inputs = ui::Inputs::default();
     let _ = click_preparation_widget(&ctx, &view, &mut inputs, "Configurações");
@@ -1551,14 +1559,14 @@ fn advanced_network_settings_reveal_the_relay_and_validate_it() {
     inputs.relay = "relay inválido".into();
     let text = preparation_text_of(&ctx, &view, &mut inputs);
     assert!(text.contains("Servidor das salas pela internet"));
-    assert!(text.contains("Informe o servidor"));
+    assert!(text.contains(sync2gether::i18n::text().errors.relay_format));
 }
 
 #[test]
 fn mismatch_says_it_once_and_the_main_button_changes_the_local_file() {
     use sync2gether::runtime::{Command, Role, View};
     for light in [false, true] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ui::configure_theme(&ctx, light);
         let mut inputs = ui::Inputs::default();
         let view = View {
@@ -1594,16 +1602,23 @@ fn host_room_shows_the_invite_until_someone_joins_then_the_film_step() {
     };
     for size in [[480.0, 480.0], [960.0, 640.0]] {
         let text = preparation_frame(&view, size, false);
-        assert!(text.contains("Esperando alguém entrar"));
-        assert!(text.contains("Escolher meu filme"));
+        assert!(!text.contains("sperando alguém entrar"));
+        assert!(!text.contains("Escolher meu filme"));
+        assert!(text.contains("Copiar código"));
         assert!(!text.contains("Escolham o mesmo filme"));
         assert!(!text.contains("Começar a assistir"));
     }
+    let ctx = pt_br();
+    let mut inputs = ui::Inputs::default();
+    let output = click_preparation_widget(&ctx, &view, &mut inputs, "Copiar código");
+    assert!(output.platform_output.commands.iter().any(
+        |command| matches!(command, egui::OutputCommand::CopyText(code) if code == "4821-gato-lua")
+    ));
     view.connected = true;
     view.peer_name = Some("Ana".into());
     let text = preparation_frame(&view, [960.0, 640.0], false);
     assert!(text.contains("Escolham o mesmo filme"));
-    assert!(!text.contains("Esperando alguém entrar"));
+    assert!(!text.contains("sperando alguém entrar"));
     assert!(text.contains("4821-gato-lua"));
 }
 
@@ -1677,7 +1692,7 @@ fn back_arrow_leaves_the_room_and_asks_first_when_someone_is_there() {
     };
     for light in [false, true] {
         for size in [[480.0, 480.0], [960.0, 640.0]] {
-            let ctx = egui::Context::default();
+            let ctx = pt_br();
             ui::configure_theme(&ctx, light);
             let mut inputs = ui::Inputs::default();
             let mut view = View {
@@ -1742,7 +1757,7 @@ fn wide_player_volume_bar_sets_the_level_and_the_icon_mutes_locally() {
         player::Status,
         runtime::{Command, Role, View},
     };
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ui::configure_theme(&ctx, false);
     let mut inputs = ui::Inputs::default();
     let view = View {
@@ -1789,7 +1804,7 @@ fn p2p_streaming_strip_renders_and_emits_commands_without_overflow() {
         let text = preparation_frame(&view, size, false);
         assert!(text.contains("Assistir por streaming P2P"));
     }
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ui::configure_theme(&ctx, false);
     let mut inputs = ui::Inputs::default();
     let actions = click_label_at_size(
@@ -1911,7 +1926,7 @@ fn p2p_preparation_card_and_player_buffering_overlay_render_cleanly() {
         ..Default::default()
     };
     for size in [[480.0, 480.0], [720.0, 540.0], [960.0, 640.0]] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ui::configure_theme(&ctx, false);
         let mut inputs = ui::Inputs::default();
         let mut output = ctx.run_ui(
@@ -1934,7 +1949,7 @@ fn p2p_preparation_card_and_player_buffering_overlay_render_cleanly() {
         assert!(text.contains("12.4 Mbps"));
     }
 
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ui::configure_theme(&ctx, false);
     let mut inputs = ui::Inputs::default();
     let card_click_actions = click_label_at_size(
@@ -1975,7 +1990,7 @@ fn p2p_preparation_card_and_player_buffering_overlay_render_cleanly() {
         },
         ..Default::default()
     };
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ui::configure_theme(&ctx, false);
     let mut inputs = ui::Inputs::default();
     let actions = click_label_at_size(
@@ -2078,7 +2093,7 @@ fn focused_volume_bar_takes_the_arrows_without_seeking() {
     const VOLUME: &str = "Volume neste PC";
     let size = [1000.0, 640.0];
     for fullscreen in [false, true] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ctx.enable_accesskit();
         ui::configure_theme(&ctx, false);
         let view = paused_player_view();
@@ -2110,7 +2125,7 @@ fn focused_volume_bar_takes_the_arrows_without_seeking() {
 #[test]
 fn volume_bar_shows_a_hand_cursor() {
     let size = [1000.0, 640.0];
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ctx.enable_accesskit();
     ui::configure_theme(&ctx, false);
     let view = paused_player_view();
@@ -2132,7 +2147,7 @@ fn keyboard_focus_is_distinct_from_the_active_subtitle_state() {
     use sync2gether::player::{Track, TrackKind};
     const CAPTIONS: &str = "Áudio e legendas";
     let size = [1000.0, 640.0];
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ctx.enable_accesskit();
     ui::configure_theme(&ctx, false);
     let mut view = paused_player_view();
@@ -2159,11 +2174,11 @@ fn keyboard_focus_is_distinct_from_the_active_subtitle_state() {
 }
 
 #[test]
-fn file_menu_shows_keyboard_focus() {
+fn file_name_shows_keyboard_focus() {
     use sync2gether::runtime::{Role, View};
-    const MENU: &str = "Opções do seu arquivo";
+    const MENU: &str = "Copiar nome do seu arquivo";
     let size = [1000.0, 760.0];
-    let ctx = egui::Context::default();
+    let ctx = pt_br();
     ctx.enable_accesskit();
     ui::configure_theme(&ctx, false);
     let view = View {
@@ -2195,7 +2210,7 @@ fn narrow_player_controls_keep_the_wide_bottom_margin() {
     const FULLSCREEN: &str = "Tela cheia · F";
     let bottom_gap = |width: f32| {
         let size = [width, 640.0];
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ctx.enable_accesskit();
         ui::configure_theme(&ctx, false);
         let view = paused_player_view();
@@ -2209,11 +2224,12 @@ fn narrow_player_controls_keep_the_wide_bottom_margin() {
 
 #[test]
 fn rejected_command_line_code_is_visible_on_the_code_screen() {
-    use sync2gether::runtime::{CODE_HINT, View};
-    let ctx = egui::Context::default();
+    use sync2gether::runtime::View;
+    let code_hint = Language::PtBr.strings().errors.code_hint;
+    let ctx = pt_br();
     ui::configure_theme(&ctx, false);
     let view = View {
-        error: Some(CODE_HINT.into()),
+        error: Some(code_hint.into()),
         ..Default::default()
     };
     let mut inputs = ui::Inputs::default();
@@ -2223,7 +2239,7 @@ fn rejected_command_line_code_is_visible_on_the_code_screen() {
     inputs.joining = true;
     let text = preparation_text_of(&ctx, &view, &mut inputs);
     assert_eq!(inputs.screen, ui::Screen::Join);
-    assert!(text.contains(CODE_HINT));
+    assert!(text.contains(code_hint));
 }
 
 fn demo_frame(
@@ -2284,17 +2300,151 @@ fn leaving_the_connecting_demo_does_not_read_as_a_refused_code() {
         (SessionState::Idle, ui::Screen::Home),
         (SessionState::PendingApproval, ui::Screen::Preparation),
     ] {
-        let ctx = egui::Context::default();
+        let ctx = pt_br();
         ui::configure_theme(&ctx, false);
         let mut inputs = ui::Inputs::default();
         let mut state = SessionState::Connecting;
-        let current = state.label();
+        let current = state.label(Language::PtBr.strings());
         demo_click(&ctx, &mut state, &mut inputs, current);
-        demo_click(&ctx, &mut state, &mut inputs, target.label());
+        demo_click(
+            &ctx,
+            &mut state,
+            &mut inputs,
+            target.label(Language::PtBr.strings()),
+        );
         assert_eq!(state, target);
         for _ in 0..2 {
             demo_frame(&ctx, &mut state, &mut inputs, vec![]);
         }
         assert_eq!(inputs.screen, screen);
     }
+}
+
+fn portuguese_leftovers(text: &str) -> Vec<String> {
+    let text = text.replace("Português", "").replace("4821-gato-lua", "");
+    let mut found: Vec<String> = text
+        .chars()
+        .filter(|c| "ãõçáéíóúâêôàÃÕÇÁÉÍÓÚÂÊÔ".contains(*c))
+        .map(|c| c.to_string())
+        .collect();
+    for word in [
+        " de ",
+        " da ",
+        " do ",
+        " para ",
+        "Sala",
+        "arquivo",
+        "Você",
+        "Entrar",
+        "Criar",
+        "Voltar",
+        "Sair",
+        "Pausado",
+        "Conectando",
+        "Aguardando",
+    ] {
+        if text.contains(word) {
+            found.push(word.to_owned());
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
+#[test]
+fn english_interface_has_no_untranslated_portuguese_in_any_demo_scenario() {
+    for light in [false, true] {
+        for size in [[480.0, 480.0], [960.0, 640.0]] {
+            for state in SessionState::ALL {
+                for room_panel in [false, true] {
+                    let ctx = context(Language::En);
+                    ui::configure_theme(&ctx, light);
+                    let mut inputs = ui::Inputs::default();
+                    let mut text = String::new();
+                    for _ in 0..3 {
+                        inputs.room_panel = room_panel;
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    size.into(),
+                                )),
+                                ..Default::default()
+                            },
+                            |root| {
+                                let _ = ui::draw_with_inputs(root, state, true, &mut inputs);
+                            },
+                        );
+                        text = visible_text(&output.shapes);
+                        output.textures_delta.clear();
+                    }
+                    let leftovers = portuguese_leftovers(&text);
+                    assert!(
+                        leftovers.is_empty(),
+                        "{state:?} at {size:?}, room_panel={room_panel}: {leftovers:?}\n{text}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn settings_switch_the_language_immediately_and_ask_the_runtime_to_keep_it() {
+    use sync2gether::runtime::{Command, View};
+    let view = View::default();
+    let ctx = context(Language::En);
+    let mut inputs = ui::Inputs::default();
+    let _ = click_preparation_widget(&ctx, &view, &mut inputs, "Settings");
+    let text = preparation_text_of(&ctx, &view, &mut inputs);
+    assert!(text.contains("Language") && text.contains("English") && text.contains("Português"));
+    assert!(portuguese_leftovers(&text).is_empty(), "{text}");
+    ctx.enable_accesskit();
+    let mut position = None;
+    for _ in 0..2 {
+        let (output, _) = preparation_output(&ctx, &view, &mut inputs, vec![]);
+        for (_, node) in output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+        {
+            if node.label() == Some("Português") {
+                let bounds = node.bounds().unwrap();
+                position = Some(egui::pos2(
+                    ((bounds.x0 + bounds.x1) * 0.5) as f32,
+                    ((bounds.y0 + bounds.y1) * 0.5) as f32,
+                ));
+            }
+        }
+    }
+    let position = position.expect("language option is accessible");
+    let event = |pressed| egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let (_, actions) = preparation_output(
+        &ctx,
+        &view,
+        &mut inputs,
+        vec![egui::Event::PointerMoved(position), event(true)],
+    );
+    assert!(actions.is_empty());
+    let (_, actions) = preparation_output(&ctx, &view, &mut inputs, vec![event(false)]);
+    assert!(matches!(
+        actions.as_slice(),
+        [Command::SetLanguage(Language::PtBr)]
+    ));
+    assert_eq!(ui::language(&ctx), Language::PtBr);
+    let text = preparation_text_of(&ctx, &view, &mut inputs);
+    assert!(
+        text.contains("Idioma") && text.contains("Aparência"),
+        "{text}"
+    );
+    assert!(!text.contains("Appearance"));
 }

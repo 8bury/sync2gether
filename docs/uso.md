@@ -12,11 +12,11 @@ As salas na rede local ficam nas opções avançadas, descritas em
 [Rede local ou VPN](#rede-local-ou-vpn).
 
 1. O anfitrião clica em **Criar sala**. O app abre a sala no relay e mostra o
-   código, como `4821-gato-lua`, em destaque, com o botão **Copiar código**, que passa
-   a dizer **Copiado**. Enquanto o código não chega, a tela mostra
-   **Gerando o código…**; sem contato com o servidor, avisa e tenta de novo.
-   Abaixo, **Esperando alguém entrar…** mostra a vaga ainda livre, e
-   **Escolher meu filme** permite escolher a cópia enquanto espera.
+   código, como `4821-gato-lua`, em destaque, abaixo de **Envie este código**,
+   com o botão **Copiar código**, que passa a dizer **Copiado**. Enquanto o
+   código não chega, a tela mostra **Gerando o código…**; sem contato com o
+   servidor, avisa e tenta de novo. O filme é escolhido na etapa seguinte, quando a outra
+   pessoa entrar.
 2. O anfitrião envia o código por qualquer mensageiro. O convidado abre
    **Entrar com código**, digita o código e clica em **Entrar** (ou Enter). Maiúsculas,
    acentos e espaços no lugar dos hífens são aceitos. O botão só fica disponível
@@ -40,8 +40,9 @@ sozinho, sem digitar o código de novo. Detalhes em [Salas pela internet e relay
 
 A etapa **Filme** mostra os dois arquivos lado a lado, **Você** à esquerda e a
 outra pessoa à direita; em janelas estreitas as cópias ficam empilhadas. Cada
-cópia mostra o estado, um quadro neutro e o nome do arquivo com extensão; o app
-não exibe prévia do vídeo. Durante a verificação, o quadro mostra a porcentagem.
+cópia é uma linha compacta com o estado acima e, dentro dela, o nome do arquivo
+com extensão; o app não exibe prévia do vídeo. Durante a verificação, a linha
+mostra a porcentagem ao lado do nome.
 **Escolher arquivo** fica em destaque quando falta sua cópia; depois,
 **Trocar arquivo** permanece junto ao nome. A escolha da outra pessoa não pode
 ser alterada neste PC. Entre as cópias, dois círculos resumem a comparação:
@@ -58,9 +59,11 @@ diferentes, as duas cópias mostram **Conteúdo diferente** e o botão vira
 **Trocar meu arquivo**. Quando a sessão está pronta, o botão passa a ser
 **Começar a assistir**.
 
-Os dois participantes veem as duas escolhas. O menu **⋯** de cada arquivo reúne
-**Nome completo** e **Copiar nome**, com confirmação da cópia. Esses menus têm
-nomes acessíveis que distinguem seu arquivo do arquivo da outra pessoa.
+Os dois participantes veem as duas escolhas. Ao passar o mouse sobre um nome,
+a dica mostra o nome completo e **Clique para copiar**. O clique copia o nome:
+por um instante, o nome dá lugar a **✓ Nome copiado** (ou **✓ Copiado**, se
+faltar espaço); a dica passa a dizer **Copiado**. Os nomes têm rótulos acessíveis que
+distinguem seu arquivo do arquivo da outra pessoa.
 Apenas o nome é compartilhado
 dentro da sala, após a conexão autorizada, sem o caminho das pastas e sem
 incluí-lo nos anúncios de descoberta. Caracteres de controle são substituídos
@@ -91,8 +94,9 @@ direito, dois círculos, o nome e o estado mostram a presença: **Ana em
 sincronia** com a conexão ativa, ou **reconectando** (no anfitrião,
 **desconectado**) quando ela cai. Nesse caso, um aviso no centro do vídeo diz
 **Reconectando com Ana…** ou **Esperando Ana voltar…**, e os controles
-permanecem visíveis. Na pausa, o vídeo escurece e mostra **Pausado** com a
-posição. A linha do tempo marca a posição da outra pessoa enquanto essa
+permanecem visíveis. Na pausa, o vídeo escurece e mostra quem pausou, como **Ana pausou** ou
+**Você pausou**, com a posição. Pausas automáticas, como a espera pelo
+carregamento ou a queda da conexão, mostram apenas **Pausado**. A linha do tempo marca a posição da outra pessoa enquanto essa
 informação estiver atualizada. A ação no canto superior esquerdo sai da sala,
 com a mesma confirmação. Um clique na presença abre um painel com
 participante, troca do filme, saída e detalhes da conexão; em janelas
@@ -169,7 +173,15 @@ principais claras e um único tom de alerta, sem gradientes decorativos. O tema
 claro inverte os mesmos neutros. A tipografia é Geist, com Geist Mono em códigos,
 nomes de arquivo e tempos, incorporada ao executável. Os dois temas
 ficam no menu **Configurações**, aberto pelo ícone de engrenagem no cabeçalho,
-inclusive durante a conexão; o menu também reúne as opções avançadas de rede e os atalhos.
+inclusive durante a conexão; o menu também reúne o idioma, as opções avançadas de rede e os atalhos.
+O idioma (português do Brasil ou inglês) muda a interface na hora e fica salvo em
+`preferences.json`, na pasta de configuração do sistema (`~/.config/sync2gether`
+no Linux, `~/Library/Application Support/sync2gether` no macOS e
+`%APPDATA%\sync2gether` no Windows). Sem preferência salva, o app usa o idioma
+do sistema, com inglês para idiomas sem tradução. `--lang en` ou `--lang pt-BR`
+(ou `SYNC2GETHER_LANG`) escolhe o idioma só para aquela execução. As palavras
+do código da sala vêm de uma lista única, em português, para que um código
+criado em qualquer idioma funcione no outro.
 O cabeçalho permanece visível ao rolar o conteúdo. Os controles
 do player usam ícones com dicas e nomes acessíveis para play/pause, saltos de
 10 segundos, volume, áudio/legendas e tela cheia. Em janelas com 860 pixels ou

@@ -1,5 +1,6 @@
-use super::{Palette, kit, section_label, strong};
+use super::{Palette, kit, section_label, strong, tr};
 use crate::{
+    i18n::Strings,
     runtime::{Command, Role, View},
     stream::{BitrateAdvice, StreamPhase, file_bitrate_bps, format_bps},
 };
@@ -10,7 +11,11 @@ pub(super) enum CardStream {
     Ready(String),
 }
 
-pub(super) fn card_stream_status(view: &View, local: bool) -> Option<CardStream> {
+pub(super) fn card_stream_status(
+    t: &'static Strings,
+    view: &View,
+    local: bool,
+) -> Option<CardStream> {
     if view.role == Role::Local || !view.connected {
         return None;
     }
@@ -35,10 +40,10 @@ pub(super) fn card_stream_status(view: &View, local: bool) -> Option<CardStream>
         StreamPhase::Offering | StreamPhase::Connecting | StreamPhase::Probing
     );
     if reconnecting {
-        return Some(CardStream::Busy("Reconectando streaming P2P…"));
+        return Some(CardStream::Busy(t.common.reconnecting_stream));
     }
     if connecting {
-        return Some(CardStream::Busy("Conectando streaming P2P…"));
+        return Some(CardStream::Busy(t.common.connecting_stream));
     }
     let buffering = if local {
         view.buffering || view.player.buffering
@@ -46,7 +51,7 @@ pub(super) fn card_stream_status(view: &View, local: bool) -> Option<CardStream>
         view.peer_buffering
     };
     if buffering {
-        return Some(CardStream::Busy("Carregando streaming P2P…"));
+        return Some(CardStream::Busy(t.stream.loading));
     }
     let verified = if local {
         view.verified && !view.loading
@@ -54,9 +59,9 @@ pub(super) fn card_stream_status(view: &View, local: bool) -> Option<CardStream>
         view.peer_verified && !view.peer_loading
     };
     if verified {
-        return Some(CardStream::Ready("Via streaming P2P".into()));
+        return Some(CardStream::Ready(t.stream.via_stream.into()));
     }
-    Some(CardStream::Busy("Preparando streaming P2P…"))
+    Some(CardStream::Busy(t.common.preparing_stream))
 }
 
 struct PanelMetrics {
@@ -143,6 +148,7 @@ pub(super) fn preparation_strip(
     if view.role == Role::Local || !view.connected {
         return;
     }
+    let t = &tr(ui).stream;
     if view.stream.active {
         active_card(ui, colors, view, actions);
         return;
@@ -156,7 +162,7 @@ pub(super) fn preparation_strip(
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(strong(ui, "Streaming P2P direto indisponível").size(13.5));
+                        ui.label(strong(ui, t.unavailable).size(13.5));
                         ui.add(
                             egui::Label::new(RichText::new(err).size(12.5).color(colors.muted))
                                 .wrap(),
@@ -164,7 +170,7 @@ pub(super) fn preparation_strip(
                     });
                     if view.can_stream {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if kit::Button::new(kit::Kind::Secondary, "Tentar novamente")
+                            if kit::Button::new(kit::Kind::Secondary, t.retry)
                                 .size(kit::Size::Small)
                                 .show(ui, colors)
                                 .clicked()
@@ -182,14 +188,14 @@ pub(super) fn preparation_strip(
     }
     let (title, button_label, kind) = if view.role == Role::Guest {
         (
-            "Não tem sua cópia do filme?",
-            "Assistir por streaming P2P",
+            t.guest_offer_title,
+            t.guest_offer_button,
             kit::Kind::Primary,
         )
     } else {
         (
-            "A outra pessoa não tem o arquivo?",
-            "Transmitir meu filme (P2P)",
+            t.host_offer_title,
+            t.host_offer_button,
             kit::Kind::Secondary,
         )
     };
@@ -233,23 +239,21 @@ pub(super) fn preparation_strip(
 }
 
 fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
+    let strings = tr(ui);
+    let t = &strings.stream;
     let m = PanelMetrics::from_view(view);
     let (phase_label, busy, warn) = match &m.phase {
-        StreamPhase::Offering => ("Preparando streaming P2P…", true, false),
-        StreamPhase::Connecting => ("Abrindo conexão P2P direta…", true, false),
-        StreamPhase::Probing => ("Medindo velocidade do enlace…", true, false),
-        StreamPhase::Reconnecting => ("Reconectando streaming P2P…", true, true),
+        StreamPhase::Offering => (strings.common.preparing_stream, true, false),
+        StreamPhase::Connecting => (t.opening, true, false),
+        StreamPhase::Probing => (t.probing, true, false),
+        StreamPhase::Reconnecting => (strings.common.reconnecting_stream, true, true),
         StreamPhase::Streaming => (
-            if m.is_sender {
-                "Transmitindo direto (P2P cifrado)"
-            } else {
-                "Recebendo direto (P2P cifrado)"
-            },
+            if m.is_sender { t.sending } else { t.receiving },
             false,
             false,
         ),
-        StreamPhase::Complete => ("Filme 100% em cache local (P2P verificado)", false, false),
-        StreamPhase::Idle | StreamPhase::Error(_) => ("Streaming P2P", false, false),
+        StreamPhase::Complete => (t.complete, false, false),
+        StreamPhase::Idle | StreamPhase::Error(_) => (t.streaming, false, false),
     };
     egui::Frame::new()
         .stroke(Stroke::new(
@@ -280,7 +284,7 @@ fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Ve
                 };
                 kit::status(ui, glyph, phase_label, color);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if kit::Button::new(kit::Kind::Ghost, "Parar")
+                    if kit::Button::new(kit::Kind::Ghost, t.stop)
                         .size(kit::Size::Small)
                         .show(ui, colors)
                         .clicked()
@@ -293,21 +297,21 @@ fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Ve
                 kit::progress(ui, colors, m.cache_fraction(), ui.available_width());
                 let pct = (m.cache_fraction() * 100.0).round() as u32;
                 let progress_label = if m.is_sender && !m.from_peer_report {
-                    format!("{pct}% enviados")
+                    (t.sent)(pct)
                 } else {
-                    format!("{pct}% em cache")
+                    (strings.common.cached)(pct)
                 };
                 let mut metrics = vec![progress_label];
                 if let Some(secs) = m.buffered_seconds() {
-                    metrics.push(format!("{secs:.0}s à frente"));
+                    metrics.push((strings.common.ahead)(secs));
                 }
                 if let Some(link) = m.link_bps {
-                    metrics.push(format!("Enlace {}", format_bps(link)));
+                    metrics.push((t.link)(&format_bps(link)));
                 }
                 if let Some(bitrate) = m.file_bitrate_bps {
-                    metrics.push(format!("Filme {}", format_bps(bitrate)));
+                    metrics.push((t.movie_rate)(&format_bps(bitrate)));
                 }
-                metrics.push(format!("Agora {}", format_bps(m.transfer_bps)));
+                metrics.push((t.now)(&format_bps(m.transfer_bps)));
                 ui.add(
                     egui::Label::new(
                         RichText::new(metrics.join(" · "))
@@ -317,33 +321,25 @@ fn active_card(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Ve
                     .wrap(),
                 );
             }
-            if let Some((text, color)) = advice_line(m.advice, colors) {
+            if let Some((text, color)) = advice_line(t, m.advice, colors) {
                 ui.add(egui::Label::new(RichText::new(text).size(12.5).color(color)).wrap());
             }
         });
 }
 
-fn advice_line(advice: BitrateAdvice, colors: Palette) -> Option<(String, egui::Color32)> {
+fn advice_line(
+    t: &crate::i18n::Stream,
+    advice: BitrateAdvice,
+    colors: Palette,
+) -> Option<(String, egui::Color32)> {
     match advice {
         BitrateAdvice::Unknown => None,
-        BitrateAdvice::Ready => Some((
-            "Conexão folgada para este filme — pronto para assistir direto.".into(),
-            colors.success,
-        )),
-        BitrateAdvice::Tight => Some((
-            "Conexão justa para a taxa deste filme — aguardar alguns segundos de cache ajuda."
-                .into(),
+        BitrateAdvice::Ready => Some((t.advice_ready.into(), colors.success)),
+        BitrateAdvice::Tight => Some((t.advice_tight.into(), colors.warning)),
+        BitrateAdvice::Prebuffer { estimated_secs } => Some((
+            (t.advice_prebuffer)(estimated_secs.div_ceil(60)),
             colors.warning,
         )),
-        BitrateAdvice::Prebuffer { estimated_secs } => {
-            let mins = estimated_secs.div_ceil(60);
-            Some((
-                format!(
-                    "Enlace abaixo da taxa do filme — pré-carregando (~{mins} min para assistir sem pausas)."
-                ),
-                colors.warning,
-            ))
-        }
     }
 }
 
@@ -357,27 +353,29 @@ pub(super) fn room_section(
     if !view.stream.active && view.peer_stream.is_none() && !has_error {
         return;
     }
+    let strings = tr(ui);
+    let t = &strings.stream;
     let m = PanelMetrics::from_view(view);
     ui.add_space(10.0);
-    section_label(ui, colors, "Streaming P2P direto");
+    section_label(ui, colors, t.direct_title);
     if let StreamPhase::Error(err) = &view.stream.phase {
         ui.add(egui::Label::new(RichText::new(err).size(12.5).color(colors.warning)).wrap());
     } else if m.phase == StreamPhase::Reconnecting {
         kit::status(
             ui,
             Some(kit::Glyph::Spinner),
-            "Reconectando streaming P2P…",
+            strings.common.reconnecting_stream,
             colors.warning,
         );
     }
     if m.total_bytes > 0 {
         kit::progress(ui, colors, m.cache_fraction(), ui.available_width());
         let pct = (m.cache_fraction() * 100.0).round() as u32;
-        let mut parts = vec![format!("{pct}% em cache")];
+        let mut parts = vec![(strings.common.cached)(pct)];
         if m.phase != StreamPhase::Complete {
             parts.push(format_bps(m.transfer_bps));
             if let Some(secs) = m.buffered_seconds() {
-                parts.push(format!("{secs:.0}s à frente"));
+                parts.push((strings.common.ahead)(secs));
             }
         }
         ui.label(
@@ -388,14 +386,14 @@ pub(super) fn room_section(
     }
     if let Some(addr) = m.peer_addr {
         ui.label(
-            RichText::new(format!("Direto: {addr}"))
+            RichText::new((t.direct)(&addr.to_string()))
                 .size(12.0)
                 .color(colors.faint),
         );
     }
     if has_error
         && view.can_stream
-        && kit::Button::new(kit::Kind::Secondary, "Reconectar P2P")
+        && kit::Button::new(kit::Kind::Secondary, strings.common.reconnect_p2p)
             .size(kit::Size::Small)
             .show(ui, colors)
             .clicked()
@@ -403,7 +401,7 @@ pub(super) fn room_section(
         actions.push(Command::StartStream);
     }
     if view.stream.active
-        && kit::Button::new(kit::Kind::Ghost, "Parar streaming")
+        && kit::Button::new(kit::Kind::Ghost, t.stop_streaming)
             .size(kit::Size::Small)
             .show(ui, colors)
             .clicked()

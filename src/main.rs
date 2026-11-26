@@ -28,6 +28,8 @@ struct Args {
     port: u16,
     #[arg(long, value_name = "IP[:PORTA]")]
     join: Option<String>,
+    #[arg(long, value_name = "en|pt-BR", env = "SYNC2GETHER_LANG")]
+    lang: Option<sync2gether::i18n::Language>,
     #[cfg(feature = "demo")]
     #[arg(long, conflicts_with_all = ["file", "host", "join", "internet", "code"])]
     demo: bool,
@@ -52,6 +54,17 @@ fn main() -> eframe::Result {
     } else {
         None
     };
+    #[cfg(feature = "demo")]
+    let saved = (!_args.demo)
+        .then(sync2gether::preferences::Preferences::load)
+        .and_then(|preferences| preferences.language);
+    #[cfg(not(feature = "demo"))]
+    let saved = sync2gether::preferences::Preferences::load().language;
+    let language = _args
+        .lang
+        .or(saved)
+        .unwrap_or_else(sync2gether::i18n::Language::from_system);
+    sync2gether::i18n::set(language);
     let options = sync2gether::window::options();
     let title = if _args.diagnostics {
         "sync2gether [diagnóstico]"
@@ -65,6 +78,7 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             diagnostics::mark(Stage::CreatingApp);
             sync2gether::ui::configure_theme(&cc.egui_ctx, false);
+            sync2gether::ui::configure_language(&cc.egui_ctx, language);
             #[cfg(feature = "demo")]
             if _args.demo {
                 if _args.demo_light {

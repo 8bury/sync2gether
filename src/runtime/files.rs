@@ -59,7 +59,7 @@ impl Worker {
         tokio::task::spawn_blocking(move || {
             let selected = path.or_else(|| {
                 rfd::FileDialog::new()
-                    .set_title("Escolher sua cópia do filme")
+                    .set_title(crate::i18n::text().errors.pick_title)
                     .pick_file()
             });
             if cancel.load(Ordering::Relaxed) {
@@ -75,34 +75,39 @@ impl Worker {
                     let mut last_progress = None;
                     path.canonicalize()
                         .and_then(|path| {
-                            crate::media::identify_with_chunks_and_progress(&path, |bytes, total| {
-                                if cancel.load(Ordering::Relaxed) {
-                                    return Err(std::io::Error::other("Verificação cancelada"));
-                                }
-                                if last_progress.is_none_or(|at: Instant| {
-                                    at.elapsed() >= Duration::from_millis(100)
-                                }) || bytes == total
-                                {
-                                    files
-                                        .blocking_send(FileResult {
-                                            generation,
-                                            event: FileEvent::Progress(Verification {
-                                                bytes,
-                                                total,
-                                            }),
-                                        })
-                                        .map_err(|_| {
-                                            std::io::Error::other("Aplicativo encerrado")
-                                        })?;
-                                    last_progress = Some(Instant::now());
-                                }
-                                Ok(())
-                            })
+                            crate::media::identify_with_chunks_and_progress(
+                                &path,
+                                |bytes, total| {
+                                    if cancel.load(Ordering::Relaxed) {
+                                        return Err(std::io::Error::other(
+                                            crate::i18n::text().errors.verification_cancelled,
+                                        ));
+                                    }
+                                    if last_progress.is_none_or(|at: Instant| {
+                                        at.elapsed() >= Duration::from_millis(100)
+                                    }) || bytes == total
+                                    {
+                                        files
+                                            .blocking_send(FileResult {
+                                                generation,
+                                                event: FileEvent::Progress(Verification {
+                                                    bytes,
+                                                    total,
+                                                }),
+                                            })
+                                            .map_err(|_| {
+                                                std::io::Error::other(
+                                                    crate::i18n::text().errors.app_closed,
+                                                )
+                                            })?;
+                                        last_progress = Some(Instant::now());
+                                    }
+                                    Ok(())
+                                },
+                            )
                             .map(|(media, index)| (path, media, index))
                         })
-                        .map_err(|_| {
-                            "Não foi possível verificar o arquivo. Confira se ele está acessível e escolha novamente.".into()
-                        })
+                        .map_err(|_| crate::i18n::text().errors.verify_failed.into())
                 })
                 .transpose();
             if !cancel.load(Ordering::Relaxed) {

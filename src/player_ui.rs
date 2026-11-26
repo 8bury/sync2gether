@@ -60,6 +60,7 @@ pub(crate) fn draw(
     video: Option<Video<'_>>,
     demo: bool,
 ) -> Vec<Command> {
+    let t = &crate::ui::tr(ui).player;
     let mut actions = Vec::new();
     if !demo {
         ui.painter().rect_filled(rect, 0, Color32::BLACK);
@@ -84,9 +85,9 @@ pub(crate) fn draw(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 if view.loading {
-                    "Preparando seu filme…"
+                    t.preparing_movie
                 } else {
-                    "Abra uma cópia local do filme"
+                    t.open_local_copy
                 },
                 egui::FontId::proportional(18.0),
                 Color32::from_gray(190),
@@ -259,9 +260,9 @@ pub(crate) fn draw(
         ui.scope_builder(egui::UiBuilder::new().max_rect(notice), |ui| {
             ui.visuals_mut().override_text_color = Some(Color32::WHITE);
             let status = if view.preparing || view.scheduled {
-                "Preparando a reprodução…"
+                crate::ui::tr(ui).common.preparing_playback
             } else if hard_blocked {
-                "A reprodução foi interrompida. Aguardando o player…"
+                t.interrupted
             } else {
                 &view.status
             };
@@ -376,30 +377,21 @@ pub(crate) fn draw(
                     Icon::Pause
                 };
                 let tooltip = if cancelling {
-                    "Cancelar operação"
+                    t.cancel_operation
                 } else if view.player.paused {
-                    "Reproduzir · Espaço"
+                    t.play
                 } else {
-                    "Pausar · Espaço"
+                    t.pause
                 };
                 if icon_button(ui, icon, can_toggle, false, tooltip).clicked() {
                     actions.push(Command::Control(toggle(view)));
                 }
-                if icon_button(ui, Icon::Back, can_seek, false, "Voltar 10 segundos · ←").clicked()
-                {
+                if icon_button(ui, Icon::Back, can_seek, false, t.back).clicked() {
                     actions.push(Command::Control(Control::Seek(
                         (view.player.position - 10.0).max(0.0),
                     )));
                 }
-                if icon_button(
-                    ui,
-                    Icon::Forward,
-                    can_seek,
-                    false,
-                    "Avançar 10 segundos · →",
-                )
-                .clicked()
-                {
+                if icon_button(ui, Icon::Forward, can_seek, false, t.forward).clicked() {
                     actions.push(Command::Control(Control::Seek(
                         (view.player.position + 10.0).min(view.player.duration),
                     )));
@@ -423,7 +415,7 @@ pub(crate) fn draw(
                 let hud_max_w = ui.available_width() - if wide { 240.0 } else { 136.0 };
                 if hud_max_w >= 88.0
                     && let Some((hud_text, hud_color)) =
-                        overlay::stream_hud_label(view, hud_max_w >= 210.0)
+                        overlay::stream_hud_label(crate::ui::tr(ui), view, hud_max_w >= 210.0)
                 {
                     ui.add_space(6.0);
                     overlay::draw_stream_hud(ui, &hud_text, hud_color, hud_max_w - 6.0);
@@ -435,9 +427,9 @@ pub(crate) fn draw(
                         true,
                         false,
                         if inputs.player.fullscreen {
-                            "Sair da tela cheia · Esc"
+                            t.exit_fullscreen
                         } else {
-                            "Tela cheia · F"
+                            t.fullscreen
                         },
                     )
                     .clicked()
@@ -450,7 +442,7 @@ pub(crate) fn draw(
                         .iter()
                         .any(|t| t.kind == TrackKind::Subtitle && t.selected);
                     let tracks =
-                        icon_button(ui, Icon::Captions, true, subtitled, "Áudio e legendas");
+                        icon_button(ui, Icon::Captions, true, subtitled, t.audio_subtitles);
                     egui::Popup::menu(&tracks).show(|ui| track_menu(ui, view, demo, &mut actions));
                     if wide {
                         ui.add_space(6.0);
@@ -464,7 +456,7 @@ pub(crate) fn draw(
                         Icon::Volume(inputs.volume == 0.0),
                         true,
                         false,
-                        "Volume · M para silenciar",
+                        t.volume,
                     );
                     if wide {
                         if volume.clicked() && !demo {
@@ -473,7 +465,7 @@ pub(crate) fn draw(
                         }
                     } else {
                         egui::Popup::menu(&volume).show(|ui| {
-                            ui.label("Volume neste PC");
+                            ui.label(crate::ui::tr(ui).common.volume_here);
                             ui.spacing_mut().slider_width = 160.0;
                             ui.add_enabled_ui(!demo, |ui| {
                                 if ui
@@ -487,9 +479,9 @@ pub(crate) fn draw(
                                 }
                                 if ui
                                     .button(if inputs.volume == 0.0 {
-                                        "Ativar som"
+                                        t.unmute
                                     } else {
-                                        "Silenciar"
+                                        t.mute
                                     })
                                     .clicked()
                                 {
@@ -515,14 +507,15 @@ pub(crate) fn draw(
     actions
 }
 fn track_menu(ui: &mut egui::Ui, view: &View, demo: bool, actions: &mut Vec<Command>) {
+    let t = &crate::ui::tr(ui).player;
     ui.set_max_width(280.0);
     if demo {
-        ui.label("Seleção ilustrativa, sem reprodução");
+        ui.label(t.demo_tracks);
     }
     ui.add_enabled_ui(!demo && view.player.loaded, |ui| {
         for (kind, title) in [
-            (TrackKind::Audio, "Áudio neste PC"),
-            (TrackKind::Subtitle, "Legendas neste PC"),
+            (TrackKind::Audio, t.audio_here),
+            (TrackKind::Subtitle, t.subtitles_here),
         ] {
             ui.label(RichText::new(title).strong());
             if kind == TrackKind::Subtitle
@@ -533,7 +526,7 @@ fn track_menu(ui: &mut egui::Ui, view: &View, demo: bool, actions: &mut Vec<Comm
                             .tracks
                             .iter()
                             .any(|t| t.kind == kind && t.selected),
-                        "Desativadas",
+                        t.subtitles_off,
                     )
                     .clicked()
             {
@@ -543,7 +536,10 @@ fn track_menu(ui: &mut egui::Ui, view: &View, demo: bool, actions: &mut Vec<Comm
             let mut any = false;
             for track in view.player.tracks.iter().filter(|t| t.kind == kind) {
                 any = true;
-                if ui.selectable_label(track.selected, track.label()).clicked() {
+                if ui
+                    .selectable_label(track.selected, track.label(t.track))
+                    .clicked()
+                {
                     actions.push(match kind {
                         TrackKind::Audio => Command::AudioTrack(track.id),
                         TrackKind::Subtitle => Command::SubtitleTrack(Some(track.id)),
@@ -552,7 +548,7 @@ fn track_menu(ui: &mut egui::Ui, view: &View, demo: bool, actions: &mut Vec<Comm
                 }
             }
             if !any {
-                ui.label("Nenhuma faixa disponível");
+                ui.label(t.no_tracks);
             }
             ui.separator();
         }

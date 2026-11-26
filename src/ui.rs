@@ -16,6 +16,19 @@ pub(crate) mod visuals;
 pub use demo::{draw, draw_with_inputs};
 pub(crate) use room::{media_title, preparation_leave_label, request_leave};
 pub use theme::configure_theme;
+
+pub fn configure_language(ctx: &egui::Context, language: crate::i18n::Language) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("language"), language));
+}
+
+pub fn language(ctx: &egui::Context) -> crate::i18n::Language {
+    ctx.data(|data| data.get_temp(egui::Id::new("language")))
+        .unwrap_or_default()
+}
+
+pub(crate) fn tr(ui: &egui::Ui) -> &'static crate::i18n::Strings {
+    language(ui.ctx()).strings()
+}
 pub(crate) use theme::{Palette, strong};
 use {
     room::{confirm_leave, room_addresses, room_contents},
@@ -110,10 +123,14 @@ enum Body {
     Preparation,
 }
 
-fn back_label(view: &crate::runtime::View, body: Body) -> Option<&'static str> {
+fn back_label(
+    t: &'static crate::i18n::Strings,
+    view: &crate::runtime::View,
+    body: Body,
+) -> Option<&'static str> {
     match body {
         Body::Home | Body::Join | Body::Browse => None,
-        _ => Some(preparation::leave_label(view.role)),
+        _ => Some(preparation::leave_label(t, view.role)),
     }
 }
 
@@ -182,7 +199,7 @@ fn draw_flow(
         if inputs.room_panel {
             if ui.available_width() < 720.0 {
                 let mut open = true;
-                egui::Window::new("Sala")
+                egui::Window::new(tr(ui).room.title)
                     .open(&mut open)
                     .collapsible(false)
                     .resizable(false)
@@ -212,7 +229,7 @@ fn draw_flow(
             .show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
                 if demo {
-                    visuals::demo_video(ui.painter(), rect);
+                    visuals::demo_video(ui.painter(), rect, tr(ui).demo.video);
                 }
                 actions.extend(crate::player_ui::draw(ui, rect, view, inputs, video, demo));
             });
@@ -245,7 +262,7 @@ fn draw_flow(
             .show(ui, |ui| {
                 header(ui, colors, inputs, view, body, &mut actions);
             });
-        if back_label(view, body).is_some()
+        if back_label(tr(ui), view, body).is_some()
             && !inputs.confirm_leave
             && !egui::Popup::is_any_open(ui.ctx())
             && ui.ctx().memory(|m| m.focused().is_none())
@@ -294,7 +311,6 @@ fn draw_flow(
                                 body,
                                 preparation::Fit {
                                     sticky: sticky_preparation,
-                                    available: bounds.height(),
                                 },
                                 &mut actions,
                             );

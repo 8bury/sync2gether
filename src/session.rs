@@ -1,4 +1,4 @@
-use crate::protocol::{Control, Presence, Snapshot, Transition};
+use crate::protocol::{Control, Presence, Side, Snapshot, Transition};
 
 pub const PREPARE_TIMEOUT_MS: f64 = 10_000.0;
 pub const AUTO_RESUME_STABLE_MS: f64 = 1_000.0;
@@ -21,6 +21,7 @@ impl Default for Session {
                 position: 0.0,
                 paused: true,
                 waiting_buffer: false,
+                paused_by: None,
                 host_ms: 0.0,
                 transition: None,
                 host: Presence::default(),
@@ -59,6 +60,13 @@ impl Session {
     pub fn position(&self, now: f64) -> f64 {
         self.state.position_at(now)
     }
+    pub fn request(&mut self, command: Control, by: Side, now: f64) -> bool {
+        let applied = self.apply(command, now);
+        if applied && matches!(command, Control::Pause) {
+            self.state.paused_by = Some(by);
+        }
+        applied
+    }
     pub fn apply(&mut self, command: Control, now: f64) -> bool {
         if !command.valid()
             || (matches!(command, Control::Play) && !self.ready())
@@ -88,6 +96,9 @@ impl Session {
         self.state.host_ms = now;
         self.state.paused = true;
         self.state.waiting_buffer = false;
+        if !matches!(command, Control::Seek(_)) {
+            self.state.paused_by = None;
+        }
         self.buffer_ready_since = None;
         self.state.revision += 1;
         self.state.transition = if matches!(command, Control::Pause) {
@@ -316,6 +327,24 @@ mod tests {
         s.advance(at + 20.0);
         assert!(!s.state.paused);
         assert!((s.position(at + 20.0) - 0.02).abs() < 1e-9);
+    }
+    #[test]
+    fn records_who_paused_until_playback_resumes_or_pauses_by_itself() {
+        let mut s = session();
+        start(&mut s);
+        assert!(s.request(Control::Pause, Side::Guest, 400.0));
+        assert_eq!(s.state.paused_by, Some(Side::Guest));
+        assert!(s.request(Control::Seek(20.0), Side::Host, 500.0));
+        assert_eq!(s.state.paused_by, Some(Side::Guest));
+        s.state.transition = None;
+        start(&mut s);
+        assert_eq!(s.state.paused_by, None);
+        assert!(s.request(Control::Pause, Side::Host, 400.0));
+        assert_eq!(s.state.paused_by, Some(Side::Host));
+        start(&mut s);
+        s.disconnect(500.0);
+        assert!(s.state.paused);
+        assert_eq!(s.state.paused_by, None);
     }
     #[test]
     fn superseded_acks_and_pause_cannot_start_old_operation() {

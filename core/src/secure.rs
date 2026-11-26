@@ -115,7 +115,10 @@ impl Cipher {
     pub fn seal(&self, nonce: u64, message: &Message) -> io::Result<Vec<u8>> {
         let plain = serde_json::to_vec(message).map_err(io::Error::other)?;
         if plain.len() > MAX_MESSAGE {
-            return Err(io::Error::other("Mensagem excede o limite"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Mensagem excede o limite",
+            ));
         }
         let mut frame = vec![0; plain.len() + TAG];
         let written = self

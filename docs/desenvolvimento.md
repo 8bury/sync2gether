@@ -69,7 +69,8 @@ Os valores de `--demo-state` são `idle`, `browsing`, `connecting`,
 `pending-approval`, `waiting`, `approval`,
 `choosing`, `verifying`, `mismatch`, `stabilizing`, `player-error`, `ready`,
 `synchronized`, `paused`, `reconnecting`, `peer-left` e `room-closed`. Eles usam as mesmas telas
-do app, com dados fictícios e sem enviar comandos ao runtime. Use `--demo-light` para o tema claro.
+do app, com dados fictícios e sem enviar comandos ao runtime. Use `--demo-light` para o tema claro
+e `--lang en` ou `--lang pt-BR` para escolher o idioma; sem `--lang`, a demo segue o idioma do sistema.
 
 Para revisar o fluxo inicial, use `idle` para a tela de boas-vindas,
 `browsing` para a lista e conexão manual, `connecting` para a tentativa de
@@ -100,7 +101,7 @@ nada nem roubar o foco, instale `sway` e use a sessão headless:
 ```sh
 cargo build --locked --features demo
 mkdir -p .cache
-timeout 60s bash scripts/headless.sh target/debug/sync2gether --demo --demo-state reconnecting --demo-shot .cache/reconnecting.png
+timeout 60s bash scripts/headless.sh target/debug/sync2gether --demo --lang pt-BR --demo-state reconnecting --demo-shot .cache/reconnecting.png
 ```
 
 Em um ambiente sem sessão gráfica, também é possível usar Xvfb. No Ubuntu, instale `xvfb` e `xauth`; no Arch,
@@ -120,7 +121,20 @@ de referência visual; veja `prototype/README.md`.
 As quatro imagens selecionadas para o README fazem parte da documentação em
 `docs/images/`. Foram geradas em CachyOS pela sessão sway headless de
 `scripts/headless.sh`, em 960 × 640, usando os cenários `idle`, `ready` e
-`synchronized`, além de `ready` com `--demo-light`. Todas usam dados fictícios, sem mídia ou conexão real.
+`synchronized`, além de `ready` com `--demo-light`, todos com `--lang pt-BR`. Todas usam dados fictícios, sem mídia ou conexão real.
+
+## Idiomas
+
+Todo texto visível fica em `src/i18n/`: `strings.rs` declara os campos e
+`pt_br.rs` e `en.rs` preenchem um por idioma. Textos com valores usam funções,
+como `room_of: |name| format!("{name}'s room")`. Para acrescentar um idioma,
+crie outro arquivo com todos os campos, inclua a variante em `Language` e em
+`Language::ALL` e mapeie o código de locale em `Language::from_locale`; o
+compilador aponta campos faltando. O teste de layout percorre todos os idiomas
+de `Language::ALL` nos tamanhos de janela suportados, e
+`english_interface_has_no_untranslated_portuguese_in_any_demo_scenario` procura
+texto em português que tenha escapado da tradução. Os testes que verificam textos
+em português chamam `ui::configure_language(&ctx, Language::PtBr)`.
 
 ## Verificações e trabalho com agentes
 

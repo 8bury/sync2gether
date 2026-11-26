@@ -1,5 +1,6 @@
 use super::ACCENT;
 use crate::{
+    protocol::Side,
     runtime::{Command, Role, View},
     stream::{StreamPhase, file_bitrate_bps, format_bps},
     ui::{
@@ -262,7 +263,8 @@ pub(super) fn volume_bar(ui: &mut egui::Ui, volume: &mut f64, enabled: bool) -> 
         *volume = next.unwrap_or(*volume);
     }
     let value = *volume;
-    response.widget_info(|| egui::WidgetInfo::slider(enabled, value, "Volume neste PC"));
+    let label = crate::ui::tr(ui).common.volume_here;
+    response.widget_info(|| egui::WidgetInfo::slider(enabled, value, label));
     let fraction = (*volume / 100.0).clamp(0.0, 1.0) as f32;
     let x = rect.left() + 5.0 + (rect.width() - 10.0) * fraction;
     let y = rect.center().y;
@@ -311,6 +313,19 @@ fn center_notice(view: &View) -> Option<CenterNotice> {
     }
 }
 
+fn paused_title(t: &'static crate::i18n::Strings, view: &View, peer: &str) -> String {
+    let own = match view.role {
+        Role::Host => Side::Host,
+        Role::Guest => Side::Guest,
+        Role::Local => return t.common.paused.to_owned(),
+    };
+    match view.paused_by {
+        Some(side) if side == own => t.player.you_paused.to_owned(),
+        Some(_) => (t.player.peer_paused)(peer),
+        None => t.common.paused.to_owned(),
+    }
+}
+
 pub(super) fn video_dim(view: &View) -> u8 {
     match center_notice(view) {
         Some(CenterNotice::Lost | CenterNotice::Left) => 178,
@@ -328,32 +343,40 @@ pub(super) fn draw_center_notice(
     let Some(notice) = center_notice(view) else {
         return;
     };
+    let strings = crate::ui::tr(ui);
+    let t = &strings.player;
     let solo = view.role == Role::Local;
-    let peer_label = view.peer_name.as_deref().unwrap_or("Outra pessoa");
-    let peer = view.peer_name.as_deref().unwrap_or("a outra pessoa");
+    let peer_label = view
+        .peer_name
+        .as_deref()
+        .unwrap_or(strings.common.other_person);
+    let peer = view
+        .peer_name
+        .as_deref()
+        .unwrap_or(strings.common.other_person_object);
     let (state, title, detail, diameter) = match notice {
         CenterNotice::Paused => (
             (!solo).then_some(Presence::Together),
-            "Pausado".to_owned(),
-            format!("em {position}"),
+            paused_title(strings, view, peer_label),
+            (t.at)(&position),
             22.0,
         ),
         CenterNotice::Left => (
             Some(Presence::Solo),
-            format!("{peer_label} saiu da sala"),
-            "A sala continua aberta para entrar de novo.".to_owned(),
+            (t.left_title)(peer_label),
+            t.left_detail.to_owned(),
             30.0,
         ),
         CenterNotice::Lost if view.role == Role::Host => (
             Some(Presence::Lost),
-            format!("{peer_label} perdeu a conexão"),
-            format!("Esperando {peer} voltar…"),
+            (t.peer_lost)(peer_label),
+            (t.waiting_return)(peer),
             30.0,
         ),
         CenterNotice::Lost => (
             Some(Presence::Lost),
-            "Conexão perdida".to_owned(),
-            format!("Reconectando com {peer}…"),
+            t.connection_lost.to_owned(),
+            (t.reconnecting_with)(peer),
             30.0,
         ),
     };
@@ -481,7 +504,12 @@ pub(super) fn should_keep_controls(view: &View) -> bool {
         || view.peer_stream.as_ref().is_some_and(|s| s.reconnecting)
 }
 
-pub(super) fn stream_hud_label(view: &View, wide: bool) -> Option<(String, Color32)> {
+pub(super) fn stream_hud_label(
+    strings: &'static crate::i18n::Strings,
+    view: &View,
+    wide: bool,
+) -> Option<(String, Color32)> {
+    let t = &strings.player;
     let stream = EffectiveStream::from_view(view)?;
     let colors = Palette::new(true);
     let neutral = Color32::from_gray(225);
@@ -489,30 +517,30 @@ pub(super) fn stream_hud_label(view: &View, wide: bool) -> Option<(String, Color
     let card_visible = is_center_loading_visible(view);
     if stream.error.is_some() {
         let text = if card_visible {
-            format!("{pct}% em cache")
+            (strings.common.cached)(pct)
         } else {
-            format!("P2P sem conexão · {pct}%")
+            (t.p2p_offline)(pct)
         };
         return Some((text, colors.warning));
     }
     if stream.reconnecting {
         let text = if card_visible {
-            format!("{pct}% em cache")
+            (strings.common.cached)(pct)
         } else {
-            format!("Reconectando P2P · {pct}%")
+            (t.p2p_reconnecting)(pct)
         };
         return Some((text, colors.warning));
     }
     if stream.connecting {
-        return (!card_visible).then(|| ("Conectando P2P…".into(), colors.accent));
+        return (!card_visible).then(|| (t.p2p_connecting.into(), colors.accent));
     }
     if stream.complete {
-        return Some(("P2P · 100%".into(), colors.success));
+        return Some((t.p2p_done.into(), colors.success));
     }
     let speed = format_bps(stream.transfer_bps);
-    let mut parts = vec![format!("P2P {pct}%"), speed];
+    let mut parts = vec![(t.p2p_progress)(pct), speed];
     if wide && let Some(secs) = stream.buffered_seconds() {
-        parts.push(format!("{secs:.0}s à frente"));
+        parts.push((strings.common.ahead)(secs));
     }
     let stalled = stream.transfer_bps == 0 || view.buffering || view.peer_buffering;
     Some((
@@ -555,44 +583,41 @@ pub(super) fn draw_center_loading(
     let stream_error = stream.as_ref().and_then(|s| s.error.as_deref());
     let colors = Palette::new(true);
 
-    let peer = view.peer_name.as_deref().unwrap_or("a outra pessoa");
+    let strings = crate::ui::tr(ui);
+    let t = &strings.player;
+    let peer = view
+        .peer_name
+        .as_deref()
+        .unwrap_or(strings.common.other_person_object);
     let (title, glyph, accent) = if stream_error.is_some() {
-        (
-            "Conexão P2P interrompida".to_owned(),
-            Glyph::Alert,
-            colors.warning,
-        )
+        (t.p2p_interrupted.to_owned(), Glyph::Alert, colors.warning)
     } else if stream_reconnecting {
         (
             if view.role == Role::Host {
-                format!("Reconectando streaming P2P com {peer}…")
+                (t.reconnecting_stream_with)(peer)
             } else {
-                "Reconectando streaming P2P…".to_owned()
+                strings.common.reconnecting_stream.to_owned()
             },
             Glyph::Spinner,
             colors.warning,
         )
     } else if stream_connecting {
         (
-            "Conectando streaming P2P…".to_owned(),
+            strings.common.connecting_stream.to_owned(),
             Glyph::Spinner,
             colors.accent,
         )
     } else if view.buffering {
         (
-            "Carregando vídeo…".to_owned(),
+            strings.common.loading_video.to_owned(),
             Glyph::Spinner,
             colors.accent,
         )
     } else if view.peer_buffering {
-        (
-            format!("Aguardando {peer} carregar o vídeo…"),
-            Glyph::Spinner,
-            colors.accent,
-        )
+        ((t.waiting_peer_load)(peer), Glyph::Spinner, colors.accent)
     } else {
         (
-            "Carregando para retomar…".to_owned(),
+            t.loading_to_resume.to_owned(),
             Glyph::Spinner,
             colors.accent,
         )
@@ -603,9 +628,9 @@ pub(super) fn draw_center_loading(
     } else if let Some(s) = &stream {
         if s.total_bytes > 0 {
             let pct = (s.cache_fraction() * 100.0).round() as u32;
-            let mut metrics = vec![format!("{pct}% em cache"), format_bps(s.transfer_bps)];
+            let mut metrics = vec![(strings.common.cached)(pct), format_bps(s.transfer_bps)];
             if let Some(secs) = s.buffered_seconds() {
-                metrics.push(format!("{secs:.0}s à frente"));
+                metrics.push((strings.common.ahead)(secs));
             }
             Some(metrics.join(" · "))
         } else {
@@ -677,7 +702,7 @@ pub(super) fn draw_center_loading(
                     }
                     if stream_error.is_some() && view.can_stream {
                         ui.add_space(2.0);
-                        if kit::Button::new(kit::Kind::Primary, "Reconectar P2P")
+                        if kit::Button::new(kit::Kind::Primary, strings.common.reconnect_p2p)
                             .glyph(Glyph::Refresh)
                             .size(kit::Size::Small)
                             .show(ui, colors)

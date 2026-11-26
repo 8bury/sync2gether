@@ -158,7 +158,7 @@ impl eframe::App for App {
             let actions = crate::ui::draw_live(ui, &display, &mut self.inputs, video);
             for action in actions {
                 if runtime.commands.try_send(action).is_err() {
-                    self.view.error = Some("O app está ocupado. Tente novamente.".into());
+                    self.view.error = Some(crate::i18n::text().errors.app_busy.into());
                 }
             }
             ui.ctx()

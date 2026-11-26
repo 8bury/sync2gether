@@ -37,6 +37,11 @@ disponíveis em **Configurações → Opções avançadas de rede**.
 O app também verifica os arquivos, agenda o início, corrige desvios e reconecta
 o convidado sozinho. É possível abrir um filme sozinho.
 
+A interface está disponível em português (Brasil) e inglês. Na primeira
+abertura, o app segue o idioma do sistema (inglês quando ele não é português);
+a escolha em **Configurações → Idioma** fica salva. O código da sala é o mesmo
+nos dois idiomas, então pessoas com idiomas diferentes entram na mesma sala.
+
 ## Instalação
 
 Baixe o pacote para seu sistema operacional e o arquivo `SHA256SUMS` em

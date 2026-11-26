@@ -62,7 +62,9 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
 ) -> io::Result<()> {
     let bytes = serde_json::to_vec(message).map_err(io::Error::other)?;
     if bytes.len() > MAX_MESSAGE {
-        return Err(io::Error::other("Mensagem excede o limite"));
+        return Err(io::Error::other(
+            crate::i18n::text().errors.message_too_large,
+        ));
     }
     writer.write_u32(bytes.len() as u32).await?;
     writer.write_all(&bytes).await
@@ -70,7 +72,9 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
 pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Message> {
     let size = reader.read_u32().await? as usize;
     if size == 0 || size > MAX_MESSAGE {
-        return Err(io::Error::other("Tamanho de mensagem inválido"));
+        return Err(io::Error::other(
+            crate::i18n::text().errors.invalid_message_size,
+        ));
     }
     let mut bytes = vec![0; size];
     reader.read_exact(&mut bytes).await?;
@@ -224,9 +228,7 @@ pub async fn guest(addr: SocketAddr, key: String, events: mpsc::Sender<Event>, o
                 }
                 _ => {
                     let _ = events
-                        .send(Event::Error(
-                            "Sala recusou a conexão. Verifique o código e a versão do app.".into(),
-                        ))
+                        .send(Event::Error(crate::i18n::text().errors.room_refused.into()))
                         .await;
                 }
             }

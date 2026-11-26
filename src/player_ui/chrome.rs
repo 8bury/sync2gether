@@ -28,7 +28,8 @@ struct PeerStatus {
     warning: bool,
 }
 
-fn peer_status(view: &View) -> PeerStatus {
+fn peer_status(strings: &'static crate::i18n::Strings, view: &View) -> PeerStatus {
+    let t = &strings.player;
     let status = |name: &str, detail: &str, state, warning| PeerStatus {
         name: name.to_owned(),
         detail: detail.to_owned(),
@@ -36,43 +37,46 @@ fn peer_status(view: &View) -> PeerStatus {
         warning,
     };
     if view.role == Role::Local {
-        return status("Sozinho", "", Presence::Solo, false);
+        return status(t.alone, "", Presence::Solo, false);
     }
-    let peer = view.peer_name.as_deref().unwrap_or("Outra pessoa");
+    let peer = view
+        .peer_name
+        .as_deref()
+        .unwrap_or(strings.common.other_person);
     if view.peer_left && !view.connected {
-        return status(peer, "saiu da sala", Presence::Solo, false);
+        return status(peer, t.peer_left, Presence::Solo, false);
     }
     if !view.connected {
         let detail = if view.role == Role::Host {
-            "desconectado"
+            t.peer_disconnected
         } else {
-            "reconectando"
+            t.peer_reconnecting
         };
         return status(peer, detail, Presence::Lost, true);
     }
     let card_visible = overlay::is_center_loading_visible(view);
     if view.peer_buffering {
         let detail = if card_visible {
-            "carregando"
+            t.peer_loading
         } else {
-            "aguardando vídeo…"
+            t.peer_waiting_video
         };
         return status(peer, detail, Presence::Waiting, true);
     }
     if view.buffering || view.waiting_buffer {
-        return status(peer, "carregando vídeo…", Presence::Waiting, true);
+        return status(peer, t.peer_loading_video, Presence::Waiting, true);
     }
     if view.stream.phase == StreamPhase::Reconnecting
         || view.peer_stream.as_ref().is_some_and(|s| s.reconnecting)
     {
         let detail = if card_visible {
-            "P2P"
+            t.peer_p2p
         } else {
-            "reconectando P2P…"
+            t.peer_reconnecting_p2p
         };
         return status(peer, detail, Presence::Lost, true);
     }
-    status(peer, "em sincronia", Presence::Together, false)
+    status(peer, t.peer_in_sync, Presence::Together, false)
 }
 
 pub(super) fn top_bar(
@@ -83,7 +87,8 @@ pub(super) fn top_bar(
     actions: &mut Vec<Command>,
 ) {
     let colors = palette();
-    let label = crate::ui::preparation_leave_label(view.role);
+    let strings = crate::ui::tr(ui);
+    let label = crate::ui::preparation_leave_label(strings, view.role);
     let compact = rect.width() < 520.0;
     let back = kit::Button::new(kit::Kind::Ghost, label)
         .glyph(Glyph::ChevronLeft)
@@ -107,7 +112,7 @@ pub(super) fn top_bar(
             crate::ui::request_leave(view, inputs, actions);
         }
     });
-    let status = peer_status(view);
+    let status = peer_status(crate::ui::tr(ui), view);
     let limit = PRESENCE_MAX.min(rect.width() * 0.5);
     let width = presence_width(ui, &status).min(limit);
     let presence_rect = egui::Rect::from_center_size(
@@ -146,7 +151,7 @@ pub(super) fn top_bar(
                     view.file
                         .as_deref()
                         .map(crate::ui::media_title)
-                        .unwrap_or("Seu filme, juntos"),
+                        .unwrap_or(crate::ui::tr(ui).player.movie_together),
                 )
                 .size(15.0)
                 .color(Color32::WHITE),
@@ -207,7 +212,7 @@ fn presence(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.trim_end())
     });
     let response = response
-        .on_hover_text("Detalhes da sala")
+        .on_hover_text(crate::ui::tr(ui).player.room_details)
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     let hover =
         ui.ctx()

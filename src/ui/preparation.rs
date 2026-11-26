@@ -1,8 +1,9 @@
 use super::{
-    Palette, copies, feedback, kit, title,
+    Palette, copies, feedback, kit, title, tr,
     visuals::{self, Presence},
 };
 use crate::{
+    i18n::Strings,
     protocol::Control,
     runtime::{Command, Role, View},
 };
@@ -49,8 +50,10 @@ struct Readiness {
     main: Main,
 }
 
-fn peer_name(view: &View) -> &str {
-    view.peer_name.as_deref().unwrap_or("a outra pessoa")
+fn peer_name<'a>(t: &'static Strings, view: &'a View) -> &'a str {
+    view.peer_name
+        .as_deref()
+        .unwrap_or(t.common.other_person_object)
 }
 
 pub(super) fn mismatch(view: &View) -> bool {
@@ -72,95 +75,84 @@ fn start_enabled(view: &View) -> bool {
                 && !view.player.blocked)
 }
 
-fn readiness(view: &View) -> Readiness {
+fn readiness(strings: &'static Strings, view: &View) -> Readiness {
+    let t = &strings.preparation;
     let waiting = |note: &str, tone, button: &str| Readiness {
         note: note.into(),
         tone,
         main: Main::Waiting(button.into()),
     };
     if let Some(error) = &view.error {
-        return waiting(error, Tone::Error, "Começar a assistir");
+        return waiting(error, Tone::Error, t.start_watching);
     }
     if view.preparing || view.scheduled {
         return Readiness {
-            note: "Preparando a reprodução…".into(),
+            note: strings.common.preparing_playback.into(),
             tone: Tone::Busy,
             main: Main::Cancel,
         };
     }
     if view.loading {
         return if view.pending_file.is_some() {
-            waiting(
-                "Conferindo o conteúdo do seu arquivo…",
-                Tone::Busy,
-                "Conferindo seu arquivo…",
-            )
+            waiting(t.checking_your_file_note, Tone::Busy, t.checking_your_file)
         } else {
-            waiting(
-                "A janela de seleção está aberta neste PC.",
-                Tone::Muted,
-                "Escolha seu arquivo para começar",
-            )
+            waiting(t.picker_open, Tone::Muted, t.choose_to_start)
         };
     }
     if view.file.is_none() {
         return waiting(
             if view.role == Role::Local {
-                "Escolha um arquivo de vídeo neste PC."
+                t.choose_video_here
             } else {
                 ""
             },
             Tone::Muted,
-            "Escolha seu arquivo para começar",
+            t.choose_to_start,
         );
     }
     if view.ready && !view.player.blocked && !view.peer_blocked {
         return Readiness {
-            note: "Os arquivos são iguais.".into(),
+            note: strings.common.files_match.into(),
             tone: Tone::Success,
             main: Main::Start,
         };
     }
     if view.role != Role::Local {
-        let peer = peer_name(view);
+        let peer = peer_name(strings, view);
         if view.peer_loading {
             return Readiness {
-                note: format!("O arquivo de {peer} está sendo conferido…"),
+                note: (t.peer_checking)(peer),
                 tone: Tone::Busy,
-                main: Main::Waiting(format!("Esperando o arquivo de {peer}")),
+                main: Main::Waiting((t.waiting_peer_file)(peer)),
             };
         }
         if view.peer_file.is_none() && !view.peer_ready {
             return Readiness {
-                note: format!("Falta o arquivo de {peer}."),
+                note: (t.peer_missing)(peer),
                 tone: Tone::Muted,
-                main: Main::Waiting(format!("Esperando o arquivo de {peer}")),
+                main: Main::Waiting((t.waiting_peer_file)(peer)),
             };
         }
         if mismatch(view) {
             return Readiness {
-                note: "Escolham arquivos com o mesmo conteúdo.".into(),
+                note: t.pick_same_content.into(),
                 tone: Tone::Warning,
                 main: Main::Change,
             };
         }
     }
     if view.buffering || view.peer_buffering {
-        return waiting("Carregando vídeo para iniciar…", Tone::Busy, "Carregando…");
+        return waiting(t.loading_to_start, Tone::Busy, strings.common.loading);
     }
     if view.player.blocked || view.peer_blocked {
-        return waiting(
-            "Se a espera continuar, selecione o arquivo novamente.",
-            Tone::Warning,
-            "Aguardando o player",
-        );
+        return waiting(t.reselect_if_waiting, Tone::Warning, t.waiting_player);
     }
     if start_enabled(view) {
         return Readiness {
             note: if view.role == Role::Local {
-                "Seu filme está pronto."
+                t.movie_ready
             } else {
-                "Os arquivos são iguais."
+                strings.common.files_match
             }
             .into(),
             tone: Tone::Success,
@@ -168,34 +160,31 @@ fn readiness(view: &View) -> Readiness {
         };
     }
     if view.matched && view.player.loaded && view.peer_ready {
-        return waiting(
-            "Os arquivos são iguais. Aguardando a conexão estabilizar para liberar o play.",
-            Tone::Success,
-            "Preparando a conexão…",
-        );
+        return waiting(t.stabilizing, Tone::Success, t.preparing_connection);
     }
-    waiting("Preparando os arquivos…", Tone::Busy, "Preparando…")
+    waiting(t.preparing_files, Tone::Busy, t.preparing)
 }
 
-fn heading(view: &View) -> &'static str {
+fn heading(strings: &'static Strings, view: &View) -> &'static str {
+    let t = &strings.preparation;
     if start_enabled(view) {
         if view.role == Role::Local {
-            "Tudo pronto"
+            t.all_set
         } else {
-            "Vocês têm o mesmo filme"
+            t.same_movie
         }
     } else if view.error.is_some() || (view.player.blocked && !view.buffering) {
-        "O filme não abriu"
+        t.did_not_open
     } else if mismatch(view) {
-        "As cópias são diferentes"
+        t.copies_differ
     } else if view.loading && view.pending_file.is_some() || view.peer_loading {
-        "Conferindo as cópias"
+        t.checking_copies
     } else if compare(view) == Compare::Same {
-        "Quase pronto"
+        t.almost_ready
     } else if view.role == Role::Local {
-        "Escolha o filme"
+        t.choose_movie
     } else {
-        "Escolham o mesmo filme"
+        t.choose_same_movie
     }
 }
 
@@ -238,7 +227,8 @@ fn note(ui: &mut egui::Ui, colors: Palette, text: &str, tone: Tone) {
 }
 
 pub(super) fn action(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
-    let state = readiness(view);
+    let t = &tr(ui).preparation;
+    let state = readiness(tr(ui), view);
     ui.vertical_centered(|ui| {
         if !state.note.is_empty() {
             note(ui, colors, &state.note, state.tone);
@@ -247,11 +237,11 @@ pub(super) fn action(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &
     });
     ui.vertical_centered(|ui| {
         let button = match &state.main {
-            Main::Start => kit::Button::new(kit::Kind::Primary, "Começar a assistir")
+            Main::Start => kit::Button::new(kit::Kind::Primary, t.start_watching)
                 .trailing(kit::Glyph::ArrowRight),
-            Main::Cancel => kit::Button::new(kit::Kind::Secondary, "Cancelar início"),
+            Main::Cancel => kit::Button::new(kit::Kind::Secondary, t.cancel_start),
             Main::Change => {
-                kit::Button::new(kit::Kind::Primary, "Trocar meu arquivo").glyph(kit::Glyph::Folder)
+                kit::Button::new(kit::Kind::Primary, t.change_my_file).glyph(kit::Glyph::Folder)
             }
             Main::Waiting(label) => kit::Button::new(kit::Kind::Primary, label).enabled(false),
         };
@@ -315,7 +305,7 @@ pub(super) fn draw(
     }
     let size = (window.width() * 0.03).clamp(if compact { 24.0 } else { 28.0 }, 38.0);
     ui.vertical_centered(|ui| {
-        ui.label(title(heading(view), size));
+        ui.label(title(heading(tr(ui), view), size));
     });
     ui.add_space(if compact { 8.0 } else { 20.0 });
     copies::pair(ui, colors, view, actions);
@@ -333,6 +323,7 @@ pub(super) fn draw(
 }
 
 pub(super) fn room(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mut Vec<Command>) {
+    let strings = tr(ui);
     let window = ui.ctx().content_rect();
     let compact = window.height() < 560.0;
     if let Some(request) = &view.join_request {
@@ -351,9 +342,9 @@ pub(super) fn room(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mu
         ui.add_space(if compact { 10.0 } else { 30.0 });
         ui.label(
             RichText::new(if view.internet {
-                "Envie este código"
+                strings.preparation.send_code
             } else {
-                "Envie este endereço"
+                strings.preparation.send_address
             })
             .size(16.0)
             .color(colors.muted),
@@ -364,14 +355,20 @@ pub(super) fn room(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mu
         } else {
             for address in super::room_addresses(view) {
                 ui.push_id(address, |ui| {
-                    invite(ui, colors, &address.to_string(), "Copiar endereço", compact)
+                    invite(
+                        ui,
+                        colors,
+                        &address.to_string(),
+                        strings.common.copy_address,
+                        compact,
+                    )
                 });
             }
         }
         if view.relay_offline {
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Sem contato com o servidor. Tentando de novo…")
+                RichText::new(strings.common.relay_offline)
                     .size(13.0)
                     .color(colors.warning),
             );
@@ -406,6 +403,7 @@ pub(super) fn copyable(
     accessible: &str,
     text: impl Fn(Color32) -> RichText,
 ) {
+    let t = tr(ui);
     let id = ui.id().with(("copyable", value));
     let now = ui.input(|i| i.time);
     let elapsed = ui
@@ -445,9 +443,9 @@ pub(super) fn copyable(
                     kit::Glyph::Copy
                 }),
                 if copied {
-                    "Copiado"
+                    t.common.copied
                 } else {
-                    "Clique para copiar"
+                    t.preparation.click_to_copy
                 },
                 colors.muted,
             );
@@ -497,13 +495,16 @@ fn copied_flash(ui: &egui::Ui, colors: Palette, rect: egui::Rect, elapsed: f32, 
     let x = rect.left() + 20.0 - 6.0 * (1.0 - flash);
     let room = bounds.right() - (rect.left() + 20.0);
     let font = egui::FontId::proportional(13.0);
-    let label = ["Nome copiado", "Copiado"].into_iter().find(|label| {
-        painter
-            .layout_no_wrap((*label).to_owned(), font.clone(), ink)
-            .size()
-            .x
-            <= room
-    });
+    let t = tr(ui);
+    let label = [t.preparation.name_copied, t.common.copied]
+        .into_iter()
+        .find(|label| {
+            painter
+                .layout_no_wrap((*label).to_owned(), font.clone(), ink)
+                .size()
+                .x
+                <= room
+        });
     if let Some(label) = label {
         painter.text(
             egui::pos2(x, rect.center().y),
@@ -516,15 +517,16 @@ fn copied_flash(ui: &egui::Ui, colors: Palette, rect: egui::Rect, elapsed: f32, 
 }
 
 fn invite_code(ui: &mut egui::Ui, colors: Palette, view: &View, compact: bool) {
+    let t = tr(ui);
     match &view.room_code {
-        Some(code) => invite(ui, colors, code, "Copiar código", compact),
+        Some(code) => invite(ui, colors, code, t.common.copy_code, compact),
         None => {
             ui.add_space(12.0);
             kit::centered_row(ui, &[18.0, 140.0], |ui| {
                 kit::status(
                     ui,
                     Some(kit::Glyph::Spinner),
-                    "Gerando o código…",
+                    t.preparation.generating_code,
                     colors.muted,
                 );
             });
@@ -532,11 +534,11 @@ fn invite_code(ui: &mut egui::Ui, colors: Palette, view: &View, compact: bool) {
     }
 }
 
-pub(super) fn leave_label(role: Role) -> &'static str {
+pub(super) fn leave_label(t: &'static Strings, role: Role) -> &'static str {
     match role {
-        Role::Host => "Encerrar sala",
-        Role::Guest => "Sair da sala",
-        Role::Local => "Voltar ao início",
+        Role::Host => t.room.end_room,
+        Role::Guest => t.room.leave_room,
+        Role::Local => t.room.back_home,
     }
 }
 
@@ -560,7 +562,7 @@ pub(super) fn copy_button_with(
         .is_some_and(|until| until > now);
     if kit::Button::new(
         if copied { kit::Kind::Secondary } else { kind },
-        if copied { "Copiado" } else { label },
+        if copied { tr(ui).common.copied } else { label },
     )
     .glyph(if copied {
         kit::Glyph::Check

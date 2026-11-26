@@ -173,7 +173,15 @@ principais claras e um único tom de alerta, sem gradientes decorativos. O tema
 claro inverte os mesmos neutros. A tipografia é Geist, com Geist Mono em códigos,
 nomes de arquivo e tempos, incorporada ao executável. Os dois temas
 ficam no menu **Configurações**, aberto pelo ícone de engrenagem no cabeçalho,
-inclusive durante a conexão; o menu também reúne as opções avançadas de rede e os atalhos.
+inclusive durante a conexão; o menu também reúne o idioma, as opções avançadas de rede e os atalhos.
+O idioma (português do Brasil ou inglês) muda a interface na hora e fica salvo em
+`preferences.json`, na pasta de configuração do sistema (`~/.config/sync2gether`
+no Linux, `~/Library/Application Support/sync2gether` no macOS e
+`%APPDATA%\sync2gether` no Windows). Sem preferência salva, o app usa o idioma
+do sistema, com inglês para idiomas sem tradução. `--lang en` ou `--lang pt-BR`
+(ou `SYNC2GETHER_LANG`) escolhe o idioma só para aquela execução. As palavras
+do código da sala vêm de uma lista única, em português, para que um código
+criado em qualquer idioma funcione no outro.
 O cabeçalho permanece visível ao rolar o conteúdo. Os controles
 do player usam ícones com dicas e nomes acessíveis para play/pause, saltos de
 10 segundos, volume, áudio/legendas e tela cheia. Em janelas com 860 pixels ou

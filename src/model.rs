@@ -43,26 +43,27 @@ impl SessionState {
         Self::RoomClosed,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self, t: &'static crate::i18n::Strings) -> &'static str {
+        let t = &t.states;
         match self {
-            Self::Idle => "Sem sessão",
-            Self::JoinCode => "Entrar com código",
-            Self::Browsing => "Lista de salas",
-            Self::Connecting => "Conectando à sala",
-            Self::PendingApproval => "Aguardando aprovação",
-            Self::Approval => "Solicitação de entrada",
-            Self::Choosing => "Escolhendo arquivos",
-            Self::Verifying => "Verificando arquivos",
-            Self::Mismatch => "Arquivos diferentes",
-            Self::Stabilizing => "Estabilizando conexão",
-            Self::PlayerError => "Erro no player",
-            Self::Ready => "Prontos",
-            Self::Waiting => "Esperando parceiro",
-            Self::Synchronized => "Sincronizados",
-            Self::Paused => "Pausado",
-            Self::Reconnecting => "Reconectando",
-            Self::PeerLeft => "Parceiro saiu",
-            Self::RoomClosed => "Sala encerrada",
+            Self::Idle => t.idle,
+            Self::JoinCode => t.join_code,
+            Self::Browsing => t.browsing,
+            Self::Connecting => t.connecting,
+            Self::PendingApproval => t.pending_approval,
+            Self::Approval => t.approval,
+            Self::Choosing => t.choosing,
+            Self::Verifying => t.verifying,
+            Self::Mismatch => t.mismatch,
+            Self::Stabilizing => t.stabilizing,
+            Self::PlayerError => t.player_error,
+            Self::Ready => t.ready,
+            Self::Waiting => t.waiting,
+            Self::Synchronized => t.synchronized,
+            Self::Paused => t.paused,
+            Self::Reconnecting => t.reconnecting,
+            Self::PeerLeft => t.peer_left,
+            Self::RoomClosed => t.room_closed,
         }
     }
 }

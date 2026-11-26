@@ -29,7 +29,8 @@ pub(super) struct GuestSession {
 
 impl Drop for GuestSession {
     fn drop(&mut self) {
-        self.cache.close_with_error("Streaming encerrado".into());
+        self.cache
+            .close_with_error(crate::i18n::text().stream_errors.ended.into());
     }
 }
 
@@ -251,7 +252,9 @@ impl Worker {
                             let _ = tx
                                 .send(StreamPrepResult::Failed {
                                     id,
-                                    error: format!("Não foi possível iniciar streaming P2P: {err}"),
+                                    error: (crate::i18n::text().stream_errors.start_failed)(
+                                        &err.to_string(),
+                                    ),
                                 })
                                 .await;
                         }
@@ -349,7 +352,9 @@ impl Worker {
                     let _ = prep_tx
                         .send(StreamPrepResult::Failed {
                             id,
-                            error: format!("Não foi possível aceitar streaming P2P: {err}"),
+                            error: (crate::i18n::text().stream_errors.accept_failed)(
+                                &err.to_string(),
+                            ),
                         })
                         .await;
                 }
@@ -413,8 +418,10 @@ impl Worker {
         if let Some(since) = self.stream_waiting_since
             && since.elapsed() >= NEGOTIATION_TIMEOUT
         {
-            let error =
-                "O parceiro não respondeu à negociação de streaming P2P a tempo.".to_owned();
+            let error = crate::i18n::text()
+                .stream_errors
+                .negotiation_timeout
+                .to_owned();
             if self.view.role == Role::Guest && self.guest_stream.is_some() {
                 self.schedule_stream_reconnect(error);
             } else {

@@ -26,7 +26,9 @@ pub fn identify_with_chunks_and_progress(
     let mut file = File::open(path)?;
     let before = file.metadata()?;
     if !before.is_file() {
-        return Err(io::Error::other("Selecione um arquivo regular"));
+        return Err(io::Error::other(
+            crate::i18n::text().errors.not_regular_file,
+        ));
     }
     let mut hasher = blake3::Hasher::new();
     let mut chunk_hashes = Vec::new();
@@ -55,7 +57,7 @@ pub fn identify_with_chunks_and_progress(
         || after.len() != before.len()
         || after.modified()? != before.modified()?
     {
-        return Err(io::Error::other("Arquivo mudou durante a verificação"));
+        return Err(io::Error::other(crate::i18n::text().errors.file_changed));
     }
     let media = Media {
         hash: hasher.finalize().to_hex().to_string(),
@@ -82,7 +84,7 @@ pub fn display_name(path: &Path) -> String {
         name.push(c);
     }
     if name.trim().is_empty() {
-        "Arquivo local".into()
+        crate::i18n::text().errors.local_file.into()
     } else {
         name
     }

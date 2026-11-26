@@ -97,13 +97,13 @@ impl Worker {
             }
         }
         self.view.status = match self.view.role {
-            Role::Local => "Reprodução local".into(),
-            Role::Host if !self.view.connected => "Sala aberta, aguardando parceiro".into(),
-            Role::Guest if self.view.waiting_approval => "Aguardando aprovação do anfitrião".into(),
-            Role::Guest if !self.view.connected => {
-                "Conectando ou reconectando, reprodução pausada".into()
+            Role::Local => crate::i18n::text().common.local_playback.into(),
+            Role::Host if !self.view.connected => crate::i18n::text().status.room_open.into(),
+            Role::Guest if self.view.waiting_approval => {
+                crate::i18n::text().status.awaiting_host.into()
             }
-            _ if self.view.loading => "Verificando o arquivo".into(),
+            Role::Guest if !self.view.connected => crate::i18n::text().status.connecting.into(),
+            _ if self.view.loading => crate::i18n::text().status.verifying.into(),
             _ if matches!(
                 self.view.stream.phase,
                 crate::stream::StreamPhase::Offering
@@ -111,7 +111,7 @@ impl Worker {
                     | crate::stream::StreamPhase::Probing
             ) =>
             {
-                "Conectando streaming P2P direto".into()
+                crate::i18n::text().status.stream_connecting.into()
             }
             _ if self.view.stream.phase == crate::stream::StreamPhase::Reconnecting
                 || self
@@ -120,19 +120,19 @@ impl Worker {
                     .as_ref()
                     .is_some_and(|s| s.reconnecting) =>
             {
-                "Reconectando streaming P2P".into()
+                crate::i18n::text().status.stream_reconnecting.into()
             }
             _ if self.view.buffering || self.view.peer_buffering || self.view.waiting_buffer => {
-                "Carregando vídeo".into()
+                crate::i18n::text().status.loading.into()
             }
-            _ if self.view.preparing => "Preparando os dois players na mesma posição".into(),
-            _ if self.view.scheduled => "Início agendado, aguardando o horário comum".into(),
+            _ if self.view.preparing => crate::i18n::text().status.preparing.into(),
+            _ if self.view.scheduled => crate::i18n::text().status.scheduled.into(),
             _ if !self.view.matched && self.presence.media.is_some() && self.view.peer_ready => {
-                "Os arquivos são diferentes".into()
+                crate::i18n::text().status.different.into()
             }
-            _ if !self.view.ready => "Aguardando os players e a medição da conexão".into(),
-            _ if self.view.player.paused => "Sessão pausada".into(),
-            _ => "Assistindo juntos".into(),
+            _ if !self.view.ready => crate::i18n::text().status.waiting.into(),
+            _ if self.view.player.paused => crate::i18n::text().status.paused.into(),
+            _ => crate::i18n::text().status.watching.into(),
         };
     }
 }

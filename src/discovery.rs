@@ -20,7 +20,7 @@ pub struct Room {
 pub fn device_name(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_control()).take(64).collect();
     if name.trim().is_empty() {
-        "Outro computador".into()
+        crate::i18n::text().errors.other_computer.into()
     } else {
         name
     }
@@ -122,9 +122,7 @@ impl Lan {
             }
         }
         if senders.is_empty() {
-            return Err(io::Error::other(
-                "Nenhuma interface disponível para descoberta.",
-            ));
+            return Err(io::Error::other(crate::i18n::text().errors.no_interface));
         }
         let receiver = UdpSocket::from_std(socket.into())?;
         let port = receiver.local_addr()?.port();
@@ -277,6 +275,9 @@ mod tests {
             "invalid packets must never cause TCP probes"
         );
         assert_eq!(device_name("a\nb"), "ab");
-        assert_eq!(device_name("\n\t"), "Outro computador");
+        assert_eq!(
+            device_name("\n\t"),
+            crate::i18n::text().errors.other_computer
+        );
     }
 }

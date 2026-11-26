@@ -94,6 +94,16 @@ vídeo, GPU ou sincronização entre PCs.
 - `ui/preparation.rs` reúne os arquivos locais e remotos numa lista, com menus
   de nome completo e cópia. Seleção, cancelamento da verificação, aprovação e
   início continuam retornando comandos ao runtime; a UI não lê mídia.
+- `i18n.rs` define os idiomas e a tabela de textos (`i18n/strings.rs`), com uma
+  instância estática por idioma em `i18n/en.rs` e `i18n/pt_br.rs`; o compilador
+  exige que todo idioma tenha todos os textos. A UI lê o idioma do contexto egui
+  (`ui::configure_language`), como o tema. Mensagens criadas fora da UI (status,
+  erros do runtime, da rede, do streaming e do player) usam o idioma do processo
+  (`i18n::set`), que o runtime atualiza ao receber `Command::SetLanguage`; uma
+  mensagem já exibida mantém o idioma em que foi criada até ser substituída.
+- `preferences.rs` lê e grava `preferences.json` (idioma). A leitura ocorre uma
+  vez antes da janela; a gravação roda em `spawn_blocking` no runtime. O modo
+  demo não lê preferências.
 - `media.rs` identifica arquivos sem compartilhar caminhos locais.
 - `discovery.rs` anuncia e encontra salas por UDP nas interfaces IPv4 e confirma
   os candidatos por TCP, em segundo plano.

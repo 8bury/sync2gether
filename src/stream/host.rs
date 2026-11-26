@@ -102,15 +102,15 @@ async fn run_host(
     let remote_candidates =
         nat::filter_remote_candidates(&answer.candidates, !pending.stun_enabled);
     if remote_candidates.is_empty() {
-        return Err("Parceiro não enviou endereços P2P válidos.".into());
+        return Err(crate::i18n::text().stream_errors.peer_no_addresses.into());
     }
 
     let punch_sock = pending
         .socket
         .try_clone()
-        .map_err(|_| "Falha ao preparar socket UDP para streaming.".to_owned())?;
+        .map_err(|_| crate::i18n::text().stream_errors.udp_prepare.to_owned())?;
     let server_config = tls::server_config(&pending.identity, &answer.cert_fingerprint)
-        .map_err(|e| format!("Falha ao configurar TLS P2P: {e}"))?;
+        .map_err(|e| (crate::i18n::text().stream_errors.tls_host)(&e.to_string()))?;
 
     let endpoint = quinn::Endpoint::new(
         quinn::EndpointConfig::default(),
@@ -118,7 +118,7 @@ async fn run_host(
         pending.socket,
         Arc::new(quinn::TokioRuntime),
     )
-    .map_err(|e| format!("Falha ao abrir endpoint QUIC: {e}"))?;
+    .map_err(|e| (crate::i18n::text().stream_errors.quic_endpoint)(&e.to_string()))?;
     let _endpoint_guard = EndpointGuard(endpoint.clone());
 
     let file_bitrate = file_bitrate_bps(pending.index.file_size, pending.duration);
@@ -152,7 +152,7 @@ async fn run_host(
     let peer_addr = conn.remote_address();
     let file = Arc::new(
         File::open(&pending.path)
-            .map_err(|_| "Não foi possível abrir o arquivo para streaming.".to_owned())?,
+            .map_err(|_| crate::i18n::text().stream_errors.open_file.to_owned())?,
     );
     let hash_table = Arc::new(pending.index.serialize_hashes());
     let bytes_sent = Arc::new(AtomicU64::new(0));
@@ -274,10 +274,7 @@ async fn accept_authenticated(
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
             handshakes.abort_all();
-            return Err(
-                "Não foi possível abrir túnel P2P direto (NAT restrito). Tente na rede local, IPv6 ou VPN."
-                    .into(),
-            );
+            return Err(crate::i18n::text().stream_errors.host_nat.into());
         }
         tokio::select! {
             incoming = tokio::time::timeout(remaining, endpoint.accept()) => {
@@ -291,12 +288,12 @@ async fn accept_authenticated(
                     }
                     Ok(None) => {
                         handshakes.abort_all();
-                        return Err("Endpoint QUIC encerrado antes da conexão.".into());
+                        return Err(crate::i18n::text().stream_errors.endpoint_closed.into());
                     }
                     Err(_) => {
                         handshakes.abort_all();
                         return Err(
-                            "Não foi possível abrir túnel P2P direto (NAT restrito). Tente na rede local, IPv6 ou VPN."
+                            crate::i18n::text().stream_errors.host_nat
                                 .into(),
                         );
                     }

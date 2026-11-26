@@ -1,5 +1,5 @@
 use super::{
-    Inputs, Palette, feedback, kit, strong, title,
+    Inputs, Palette, feedback, kit, strong, title, tr,
     visuals::{self, Presence},
 };
 use crate::runtime::{Command, View};
@@ -12,10 +12,11 @@ pub(super) fn browse(
     inputs: &mut Inputs,
     actions: &mut Vec<Command>,
 ) {
+    let t = tr(ui);
     ui.horizontal(|ui| {
-        ui.label(title("Salas disponíveis", 30.0));
+        ui.label(title(t.browse.available_rooms, 30.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if kit::Button::new(kit::Kind::Ghost, "Atualizar salas")
+            if kit::Button::new(kit::Kind::Ghost, t.common.refresh_rooms)
                 .glyph(kit::Glyph::Refresh)
                 .busy(view.searching)
                 .size(kit::Size::Small)
@@ -51,19 +52,20 @@ pub(super) fn browse(
 }
 
 fn empty_rooms(ui: &mut egui::Ui, colors: Palette, view: &View) {
+    let t = &tr(ui).browse;
     kit::rule(ui, colors);
     ui.add_space(22.0);
     ui.vertical_centered(|ui| {
         ui.spacing_mut().item_spacing.y = 10.0;
         if view.searching {
             visuals::pair(ui, colors, Presence::Waiting, 22.0);
-            ui.label(RichText::new("Procurando salas…").color(colors.muted));
+            ui.label(RichText::new(t.searching).color(colors.muted));
         } else if let Some(error) = &view.discovery_error {
             visuals::pair(ui, colors, Presence::Apart, 22.0);
             ui.add(egui::Label::new(RichText::new(error).color(colors.muted)).wrap());
         } else {
             visuals::pair(ui, colors, Presence::Solo, 22.0);
-            ui.label(RichText::new("Nenhuma sala encontrada").color(colors.muted));
+            ui.label(RichText::new(t.no_rooms).color(colors.muted));
         }
     });
     ui.add_space(22.0);
@@ -75,13 +77,11 @@ fn manual_address(
     inputs: &mut Inputs,
     actions: &mut Vec<Command>,
 ) {
+    let strings = tr(ui);
+    let t = &strings.browse;
     ui.spacing_mut().item_spacing.y = 6.0;
-    ui.label(strong(ui, "Conectar por endereço").size(15.0));
-    let address_label = ui.label(
-        RichText::new("Endereço do anfitrião")
-            .small()
-            .color(colors.muted),
-    );
+    ui.label(strong(ui, t.connect_by_address).size(15.0));
+    let address_label = ui.label(RichText::new(t.host_address).small().color(colors.muted));
     ui.add_space(2.0);
     let wide = ui.available_width() >= 460.0;
     ui.allocate_ui_with_layout(
@@ -99,7 +99,7 @@ fn manual_address(
                 } else {
                     kit::Kind::Secondary
                 },
-                "Solicitar entrada",
+                strings.common.request_join,
             )
             .size(kit::Size::Medium);
             let field_width = if wide {
@@ -121,7 +121,7 @@ fn manual_address(
                         .margin(egui::vec2(12.0, 11.0)),
                 )
                 .labelled_by(address_label.id)
-                .on_hover_text("Endereço do anfitrião: IP ou IP:porta");
+                .on_hover_text(t.host_address_hint);
             let valid = crate::runtime::parse_address(&inputs.address).is_ok();
             let button = if wide { button } else { button.fill_width(ui) };
             if button.enabled(valid).show(ui, colors).clicked()
@@ -135,7 +135,7 @@ fn manual_address(
     {
         ui.add(
             egui::Label::new(
-                RichText::new("Informe um IP, como 192.168.1.10 ou 192.168.1.10:7842.")
+                RichText::new(t.invalid_address)
                     .small()
                     .color(colors.warning),
             )
@@ -150,6 +150,7 @@ fn room_row(
     room: &crate::discovery::Room,
     actions: &mut Vec<Command>,
 ) {
+    let t = tr(ui);
     let wide = ui.available_width() >= 420.0;
     let top = ui.cursor().top();
     ui.painter().hline(
@@ -162,7 +163,7 @@ fn room_row(
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             let button = || {
-                kit::Button::new(kit::Kind::Primary, "Solicitar entrada").size(kit::Size::Medium)
+                kit::Button::new(kit::Kind::Primary, t.common.request_join).size(kit::Size::Medium)
             };
             let mut clicked = false;
             ui.horizontal(|ui| {
@@ -180,8 +181,7 @@ fn room_row(
                         ui.set_min_width(name_width);
                         ui.spacing_mut().item_spacing.y = 2.0;
                         ui.add(
-                            egui::Label::new(strong(ui, format!("Sala de {}", room.name)))
-                                .truncate(),
+                            egui::Label::new(strong(ui, (t.common.room_of)(&room.name))).truncate(),
                         )
                         .on_hover_text(&room.name);
                         ui.label(
@@ -211,6 +211,8 @@ pub(super) fn connecting(
     view: &View,
     actions: &mut Vec<Command>,
 ) {
+    let strings = tr(ui);
+    let t = &strings.browse;
     let compact = ui.ctx().content_rect().height() < 560.0;
     let failed = view.error.is_some();
     ui.vertical_centered(|ui| {
@@ -228,11 +230,11 @@ pub(super) fn connecting(
         ui.add_space(if compact { 12.0 } else { 26.0 });
         ui.label(title(
             if failed {
-                "Não foi possível conectar"
+                t.could_not_connect
             } else if view.waiting_approval {
-                "Aguardando aprovação"
+                strings.common.waiting_approval
             } else {
-                "Conectando à sala…"
+                t.connecting_room
             },
             if compact { 24.0 } else { 30.0 },
         ));
@@ -244,14 +246,14 @@ pub(super) fn connecting(
             let name = view
                 .peer_name
                 .as_ref()
-                .map(|name| format!("Sala de {name}"))
-                .unwrap_or_else(|| "Sala do anfitrião".into());
+                .map(|name| (strings.common.room_of)(name))
+                .unwrap_or_else(|| t.host_room.into());
             ui.add(egui::Label::new(strong(ui, name).size(15.0)).truncate());
             ui.label(
                 RichText::new(if view.waiting_approval {
-                    "Solicitação enviada"
+                    t.request_sent
                 } else {
-                    "Conexão pendente"
+                    t.connection_pending
                 })
                 .size(13.0)
                 .color(colors.faint),
@@ -260,18 +262,18 @@ pub(super) fn connecting(
             if failed {
                 feedback(ui, view);
             } else if view.waiting_approval {
-                step(ui, colors, true, "Anfitrião encontrado");
-                step(ui, colors, false, "Aguardando aprovação");
+                step(ui, colors, true, t.host_found);
+                step(ui, colors, false, strings.common.waiting_approval);
             } else if view.internet {
-                step(ui, colors, false, "Conectando pela internet…");
+                step(ui, colors, false, t.connecting_internet);
             } else {
-                step(ui, colors, false, "Conectando ao anfitrião…");
+                step(ui, colors, false, t.connecting_host);
             }
         });
         ui.add_space(if compact { 8.0 } else { 14.0 });
         kit::rule(ui, colors);
         ui.add_space(if compact { 10.0 } else { 22.0 });
-        if kit::Button::new(kit::Kind::Secondary, "Cancelar solicitação")
+        if kit::Button::new(kit::Kind::Secondary, t.cancel_request)
             .size(kit::Size::Medium)
             .show(ui, colors)
             .clicked()

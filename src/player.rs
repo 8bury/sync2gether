@@ -197,15 +197,15 @@ fn libmpv_candidates() -> Vec<OsString> {
 fn missing_libmpv_message() -> &'static str {
     #[cfg(target_os = "windows")]
     {
-        "libmpv não encontrada. Confira se libmpv-2.dll está na mesma pasta do sync2gether.exe."
+        crate::i18n::text().player_errors.libmpv_missing_windows
     }
     #[cfg(target_os = "macos")]
     {
-        "libmpv não encontrada. Reinstale o app ou instale mpv com Homebrew (brew install mpv)."
+        crate::i18n::text().player_errors.libmpv_missing_macos
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        "libmpv não encontrada. Instale mpv no Arch ou libmpv2 no Ubuntu."
+        crate::i18n::text().player_errors.libmpv_missing_linux
     }
 }
 
@@ -243,9 +243,12 @@ impl Api {
                 .ok_or_else(|| missing_libmpv_message().to_owned())?;
             macro_rules! symbol {
                 ($name:literal) => {
-                    *library
-                        .get(concat!($name, "\0").as_bytes())
-                        .map_err(|_| "libmpv incompatível".to_owned())?
+                    *library.get(concat!($name, "\0").as_bytes()).map_err(|_| {
+                        crate::i18n::text()
+                            .player_errors
+                            .libmpv_incompatible
+                            .to_owned()
+                    })?
                 };
             }
             Ok(Arc::new(Self {
@@ -269,12 +272,17 @@ impl Api {
     }
     fn command(&self, handle: *mut c_void, args: &[&str]) -> Result<(), String> {
         let strings: Result<Vec<_>, _> = args.iter().map(|s| CString::new(*s)).collect();
-        let strings = strings.map_err(|_| "Argumento inválido para o player".to_owned())?;
+        let strings = strings.map_err(|_| {
+            crate::i18n::text()
+                .player_errors
+                .invalid_argument
+                .to_owned()
+        })?;
         let mut pointers: Vec<_> = strings.iter().map(|s| s.as_ptr()).collect();
         pointers.push(std::ptr::null());
         // SAFETY: argumentos terminados em NUL permanecem vivos durante a chamada.
         if unsafe { (self.command)(handle, pointers.as_ptr()) } < 0 {
-            Err("O player recusou o comando".into())
+            Err(crate::i18n::text().player_errors.command_refused.into())
         } else {
             Ok(())
         }
@@ -324,7 +332,10 @@ fn renderer(
             Param::end(),
         ];
         if (api.render_create)(&mut context, handle as *mut c_void, params.as_mut_ptr()) < 0 {
-            let _ = ready.send(Err("Não foi possível criar o renderizador libmpv".into()));
+            let _ = ready.send(Err(crate::i18n::text()
+                .player_errors
+                .renderer_create
+                .into()));
             return;
         }
         let changed = Arc::new(AtomicBool::new(true));
@@ -343,7 +354,9 @@ fn renderer(
                     Param::end(),
                 ];
                 if (api.render)(context, params.as_mut_ptr()) < 0 {
-                    let _ = events.try_send(Event::Unavailable("Erro ao desenhar vídeo".into()));
+                    let _ = events.try_send(Event::Unavailable(
+                        crate::i18n::text().player_errors.draw_video.into(),
+                    ));
                     break;
                 }
                 let mut bytes = Vec::with_capacity(WIDTH * HEIGHT * 4);
@@ -440,7 +453,7 @@ fn run(
     // render. Destruímos o renderer antes de terminar o handle.
     let handle = unsafe { (api.create)() };
     if handle.is_null() {
-        return Err("Não foi possível iniciar libmpv".into());
+        return Err(crate::i18n::text().player_errors.start.into());
     }
     let core = Arc::new(Core {
         api: api.clone(),
@@ -460,13 +473,13 @@ fn run(
         ] {
             // SAFETY: strings C estáticas, handle válido.
             if unsafe { (api.option)(handle, name.as_ptr(), value.as_ptr()) } < 0 {
-                return Err("Erro de configuração libmpv".into());
+                return Err(crate::i18n::text().player_errors.config.into());
             }
         }
         if gl.is_none() {
             // SAFETY: opção C estática, handle válido e ainda não inicializado.
             if unsafe { (api.option)(handle, c"vd-lavc-threads".as_ptr(), c"2".as_ptr()) } < 0 {
-                return Err("Erro de configuração do decoder por software".into());
+                return Err(crate::i18n::text().player_errors.decoder_config.into());
             }
         }
         // SAFETY: função sem argumentos, sem estado compartilhado.
@@ -476,11 +489,11 @@ fn run(
             // SAFETY: opção C estática, handle válido e ainda não inicializado.
             && unsafe { (api.option)(handle, c"fbo-format".as_ptr(), c"rgba16".as_ptr()) } < 0
         {
-            return Err("Erro de configuração do framebuffer compatível".into());
+            return Err(crate::i18n::text().player_errors.framebuffer_config.into());
         }
         // SAFETY: handle criado por mpv_create e inicializado uma única vez.
         if unsafe { (api.initialize)(handle) } < 0 {
-            return Err("Erro ao inicializar libmpv".into());
+            return Err(crate::i18n::text().player_errors.init.into());
         }
         let render = if let Some(bridge) = gl {
             bridge.initialize(core.clone(), events.clone(), &stop)?;
@@ -503,7 +516,7 @@ fn run(
             });
             let initialized = ready_rx
                 .recv()
-                .map_err(|_| "Renderizador encerrou inesperadamente".to_owned())
+                .map_err(|_| crate::i18n::text().player_errors.renderer_ended.to_owned())
                 .and_then(|r| r);
             if let Err(error) = initialized {
                 let _ = render.join();
@@ -532,7 +545,7 @@ fn run(
                             Some(path) => {
                                 api.command(handle, &["loadfile", path.as_ref(), "replace"])
                             }
-                            None => Err("O nome do arquivo não é UTF-8".into()),
+                            None => Err(crate::i18n::text().player_errors.non_utf8.into()),
                         }
                     }
                     Command::LoadUrl(url, id) => {
@@ -632,7 +645,7 @@ fn run(
                     if end.error < 0 {
                         loaded = false;
                         let _ = events.blocking_send(Event::Error(
-                            "Não foi possível reproduzir o arquivo".into(),
+                            crate::i18n::text().player_errors.cannot_play.into(),
                         ));
                     }
                 }

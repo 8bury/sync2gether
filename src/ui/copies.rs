@@ -1,7 +1,7 @@
 use super::{
     Palette, kit,
     preparation::{Compare, Tone, compare, copyable, mismatch},
-    strong,
+    strong, tr,
     visuals::{self, Presence},
 };
 use crate::runtime::{Command, Role, View};
@@ -76,8 +76,13 @@ struct CopyState<'a> {
     streamed: bool,
 }
 
-fn copy_state<'a>(view: &'a View, local: bool) -> CopyState<'a> {
-    let stream_card = super::stream::card_stream_status(view, local);
+fn copy_state<'a>(
+    strings: &'static crate::i18n::Strings,
+    view: &'a View,
+    local: bool,
+) -> CopyState<'a> {
+    let t = &strings.copies;
+    let stream_card = super::stream::card_stream_status(strings, view, local);
     let streamed = stream_card.is_some();
     let name = if local {
         if view.loading {
@@ -122,27 +127,27 @@ fn copy_state<'a>(view: &'a View, local: bool) -> CopyState<'a> {
             super::stream::CardStream::Ready(label) => (label, Tone::Success),
         }
     } else if !local && view.peer_left && !view.connected {
-        ("Saiu da sala".into(), Tone::Muted)
+        (strings.room.left_room.into(), Tone::Muted)
     } else if !local && !view.connected {
-        ("Ainda não entrou na sala".into(), Tone::Muted)
+        (t.not_joined.into(), Tone::Muted)
     } else if loading && name.is_none() {
-        ("Escolhendo arquivo…".into(), Tone::Busy)
+        (t.choosing_file.into(), Tone::Busy)
     } else if loading {
-        ("Conferindo…".into(), Tone::Busy)
+        (t.checking.into(), Tone::Busy)
     } else if buffering {
-        ("Carregando vídeo…".into(), Tone::Busy)
+        (strings.common.loading_video.into(), Tone::Busy)
     } else if blocked {
-        ("Player indisponível".into(), Tone::Warning)
+        (t.player_unavailable.into(), Tone::Warning)
     } else if mismatch(view) {
-        ("Conteúdo diferente".into(), Tone::Warning)
+        (t.different_content.into(), Tone::Warning)
     } else if verified {
-        ("Conferido".into(), Tone::Success)
+        (t.verified.into(), Tone::Success)
     } else if name.is_some() {
-        ("Preparando o player…".into(), Tone::Muted)
+        (t.preparing_player.into(), Tone::Muted)
     } else if !local {
-        ("Aguardando a escolha do filme".into(), Tone::Muted)
+        (t.waiting_choice.into(), Tone::Muted)
     } else {
-        ("Falta escolher".into(), Tone::Muted)
+        (t.not_chosen.into(), Tone::Muted)
     };
     CopyState {
         name,
@@ -162,11 +167,14 @@ fn copy_card(
     local: bool,
     actions: &mut Vec<Command>,
 ) {
-    let state = copy_state(view, local);
+    let strings = tr(ui);
+    let state = copy_state(strings, view, local);
     let who = if local {
-        "Você"
+        strings.copies.you
     } else {
-        view.peer_name.as_deref().unwrap_or("Outra pessoa")
+        view.peer_name
+            .as_deref()
+            .unwrap_or(strings.common.other_person)
     };
     who_row(
         ui,
@@ -255,6 +263,7 @@ fn file_row(
     state: &CopyState<'_>,
     actions: &mut Vec<Command>,
 ) {
+    let t = &tr(ui).copies;
     let builder = egui::UiBuilder::new()
         .max_rect(rect)
         .layout(egui::Layout::left_to_right(egui::Align::Center));
@@ -264,18 +273,18 @@ fn file_row(
             .then(|| {
                 if state.loading && view.pending_file.is_some() {
                     Some(
-                        kit::Button::new(kit::Kind::Ghost, "Cancelar verificação")
+                        kit::Button::new(kit::Kind::Ghost, t.cancel_verification)
                             .size(kit::Size::Small),
                     )
                 } else if !state.loading && state.name.is_some() {
                     Some(
-                        kit::Button::new(kit::Kind::Ghost, "Trocar arquivo")
+                        kit::Button::new(kit::Kind::Ghost, t.change_file)
                             .glyph(kit::Glyph::Refresh)
                             .size(kit::Size::Small),
                     )
                 } else if !state.loading {
                     Some(
-                        kit::Button::new(kit::Kind::Primary, "Escolher arquivo")
+                        kit::Button::new(kit::Kind::Primary, t.choose_file)
                             .glyph(kit::Glyph::Folder)
                             .size(kit::Size::Small),
                     )
@@ -335,15 +344,16 @@ fn file_row(
 }
 
 fn name_label(ui: &mut egui::Ui, colors: Palette, local: bool, state: &CopyState<'_>) {
+    let t = &tr(ui).copies;
     match state.name {
         Some(name) => copyable(
             ui,
             colors,
             name,
             if local {
-                "Copiar nome do seu arquivo"
+                t.copy_your_file_name
             } else {
-                "Copiar nome do arquivo da outra pessoa"
+                t.copy_peer_file_name
             },
             |color| {
                 RichText::new(name)
@@ -354,9 +364,9 @@ fn name_label(ui: &mut egui::Ui, colors: Palette, local: bool, state: &CopyState
         None => {
             ui.label(
                 RichText::new(if state.streamed && !local {
-                    "Recebendo seu filme"
+                    t.receiving_movie
                 } else {
-                    "Nenhum arquivo ainda"
+                    t.no_file_yet
                 })
                 .font(egui::FontId::monospace(12.5))
                 .color(colors.faint),

@@ -23,7 +23,7 @@ struct Hello {
 
 pub async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
     if bytes.is_empty() || bytes.len() > MAX_FRAME {
-        return Err(io::Error::other("Quadro cifrado com tamanho inválido"));
+        return Err(io::Error::other(crate::i18n::text().errors.invalid_frame));
     }
     writer.write_u32(bytes.len() as u32).await?;
     writer.write_all(bytes).await?;
@@ -32,7 +32,7 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) ->
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Vec<u8>> {
     let size = reader.read_u32().await? as usize;
     if size == 0 || size > MAX_FRAME {
-        return Err(io::Error::other("Quadro cifrado com tamanho inválido"));
+        return Err(io::Error::other(crate::i18n::text().errors.invalid_frame));
     }
     let mut bytes = vec![0; size];
     reader.read_exact(&mut bytes).await?;
@@ -40,7 +40,10 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Vec<
 }
 
 fn rejected() -> io::Error {
-    io::Error::new(io::ErrorKind::PermissionDenied, "Chave da sala não confere")
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        crate::i18n::text().errors.key_mismatch,
+    )
 }
 fn noise(error: snow::Error) -> io::Error {
     io::Error::other(error)
@@ -55,9 +58,9 @@ pub fn pake_start(room: &str, password: &str) -> (Spake2<Ed25519Group>, Vec<u8>)
 pub fn pake_finish(state: Spake2<Ed25519Group>, inbound: &[u8]) -> io::Result<Key> {
     let key = state
         .finish(inbound)
-        .map_err(|_| io::Error::other("Mensagem SPAKE2 inválida"))?;
+        .map_err(|_| io::Error::other(crate::i18n::text().errors.invalid_spake))?;
     key.try_into()
-        .map_err(|_| io::Error::other("Chave SPAKE2 com tamanho inesperado"))
+        .map_err(|_| io::Error::other(crate::i18n::text().errors.spake_key_size))
 }
 
 fn builder(psk: &Key) -> io::Result<snow::Builder<'_>> {
@@ -176,7 +179,7 @@ impl<R: AsyncRead + Unpin + Send> Inbound for SecureReader<R> {
         let read = self
             .transport
             .read_message(self.nonce, &frame, &mut plain)
-            .map_err(|_| io::Error::other("Mensagem cifrada inválida"))?;
+            .map_err(|_| io::Error::other(crate::i18n::text().errors.invalid_encrypted))?;
         self.nonce += 1;
         serde_json::from_slice(&plain[..read]).map_err(io::Error::other)
     }
@@ -185,7 +188,9 @@ impl<W: AsyncWrite + Unpin + Send> Outbound for SecureWriter<W> {
     async fn send(&mut self, message: &Message) -> io::Result<()> {
         let plain = serde_json::to_vec(message).map_err(io::Error::other)?;
         if plain.len() > MAX_MESSAGE {
-            return Err(io::Error::other("Mensagem excede o limite"));
+            return Err(io::Error::other(
+                crate::i18n::text().errors.message_too_large,
+            ));
         }
         let mut frame = vec![0; plain.len() + TAG];
         let written = self

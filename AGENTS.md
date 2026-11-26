@@ -37,6 +37,9 @@ funcionalidades reais.
 - `src/session.rs` e `src/sync.rs`: preparação confirmada, início agendado,
   relógio monotônico filtrado e correção de reprodução.
 - `src/media.rs`: identidade dos arquivos locais.
+- `src/i18n.rs` e `src/i18n/`: idiomas e textos visíveis (português do Brasil e
+  inglês). Não escreva textos de interface fora dessa tabela.
+- `src/preferences.rs`: preferências salvas, como o idioma.
 - `prototype/`: protótipo React das telas, feito com o kit Stageshow; referência
   visual para `src/ui`, fora do build do app e sem `node_modules` no Git.
 - `tests/layout.rs`: teste da interface sem janela ou conexão.

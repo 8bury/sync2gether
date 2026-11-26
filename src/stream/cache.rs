@@ -164,7 +164,7 @@ impl ChunkCache {
         if chunk_size == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Tamanho de bloco inválido",
+                crate::i18n::text().stream_errors.invalid_chunk_size,
             ));
         }
         let chunks_total = if file_size == 0 {
@@ -175,7 +175,7 @@ impl ChunkCache {
         if hashes.len() != chunks_total as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Tabela de hashes incompatível com o tamanho do arquivo",
+                crate::i18n::text().stream_errors.hash_table_mismatch,
             ));
         }
         evict_old_caches(dir);
@@ -340,7 +340,7 @@ impl ChunkCache {
             .unwrap()
             .data
             .clone()
-            .ok_or_else(|| io::Error::other("Cache fechado"))
+            .ok_or_else(|| io::Error::other(crate::i18n::text().stream_errors.cache_closed))
     }
 
     fn bitmap_file(&self) -> io::Result<Arc<File>> {
@@ -349,7 +349,7 @@ impl ChunkCache {
             .unwrap()
             .bitmap_file
             .clone()
-            .ok_or_else(|| io::Error::other("Cache fechado"))
+            .ok_or_else(|| io::Error::other(crate::i18n::text().stream_errors.cache_closed))
     }
 
     pub async fn read_at_blocking(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
@@ -452,7 +452,7 @@ impl ChunkCache {
         if idx >= self.chunks_total {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Índice de bloco fora do arquivo",
+                crate::i18n::text().stream_errors.chunk_out_of_file,
             ));
         }
         loop {
@@ -498,7 +498,7 @@ impl ChunkCache {
         if idx >= self.chunks_total {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Índice de bloco inválido",
+                crate::i18n::text().stream_errors.invalid_chunk_index,
             ));
         }
         let expected_len = self.chunk_len(idx);
@@ -506,13 +506,13 @@ impl ChunkCache {
         if data.len() != expected_len {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Tamanho de bloco inesperado",
+                crate::i18n::text().stream_errors.unexpected_chunk_size,
             ));
         }
         if blake3::hash(&data).as_bytes() != &expected_hash {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Integridade do bloco falhou (BLAKE3)",
+                crate::i18n::text().stream_errors.chunk_integrity,
             ));
         }
         let offset = u64::from(idx) * u64::from(self.chunk_size);
@@ -553,7 +553,7 @@ impl ChunkCache {
         *count = count.saturating_add(1);
         let attempts = *count;
         if attempts >= MAX_CHUNK_RETRIES {
-            let msg = format!("Falha ao receber bloco {idx}: {reason}");
+            let msg = (crate::i18n::text().stream_errors.chunk_receive_failed)(idx, reason);
             state.closed = Some(msg.clone());
             drop(state);
             self.chunk_ready.notify_waiters();

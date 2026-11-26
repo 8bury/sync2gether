@@ -63,14 +63,14 @@ impl ChunkIndex {
         if raw.len() != expected_chunks * 32 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Tabela de hashes com tamanho inesperado",
+                crate::i18n::text().stream_errors.hash_table_size,
             ));
         }
         let actual = blake3::hash(raw).to_hex().to_string();
         if !actual.eq_ignore_ascii_case(expected_digest) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Integridade da tabela de blocos falhou",
+                crate::i18n::text().stream_errors.hash_table_integrity,
             ));
         }
         let hashes = raw.as_chunks::<32>().0.to_vec();
@@ -101,7 +101,9 @@ impl ChunkIndex {
             total += filled as u64;
         }
         if total != meta.len() {
-            return Err(io::Error::other("Arquivo mudou durante a indexação"));
+            return Err(io::Error::other(
+                crate::i18n::text().stream_errors.file_changed_indexing,
+            ));
         }
         let media = Media {
             hash: whole.finalize().to_hex().to_string(),

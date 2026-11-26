@@ -86,8 +86,12 @@ async fn serve_connection(
     expected_path: &str,
 ) -> io::Result<()> {
     let header_bytes = read_headers(&mut stream).await?;
-    let header_str = std::str::from_utf8(&header_bytes)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Cabeçalho HTTP inválido"))?;
+    let header_str = std::str::from_utf8(&header_bytes).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            crate::i18n::text().stream_errors.invalid_http_header,
+        )
+    })?;
     let mut lines = header_str.split("\r\n");
     let request_line = lines.next().unwrap_or("");
     let mut parts = request_line.split_whitespace();
@@ -196,7 +200,7 @@ async fn read_headers(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
         if buf.len() >= MAX_HEADER_BYTES {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Cabeçalho HTTP grande demais",
+                crate::i18n::text().stream_errors.http_header_too_large,
             ));
         }
     }

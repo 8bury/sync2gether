@@ -250,8 +250,7 @@ impl Worker {
         }
         self.reset_operation();
         self.failed = Some(id);
-        self.view.notice =
-            Some("Início cancelado. A sessão está pausada; tente reproduzir novamente.".into());
+        self.view.notice = Some(crate::i18n::text().errors.start_cancelled.into());
         if self.view.role == Role::Host {
             self.session.fail(id, self.now());
             self.publish();
@@ -367,9 +366,7 @@ impl Worker {
                     .apply(Control::Seek(self.session.position(self.now())), self.now());
             }
             if self.session.advance(self.now()) {
-                self.view.notice = Some(
-                    "Os players não confirmaram o início a tempo. A sessão está pausada.".into(),
-                );
+                self.view.notice = Some(crate::i18n::text().errors.start_timeout.into());
             }
             if self.session.state.revision != before {
                 self.publish();

@@ -47,7 +47,7 @@ impl Bridge {
             }
         }
         self.pending.lock().unwrap().take();
-        Err("Inicialização do player encerrada".into())
+        Err(crate::i18n::text().player_errors.init_ended.into())
     }
 }
 #[repr(C)]
@@ -103,13 +103,16 @@ pub struct GlRenderer {
 }
 impl GlRenderer {
     pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Result<(Self, Bridge), String> {
-        let gl = cc.gl.clone().ok_or("Contexto OpenGL indisponível")?;
+        let gl = cc
+            .gl
+            .clone()
+            .ok_or(crate::i18n::text().player_errors.no_gl_context)?;
         let loader = cc
             .get_proc_address
             .clone()
-            .ok_or("Loader OpenGL indisponível")?;
+            .ok_or(crate::i18n::text().player_errors.no_gl_loader)?;
         if loader(c"glBlitFramebuffer").is_null() {
-            return Err("OpenGL sem suporte a framebuffer blit".into());
+            return Err(crate::i18n::text().player_errors.no_blit.into());
         }
         let bridge = Bridge {
             pending: Arc::default(),
@@ -203,9 +206,9 @@ impl State {
         };
         if result < 0 {
             self.failed = true;
-            let _ = pending.ready.send(Err(
-                "Não foi possível iniciar o renderizador OpenGL do vídeo".into(),
-            ));
+            let _ = pending
+                .ready
+                .send(Err(crate::i18n::text().player_errors.gl_renderer.into()));
             return;
         }
         // SAFETY: contexto recém-criado; o Box de Wake vive até destroy remover o callback.
@@ -274,7 +277,7 @@ impl State {
                 );
                 if self.gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE
                 {
-                    return Err("Framebuffer do vídeo indisponível".into());
+                    return Err(crate::i18n::text().player_errors.no_framebuffer.into());
                 }
                 self.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
             }
@@ -302,7 +305,7 @@ impl State {
                 ];
                 diagnostics::mark(Stage::GlRender);
                 if (core.api.render)(context, params.as_mut_ptr()) < 0 {
-                    return Err("Erro ao renderizar o vídeo por OpenGL".into());
+                    return Err(crate::i18n::text().player_errors.gl_render.into());
                 }
             }
             diagnostics::mark(Stage::GlBlit);
@@ -350,7 +353,9 @@ impl State {
         }
         self.destroyed = true;
         if let Some(pending) = self.bridge.pending.lock().unwrap().take() {
-            let _ = pending.ready.send(Err("Janela encerrada".into()));
+            let _ = pending
+                .ready
+                .send(Err(crate::i18n::text().player_errors.window_closed.into()));
         }
         // SAFETY: on_exit ainda tem o mesmo GL corrente. Liberação antecede o core.
         unsafe {

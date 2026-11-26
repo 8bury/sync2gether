@@ -144,8 +144,11 @@ página entra pelo link, tira o código da barra de endereço, confere a cópia
 local ou recebe o filme por WebRTC, começa junto com o anfitrião e pausa
 quando ele pausa. A diferença medida pelo anfitrião ficou abaixo de 80 ms.
 Os testes usam reprodução sem som e autoplay liberado nas preferências do
-navegador de teste.
+navegador de teste. Os mesmos quatro casos também passaram contra a página
+publicada em `https://sync2gether.pedrosales.dev` e o relay padrão (TLS na
+porta 7843 e WebSocket atrás de Traefik e Caddy), com anfitrião e navegador no
+mesmo computador.
 
 Ainda não foram testados: Safari (desktop e iOS), navegadores de celular,
 redes reais com NAT entre os dois lados, arquivos MKV ou com áudio AC-3/DTS,
-filmes longos e a página publicada atrás de Coolify ou Cloudflare.
+filmes longos e a página atrás do proxy da Cloudflare.

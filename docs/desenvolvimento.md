@@ -114,6 +114,9 @@ timeout 30s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 target/debug/sync2gether --d
 ```
 
 Capturas de revisão e arquivos temporários ficam em `.cache/`, ignorada pelo Git.
+Para capturar telas da página do navegador com estados fictícios (somente em
+desenvolvimento, com `bash scripts/build-web.sh --preview`), veja
+[Convidado no navegador](navegador.md#desenvolvimento).
 
 O fluxo das telas foi decidido num protótipo React em `prototype/`, com o kit
 Stageshow. Ele roda com `npm install` e `npm run dev` dentro da pasta e serve

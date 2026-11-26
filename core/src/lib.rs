@@ -8,6 +8,7 @@ pub mod relay_wire;
 #[cfg(feature = "crypto")]
 pub mod secure;
 pub mod sync;
+pub mod theme;
 
 pub const UNNAMED: &str = "Outro computador";
 

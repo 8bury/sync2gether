@@ -15,7 +15,11 @@ const PAIR: f32 = 14.0;
 
 pub(super) fn palette() -> Palette {
     Palette {
-        muted: Color32::from_rgb(216, 216, 213),
+        muted: Color32::from_rgb(
+            sync2gether_core::theme::PLAYER_MUTED.0,
+            sync2gether_core::theme::PLAYER_MUTED.1,
+            sync2gether_core::theme::PLAYER_MUTED.2,
+        ),
         hover: Color32::from_white_alpha(26),
         ..Palette::new(true)
     }

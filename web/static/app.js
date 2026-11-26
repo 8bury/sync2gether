@@ -1,10 +1,28 @@
 import init, { WebGuest } from "./pkg/sync2gether_web.js";
 import { Player, now } from "./player.js";
 import { RELAY_URL } from "./config.js";
+import {
+  ICON_ALERT,
+  ICON_CANCEL,
+  ICON_INFO,
+  ICON_PAUSE,
+  ICON_PLAY,
+  ICON_VOL_MUTED,
+  ICON_VOL_ON,
+  centerLoadingState,
+  centerNoticeState,
+  formatTime,
+  mediaTitle,
+  peerPresence,
+  setEmblem,
+  videoBannerState,
+} from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 const STORE = "sync2gether.room";
 const RISKY_FORMATS = /\.(mkv|avi|wmv|flv|ts|m2ts|vob|rmvb)$/i;
+const CONTROLS_HIDE_MS = 3000;
+const TOAST_MS = 4000;
 
 const app = {
   guest: null,
@@ -16,9 +34,21 @@ const app = {
   hashJob: 0,
   objectUrl: null,
   notice: null,
+  toast: null,
+  toastUntil: 0,
   dragging: false,
   lastRender: 0,
   stream: null,
+  lastActivity: 0,
+  controlsVisible: true,
+  popoverOpen: false,
+  forcePrepare: false,
+  unmutedVolume: 1,
+  prevPeer: null,
+  prevConnected: false,
+  prevPaused: null,
+  prevPausedBy: null,
+  prevSync: false,
 };
 
 const player = new Player($("video"), {
@@ -78,6 +108,11 @@ function remembered() {
   } catch {
     return null;
   }
+}
+
+function setToast(message) {
+  app.toast = message;
+  app.toastUntil = now() + TOAST_MS;
 }
 
 function pump() {
@@ -156,6 +191,13 @@ function join(code) {
   }
   app.guest = guest;
   app.code = code;
+  app.forcePrepare = false;
+  app.popoverOpen = false;
+  app.prevPeer = null;
+  app.prevConnected = false;
+  app.prevPaused = null;
+  app.prevPausedBy = null;
+  app.prevSync = false;
   const saved = remembered();
   if (saved && saved.code === code && saved.key) {
     guest.resume_with(unhex(saved.key));
@@ -169,6 +211,7 @@ function leave() {
   forget();
   app.stream?.stop();
   app.stream = null;
+  setPlayerMode(false);
   showEnded("Você saiu da sala.", "");
 }
 
@@ -176,6 +219,7 @@ function chooseFile(file) {
   if (!file || !app.guest) return;
   app.stream?.stop();
   app.stream = null;
+  app.forcePrepare = false;
   const id = ++app.hashJob;
   app.guest.set_loading(file.name, 0, file.size);
   $("hashing").hidden = false;
@@ -212,39 +256,94 @@ function chooseFile(file) {
 export function startStreaming(createStream) {
   if (!app.guest) return;
   app.hashJob++;
+  app.forcePrepare = false;
   $("hashing").hidden = true;
   app.stream?.stop();
   app.stream = createStream({ guest: app.guest, player, pump, now });
 }
 
-function format(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
-  const s = Math.floor(seconds % 60).toString().padStart(2, "0");
-  const m = Math.floor(seconds / 60) % 60;
-  const h = Math.floor(seconds / 3600);
-  return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${s}` : `${m}:${s}`;
-}
-
-function show(id) {
-  for (const section of ["entry", "connecting", "ended", "room"]) {
-    $(section).hidden = section !== id;
+function setPlayerMode(active) {
+  document.body.classList.toggle("in-player", active);
+  if (!active) {
+    document.body.classList.remove("controls-hidden");
+    app.popoverOpen = false;
+    $("room-popover").hidden = true;
+    $("presence-btn").setAttribute("aria-expanded", "false");
   }
 }
 
-function showEntry(error) {
+export function show(id) {
+  for (const section of ["entry", "connecting", "ended", "room"]) {
+    $(section).hidden = section !== id;
+  }
+  const inRoom = id === "room";
+  $("brand").hidden = inRoom;
+  $("leave").hidden = !inRoom;
+  if (!inRoom) {
+    $("room-code").hidden = true;
+    $("stage-title").hidden = true;
+    $("presence-btn").hidden = true;
+    setPlayerMode(false);
+  }
+}
+
+export function showEntry(error) {
   show("entry");
-  $("peer").hidden = true;
-  $("leave").hidden = true;
   $("entry-error").hidden = !error;
   $("entry-error").textContent = error || "";
 }
 
-function showEnded(title, text) {
+export function showEnded(title, text) {
   show("ended");
   $("ended-title").textContent = title;
   $("ended-text").textContent = text;
-  $("peer").hidden = true;
-  $("leave").hidden = true;
+}
+
+function noteActivity() {
+  app.lastActivity = now();
+  if (!app.controlsVisible) {
+    app.controlsVisible = true;
+    document.body.classList.remove("controls-hidden");
+  }
+}
+
+function updateControlsVisibility(view) {
+  if (!document.body.classList.contains("in-player")) return;
+  const keep = app.popoverOpen
+    || app.dragging
+    || !view.playing
+    || !view.connected
+    || view.buffering
+    || view.host_buffering
+    || view.waiting_buffer
+    || view.preparing
+    || view.scheduled
+    || Boolean(view.error);
+  const visible = keep || (now() - app.lastActivity < CONTROLS_HIDE_MS);
+  app.controlsVisible = visible;
+  document.body.classList.toggle("controls-hidden", !visible);
+}
+
+function trackRoomEvents(view) {
+  const peer = view.peer || "O anfitrião";
+  if (view.connected && !app.prevConnected) {
+    if (app.prevPeer !== null) {
+      setToast(`Reconectado à sala de ${peer}.`);
+    } else if (view.peer) {
+      setToast(`Você entrou na sala de ${view.peer}.`);
+    }
+  } else if (!view.connected && app.prevConnected && !view.peer_left) {
+    setToast(`Conexão com ${peer} perdida. Reconectando…`);
+  }
+  const inSync = view.connected && view.matched && view.playing && view.drift_ms !== null;
+  if (inSync && !app.prevSync) {
+    setToast("Em sincronia.");
+  }
+  if (view.peer) app.prevPeer = view.peer;
+  app.prevConnected = view.connected;
+  app.prevPaused = view.paused;
+  app.prevPausedBy = view.paused_by;
+  app.prevSync = inSync;
 }
 
 function render(force) {
@@ -276,12 +375,30 @@ function render(force) {
     $("connecting-text").textContent = "Conectando à sala…";
     return;
   }
+  trackRoomEvents(view);
+  renderRoom(view);
+}
+
+function renderRoom(view) {
   show("room");
-  $("leave").hidden = false;
-  $("peer").hidden = !view.peer;
-  $("peer").textContent = view.peer ? `Na sala de ${view.peer}` : "";
+  if (app.toast && now() > app.toastUntil) {
+    app.toast = null;
+  }
+
+  const inPlayer = (view.matched || Boolean(app.stream?.started))
+    && !app.forcePrepare;
+  setPlayerMode(inPlayer);
+
+  $("prepare").hidden = inPlayer;
+  $("stage").hidden = !inPlayer;
+  $("room-code").hidden = inPlayer || !view.code;
+  $("room-code").textContent = view.code || "";
+  $("stage-title").hidden = !inPlayer;
+  $("stage-title").textContent = mediaTitle(view.host_file_name);
+  $("presence-btn").hidden = !inPlayer;
 
   const hostFile = view.host_file_name;
+  $("host-card-name").textContent = view.peer || "Anfitrião";
   $("host-file").textContent = hostFile || (view.host_loading ? "O anfitrião está abrindo o filme…" : "Esperando o anfitrião escolher o filme…");
   const risky = hostFile && RISKY_FORMATS.test(hostFile);
   $("format-warning").hidden = !risky;
@@ -289,6 +406,53 @@ function render(force) {
     ? "Este formato costuma não tocar no navegador (MKV e áudio AC-3/DTS, por exemplo). Se não funcionar, use o app."
     : "";
   $("stream").hidden = !(view.host_web_stream && view.host_media);
+
+  const guestFile = view.guest_file_name || (app.stream ? hostFile : null);
+  $("guest-file").textContent = guestFile || "Nenhum arquivo ainda";
+  $("pick-text").textContent = guestFile ? "Trocar arquivo" : "Usar minha cópia";
+
+  const guestBadge = $("guest-copy-badge");
+  const hostBadge = $("host-copy-badge");
+  guestBadge.className = "copy-badge muted";
+  hostBadge.className = "copy-badge muted";
+  if (app.stream) {
+    guestBadge.textContent = "Via streaming P2P";
+    guestBadge.classList.add("is-ok");
+  } else if (view.guest_media && view.matched) {
+    guestBadge.textContent = "Conferido";
+    guestBadge.classList.add("is-ok");
+  } else if (view.mismatch) {
+    guestBadge.textContent = "Conteúdo diferente";
+    guestBadge.classList.add("is-warning");
+  } else if (!$("hashing").hidden) {
+    guestBadge.textContent = "Conferindo…";
+  } else {
+    guestBadge.textContent = "Falta escolher";
+  }
+
+  if (view.host_media) {
+    hostBadge.textContent = view.host_ready ? "Conferido" : "Preparando…";
+    if (view.host_ready) hostBadge.classList.add("is-ok");
+  } else if (view.host_loading) {
+    hostBadge.textContent = "Conferindo…";
+  } else {
+    hostBadge.textContent = "Aguardando";
+  }
+
+  const prepareEmblem = $("prepare-emblem");
+  if (view.matched) {
+    $("prepare-heading").textContent = "Vocês têm o mesmo filme";
+    setEmblem(prepareEmblem, "together", 18);
+  } else if (view.mismatch) {
+    $("prepare-heading").textContent = "As cópias são diferentes";
+    setEmblem(prepareEmblem, "apart", 18);
+  } else if (!view.host_media) {
+    $("prepare-heading").textContent = "Esperando o filme do anfitrião";
+    setEmblem(prepareEmblem, "waiting", 18);
+  } else {
+    $("prepare-heading").textContent = "Escolha o filme";
+    setEmblem(prepareEmblem, "waiting", 18);
+  }
 
   const copyStatus = $("copy-status");
   let copyText = "";
@@ -302,6 +466,10 @@ function render(force) {
   copyStatus.hidden = !copyText;
   copyStatus.textContent = copyText;
 
+  const prepNotice = app.notice || view.notice;
+  $("prepare-notice").hidden = !prepNotice;
+  $("prepare-notice").textContent = prepNotice || "";
+
   let status = "";
   if (!view.connected) {
     status = "Reconectando…";
@@ -309,7 +477,7 @@ function render(force) {
     status = "Esperando o anfitrião.";
   } else if (!view.matched) {
     status = "Escolha sua cópia do filme ou assista por streaming.";
-  } else if (view.buffering) {
+  } else if (view.buffering || view.host_buffering) {
     status = "Carregando…";
   } else if (view.playing && view.drift_ms !== null) {
     status = `Sincronizado (diferença de ${Math.abs(view.drift_ms).toFixed(0)} ms).`;
@@ -323,25 +491,170 @@ function render(force) {
     status = "Pronto. Qualquer um pode apertar reproduzir.";
   }
   $("status").textContent = status;
-
-  const notice = app.notice || view.notice;
-  $("notice").hidden = !notice;
-  $("notice").textContent = notice || "";
-
-  const toggle = $("toggle");
-  toggle.textContent = view.playing ? "❚❚" : "▶";
-  toggle.setAttribute("aria-label", view.playing ? "Pausar" : "Reproduzir");
-  toggle.disabled = !view.connected || !view.matched;
-  $("seekbar").disabled = !view.connected || !view.matched;
-  const duration = view.host_duration || player.status().duration;
-  if (!app.dragging) {
-    $("seekbar").value = duration > 0 ? Math.round(1000 * Math.min(1, view.position / duration)) : 0;
+  $("popover-code").textContent = view.code ? `Código: ${view.code}` : "";
+  const metrics = [];
+  if (view.clock_ready && Number.isFinite(view.rtt_ms)) {
+    metrics.push(`Ida e volta: ${Math.round(view.rtt_ms)} ms`);
   }
-  $("time").textContent = format(view.position);
-  $("duration").textContent = format(duration);
+  if (view.drift_ms !== null && Number.isFinite(view.drift_ms)) {
+    metrics.push(`Diferença: ${Math.abs(view.drift_ms).toFixed(0)} ms`);
+  }
+  $("popover-metrics").textContent = metrics.join(" · ");
+
+  const presence = peerPresence(view, app.stream);
+  $("peer").textContent = presence.name;
+  $("peer-detail").textContent = presence.detail;
+  $("peer-detail").classList.toggle("is-warning", presence.warning);
+  setEmblem($("presence-emblem"), presence.state, 14);
+
+  const loading = centerLoadingState(view, app.stream);
+  const loadingEl = $("center-loading");
+  loadingEl.hidden = !loading;
+  if (loading) {
+    $("center-loading-title").textContent = loading.title;
+    $("center-loading-icon").hidden = !loading.spinner;
+    $("center-loading-detail").hidden = !loading.detail;
+    $("center-loading-detail").textContent = loading.detail || "";
+  }
+
+  const center = centerNoticeState(view, Boolean(loading));
+  const centerEl = $("center-notice");
+  centerEl.hidden = !center;
+  $("stage-dim").dataset.dim = center ? center.dim : "";
+  if (center) {
+    setEmblem($("center-emblem"), center.state, center.diameter);
+    $("center-notice-title").textContent = center.title;
+    $("center-notice-detail").textContent = center.detail;
+  }
+
+  const banner = videoBannerState(view, app.notice, app.toast);
+  const bannerEl = $("video-notice");
+  bannerEl.hidden = !banner;
+  if (banner) {
+    bannerEl.dataset.tone = banner.kind === "alert" ? "warning" : "info";
+    $("notice").textContent = banner.text;
+    const iconEl = $("video-notice-icon");
+    if (banner.kind === "spinner") {
+      iconEl.innerHTML = `<span class="spinner small-spin"></span>`;
+    } else if (banner.kind === "alert") {
+      iconEl.innerHTML = ICON_ALERT;
+    } else {
+      iconEl.innerHTML = ICON_INFO;
+    }
+  } else {
+    $("notice").textContent = "";
+  }
+
+  const streamHud = $("stream-hud");
+  if (app.stream && app.stream.phase !== "failed") {
+    streamHud.hidden = false;
+    streamHud.textContent = app.stream.describe();
+    streamHud.classList.toggle("is-warning", app.stream.phase !== "streaming");
+  } else {
+    streamHud.hidden = true;
+  }
+
+  const cancelling = view.preparing || view.scheduled || view.waiting_buffer;
+  const toggle = $("toggle");
+  const toggleIcon = $("toggle-icon");
+  const canControl = view.connected && view.matched;
+  toggle.disabled = !canControl;
+  $("back").disabled = !canControl;
+  $("forward").disabled = !canControl;
+  $("seekbar").disabled = !canControl;
+
+  if (cancelling) {
+    toggleIcon.innerHTML = ICON_CANCEL;
+    toggle.setAttribute("aria-label", "Cancelar operação");
+    toggle.title = "Cancelar operação";
+  } else if (view.playing) {
+    toggleIcon.innerHTML = ICON_PAUSE;
+    toggle.setAttribute("aria-label", "Pausar");
+    toggle.title = "Pausar · Espaço";
+  } else {
+    toggleIcon.innerHTML = ICON_PLAY;
+    toggle.setAttribute("aria-label", "Reproduzir");
+    toggle.title = "Reproduzir · Espaço";
+  }
+
+  const duration = view.host_duration || player.status().duration;
+  const currentPos = app.dragging && duration > 0
+    ? duration * Number($("seekbar").value) / 1000
+    : view.position;
+  const fraction = duration > 0 ? Math.max(0, Math.min(1, currentPos / duration)) : 0;
+  if (!app.dragging) {
+    $("seekbar").value = String(Math.round(1000 * fraction));
+  }
+  const pct = `${(fraction * 100).toFixed(3)}%`;
+  $("seek-fill").style.width = pct;
+  $("seek-thumb").style.left = pct;
+
+  const bufFrac = duration > 0 ? Math.max(0, Math.min(1, (view.buffered_until || 0) / duration)) : 0;
+  $("seek-buffered").style.width = `${(bufFrac * 100).toFixed(3)}%`;
+
+  const peerDot = $("seek-peer");
+  if (view.connected && view.host_position !== null && view.host_position !== undefined && duration > 0) {
+    const peerFrac = Math.max(0, Math.min(1, view.host_position / duration));
+    peerDot.hidden = false;
+    peerDot.style.left = `${(peerFrac * 100).toFixed(3)}%`;
+  } else {
+    peerDot.hidden = true;
+  }
+
+  $("time").textContent = formatTime(currentPos);
+  $("duration").textContent = formatTime(duration);
+  syncVolumeIcon();
+  updateControlsVisibility(view);
 }
 
-function boot() {
+function syncVolumeIcon() {
+  const video = $("video");
+  const muted = video.muted || video.volume === 0;
+  $("mute-icon").innerHTML = muted ? ICON_VOL_MUTED : ICON_VOL_ON;
+  $("mute").setAttribute("aria-label", muted ? "Ativar som" : "Silenciar");
+  $("volume").value = muted ? "0" : String(video.volume);
+}
+
+function toggleMute() {
+  const video = $("video");
+  if (video.muted || video.volume === 0) {
+    video.muted = false;
+    video.volume = app.unmutedVolume > 0 ? app.unmutedVolume : 1;
+    $("unmute").hidden = true;
+  } else {
+    app.unmutedVolume = video.volume;
+    video.muted = true;
+  }
+  syncVolumeIcon();
+}
+
+function togglePlay() {
+  if (!app.view || !app.view.connected || !app.view.matched) return;
+  noteActivity();
+  player.unlock();
+  const cancelling = app.view.preparing || app.view.scheduled || app.view.waiting_buffer;
+  call((g) => (app.view.playing || cancelling ? g.pause(now()) : g.play(now())));
+}
+
+function seekBy(delta) {
+  if (!app.view || !app.view.connected || !app.view.matched) return;
+  const duration = app.view.host_duration || player.status().duration;
+  if (duration <= 0) return;
+  noteActivity();
+  const target = Math.max(0, Math.min(duration, app.view.position + delta));
+  call((g) => g.seek(target, now()));
+}
+
+function toggleFullscreen() {
+  const stage = $("stage");
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    (stage.requestFullscreen?.() || $("video").webkitEnterFullscreen?.());
+  }
+}
+
+export function bindEvents() {
   $("entry-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const value = $("entry-code").value.trim();
@@ -354,6 +667,7 @@ function boot() {
     app.guest = null;
     app.everConnected = false;
     app.notice = null;
+    app.toast = null;
     $("entry-code").value = "";
     showEntry("");
   });
@@ -365,28 +679,66 @@ function boot() {
     const module = await import("./stream.js");
     startStreaming(module.createStream);
   });
-  $("toggle").addEventListener("click", () => {
-    player.unlock();
-    call((g) => (app.view?.playing ? g.pause(now()) : g.play(now())));
+  $("toggle").addEventListener("click", togglePlay);
+  $("back").addEventListener("click", () => seekBy(-10));
+  $("forward").addEventListener("click", () => seekBy(10));
+  $("video").addEventListener("click", () => {
+    if (app.popoverOpen) {
+      app.popoverOpen = false;
+      $("room-popover").hidden = true;
+      $("presence-btn").setAttribute("aria-expanded", "false");
+      return;
+    }
+    togglePlay();
   });
+
+  const seekWrap = $("seek-wrap");
   const seekbar = $("seekbar");
-  seekbar.addEventListener("input", () => { app.dragging = true; });
+  const seekTip = $("seek-tip");
+  seekbar.addEventListener("input", () => {
+    app.dragging = true;
+    seekWrap.classList.add("is-dragging");
+    noteActivity();
+    if (app.view) renderRoom(app.view);
+  });
   seekbar.addEventListener("change", () => {
     app.dragging = false;
-    const duration = app.view?.host_duration || 0;
+    seekWrap.classList.remove("is-dragging");
+    const duration = app.view?.host_duration || player.status().duration || 0;
     if (duration > 0) call((g) => g.seek(duration * seekbar.value / 1000, now()));
   });
+  seekWrap.addEventListener("pointermove", (event) => {
+    const duration = app.view?.host_duration || player.status().duration || 0;
+    if (duration <= 0 || seekbar.disabled) {
+      seekTip.hidden = true;
+      return;
+    }
+    const rect = seekWrap.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
+    seekTip.hidden = false;
+    seekTip.textContent = formatTime(frac * duration);
+    seekTip.style.left = `${(frac * 100).toFixed(2)}%`;
+  });
+  seekWrap.addEventListener("pointerleave", () => { seekTip.hidden = true; });
+
+  $("mute").addEventListener("click", () => {
+    noteActivity();
+    toggleMute();
+  });
   $("volume").addEventListener("input", (event) => {
-    $("video").volume = Number(event.target.value);
-    $("video").muted = false;
+    noteActivity();
+    const value = Number(event.target.value);
+    $("video").volume = value;
+    $("video").muted = value === 0;
+    if (value > 0) {
+      app.unmutedVolume = value;
+      $("unmute").hidden = true;
+    }
+    syncVolumeIcon();
   });
   $("fullscreen").addEventListener("click", () => {
-    const stage = $("stage");
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    } else {
-      (stage.requestFullscreen?.() || $("video").webkitEnterFullscreen?.());
-    }
+    noteActivity();
+    toggleFullscreen();
   });
   $("unlock").addEventListener("click", () => {
     $("unlock").hidden = true;
@@ -395,7 +747,57 @@ function boot() {
   $("unmute").addEventListener("click", () => {
     $("unmute").hidden = true;
     $("video").muted = false;
+    syncVolumeIcon();
   });
+
+  $("presence-btn").addEventListener("click", () => {
+    noteActivity();
+    app.popoverOpen = !app.popoverOpen;
+    $("room-popover").hidden = !app.popoverOpen;
+    $("presence-btn").setAttribute("aria-expanded", String(app.popoverOpen));
+  });
+  $("popover-close").addEventListener("click", () => {
+    app.popoverOpen = false;
+    $("room-popover").hidden = true;
+    $("presence-btn").setAttribute("aria-expanded", "false");
+  });
+  $("change-file").addEventListener("click", () => {
+    app.popoverOpen = false;
+    $("room-popover").hidden = true;
+    $("presence-btn").setAttribute("aria-expanded", "false");
+    app.forcePrepare = true;
+    if (app.view) renderRoom(app.view);
+  });
+
+  $("stage").addEventListener("pointermove", noteActivity);
+  $("stage").addEventListener("pointerdown", noteActivity);
+
+  window.addEventListener("keydown", (event) => {
+    if (!document.body.classList.contains("in-player")) return;
+    if (event.target instanceof HTMLInputElement && event.target.type === "text") return;
+    if (event.code === "Space") {
+      event.preventDefault();
+      togglePlay();
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      seekBy(-10);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      seekBy(10);
+    } else if (event.key === "f" || event.key === "F") {
+      event.preventDefault();
+      toggleFullscreen();
+    } else if (event.key === "m" || event.key === "M") {
+      event.preventDefault();
+      noteActivity();
+      toggleMute();
+    } else if (event.key === "Escape" && app.popoverOpen) {
+      app.popoverOpen = false;
+      $("room-popover").hidden = true;
+      $("presence-btn").setAttribute("aria-expanded", "false");
+    }
+  });
+
   window.addEventListener("pagehide", () => {
     if (app.guest && app.socket) {
       app.guest.leave(now());
@@ -403,6 +805,17 @@ function boot() {
       if (output.length && app.socket.readyState === WebSocket.OPEN) app.socket.send(output);
     }
   });
+}
+
+export function showRoom(view) {
+  app.everConnected = true;
+  app.view = view;
+  noteActivity();
+  renderRoom(view);
+}
+
+function boot() {
+  bindEvents();
 
   setInterval(tick, 20);
   try {
@@ -426,6 +839,8 @@ function boot() {
   showEntry("");
 }
 
-init().then(boot, () => {
-  showEntry("Este navegador não conseguiu carregar o sync2gether. Atualize o navegador e tente de novo.");
-});
+export function start() {
+  init().then(boot, () => {
+    showEntry("Este navegador não conseguiu carregar o sync2gether. Atualize o navegador e tente de novo.");
+  });
+}

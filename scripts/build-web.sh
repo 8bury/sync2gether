@@ -3,7 +3,15 @@ set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
-out=${1:-target/web}
+preview=0
+out=target/web
+for arg in "$@"; do
+  case $arg in
+    --preview) preview=1 ;;
+    -*) echo "Opção desconhecida: $arg" >&2; exit 2 ;;
+    *) out=$arg ;;
+  esac
+done
 relay_url=${SYNC2GETHER_WEB_RELAY_URL:-}
 tools=target/tools
 bindgen_version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
@@ -20,6 +28,18 @@ mkdir -p -- "$out/pkg" "$out/fonts"
 "$tools/bin/wasm-bindgen" --target web --no-typescript --out-dir "$out/pkg" \
   target/wasm32-unknown-unknown/release/sync2gether_web.wasm
 cp web/static/*.html web/static/*.css web/static/*.js "$out/"
+if [[ $preview -eq 1 ]]; then
+  cp web/preview/*.css web/preview/*.js "$out/"
+  awk '{
+    if ($0 ~ /<script type="module" src="main\.js"><\/script>/) {
+      print "  <link rel=\"stylesheet\" href=\"preview.css\">"
+      print "  <script type=\"module\" src=\"preview.js\"></script>"
+    } else {
+      print
+    }
+  }' "$out/index.html" > "$out/index.html.tmp"
+  mv "$out/index.html.tmp" "$out/index.html"
+fi
 cp assets/fonts/Geist-Regular.ttf assets/fonts/Geist-Medium.ttf \
   assets/fonts/GeistMono-Regular.ttf assets/fonts/LICENSE "$out/fonts/"
 case $relay_url in

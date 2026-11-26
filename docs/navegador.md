@@ -109,15 +109,35 @@ cargo run --locked -- --internet --relay 127.0.0.1:7843 --web-url http://127.0.0
 `target/tools` na primeira vez. Abrir o app com janela segue as regras do
 [guia de desenvolvimento](desenvolvimento.md).
 
+Para revisar ou capturar telas do navegador com estados fictícios, sem conectar
+a um relay, gere o build de desenvolvimento com `--preview`:
+
+```sh
+bash scripts/build-web.sh --preview
+python3 -m http.server -d target/web 8000
+firefox --headless --screenshot="$PWD/.cache/web-paused.png" --window-size=1440,900 \
+  "http://127.0.0.1:8000/?preview=paused"
+```
+
+Os cenários disponíveis em `web/preview/` são `entry`, `connecting`, `ended`,
+`prepare`, `player`, `paused`, `reconnecting` e `buffering`, com `&theme=light`
+ou `&theme=dark` opcionais. O build padrão (`bash scripts/build-web.sh`) e o
+`web/Dockerfile` nunca incluem `web/preview/` e ignoram `?preview=`.
+
 O código fica em:
 
 - `core/`: mensagens, relógio, código da sala, handshake SPAKE2/Noise sem I/O,
-  hashes dos blocos e formato do canal de dados, compilados para o app, o relay
-  e o WebAssembly;
+  hashes dos blocos, formato do canal de dados e tokens de tema (`theme.rs`),
+  compilados para o app, o relay e o WebAssembly;
 - `web/src/`: o convidado sem I/O (`guest.rs`, `link.rs`) e o cliente de blocos
   do streaming (`stream.rs`), exportados para JavaScript em `bindings.rs`;
-- `web/static/`: a página, o adaptador do `<video>`, o Worker de hash e o
-  Service Worker que responde aos pedidos de trecho do vídeo;
+- `web/static/`: a página, os tokens CSS gerados a partir de `core/src/theme.rs`
+  (`tokens.css`, verificados por teste em `tests/web.rs`), os controles e avisos
+  sobre o vídeo no mesmo visual do app (`ui.js`, `style.css`), o adaptador do
+  `<video>`, o Worker de hash e o Service Worker que responde aos pedidos de
+  trecho do vídeo;
+- `web/preview/`: fixtures e ponto de entrada usados apenas com
+  `scripts/build-web.sh --preview` para revisão visual e capturas em `.cache/`;
 - `src/stream/webrtc.rs` e `src/runtime/web_stream.rs`: o lado do anfitrião,
   com `str0m` e criptografia em Rust puro.
 

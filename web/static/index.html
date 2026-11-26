@@ -5,78 +5,238 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark light">
-  <title>sync2gether no navegador</title>
+  <title>sync2gether</title>
   <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="style.css">
-  <script type="module" src="app.js"></script>
+  <script type="module" src="main.js"></script>
 </head>
 <body>
-  <header class="top">
-    <span class="brand">sync2gether</span>
-    <span class="peer" id="peer" hidden></span>
-    <button class="ghost small" id="leave" type="button" hidden>Sair da sala</button>
+  <header class="top" id="topbar">
+    <div class="top-left">
+      <div class="brand" id="brand">
+        <span class="pair-emblem" data-state="together" aria-hidden="true">
+          <svg viewBox="0 0 24 15" width="24" height="15"><circle class="dot-a" cx="7.5" cy="7.5" r="7.5"/><circle class="dot-b" cx="16.5" cy="7.5" r="7.5"/></svg>
+        </span>
+        <span class="brand-name">sync2gether</span>
+      </div>
+      <button class="ghost small back-btn" id="leave" type="button" hidden>
+        <svg class="glyph" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M10 3.5L5.5 8L10 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="back-label">Sair da sala</span>
+      </button>
+    </div>
+
+    <div class="top-center">
+      <span class="stage-title" id="stage-title" hidden></span>
+    </div>
+
+    <div class="top-right">
+      <span class="room-code mono" id="room-code" hidden></span>
+      <button class="presence-pill" id="presence-btn" type="button" aria-expanded="false" aria-controls="room-popover" hidden>
+        <span class="pair-emblem" id="presence-emblem" data-state="together" aria-hidden="true">
+          <svg viewBox="0 0 32 14" width="23" height="14"><circle class="dot-a" cx="7" cy="7" r="7"/><circle class="dot-b" cx="15.4" cy="7" r="7"/></svg>
+        </span>
+        <span class="presence-name" id="peer"></span>
+        <span class="presence-detail" id="peer-detail"></span>
+      </button>
+    </div>
   </header>
 
   <main id="main">
-    <section class="card" id="entry" hidden>
-      <h1>Entrar na sala</h1>
-      <p class="muted">Cole o link ou o código que a outra pessoa enviou, como <span class="mono">4821-gato-lua</span>.</p>
-      <form id="entry-form" autocomplete="off">
-        <input id="entry-code" class="mono" type="text" inputmode="text" spellcheck="false" placeholder="4821-gato-lua" aria-label="Código da sala" required>
-        <button class="primary" type="submit">Entrar</button>
-      </form>
-      <p class="error" id="entry-error" hidden></p>
+    <section class="entry-screen" id="entry" hidden>
+      <div class="entry-lead">
+        <h1 class="display-lead">O mesmo filme,<br>no mesmo segundo.</h1>
+        <p class="lead-sub muted">Assista pelo navegador, sem instalar o app.</p>
+      </div>
+      <div class="entry-panel">
+        <p class="section-label">Qual é o código da sala?</p>
+        <form id="entry-form" autocomplete="off">
+          <input id="entry-code" class="code-input mono" type="text" inputmode="text" spellcheck="false" placeholder="4821-gato-lua" aria-label="Código da sala" required>
+          <button class="primary large spread" type="submit">
+            <span>Entrar</span>
+            <svg class="glyph" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </form>
+        <p class="help muted">Cole o link ou o código que a outra pessoa enviou.</p>
+        <p class="feedback error" id="entry-error" hidden></p>
+      </div>
     </section>
 
-    <section class="card" id="connecting" hidden>
+    <section class="center-screen" id="connecting" hidden>
       <div class="spinner" aria-hidden="true"></div>
-      <p id="connecting-text">Conectando à sala…</p>
+      <p class="center-title" id="connecting-text">Conectando à sala…</p>
     </section>
 
-    <section class="card" id="ended" hidden>
-      <h1 id="ended-title">Sala encerrada</h1>
-      <p class="muted" id="ended-text"></p>
-      <button class="secondary" id="again" type="button">Entrar em outra sala</button>
+    <section class="center-screen" id="ended" hidden>
+      <h1 class="center-heading" id="ended-title">Sala encerrada</h1>
+      <p class="muted center-sub" id="ended-text"></p>
+      <button class="secondary medium" id="again" type="button">Entrar em outra sala</button>
     </section>
 
     <section id="room" hidden>
-      <div class="card" id="prepare">
-        <p class="label">Filme do anfitrião</p>
-        <p class="title" id="host-file">Esperando o anfitrião escolher o filme…</p>
-        <p class="warning" id="format-warning" hidden></p>
-        <div class="choices" id="choices">
-          <label class="primary file" id="pick-label">
-            <input id="pick" type="file" accept="video/*,.mkv,.mp4,.webm,.mov,.m4v">
-            <span>Usar minha cópia</span>
-          </label>
-          <button class="secondary" id="stream" type="button" hidden>Assistir por streaming</button>
+      <div class="prepare-screen" id="prepare">
+        <h1 class="prepare-heading" id="prepare-heading">Escolha o filme</h1>
+        <div class="copies-grid">
+          <div class="copy-col">
+            <div class="copy-head">
+              <span class="copy-who">Você</span>
+              <span class="copy-badge muted" id="guest-copy-badge">Falta escolher</span>
+            </div>
+            <div class="copy-box">
+              <div class="copy-file-row">
+                <svg class="file-glyph" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <path d="M6 3h8l4 4v14H6V3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                  <path d="M14 3v4h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                  <polygon points="10,11 15,14 10,17" fill="currentColor"/>
+                </svg>
+                <span class="copy-filename mono" id="guest-file">Nenhum arquivo ainda</span>
+              </div>
+              <div class="choices" id="choices">
+                <label class="primary medium file" id="pick-label">
+                  <input id="pick" type="file" accept="video/*,.mkv,.mp4,.webm,.mov,.m4v">
+                  <span id="pick-text">Usar minha cópia</span>
+                </label>
+                <button class="secondary medium" id="stream" type="button" hidden>Assistir por streaming</button>
+              </div>
+              <div class="progress" id="hashing" hidden>
+                <p class="muted small-text" id="hashing-text">Conferindo seu arquivo…</p>
+                <div class="bar"><div id="hashing-bar"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="copies-divider" aria-hidden="true">
+            <span class="pair-emblem" id="prepare-emblem" data-state="waiting">
+              <svg viewBox="0 0 42 18" width="38" height="18"><circle class="dot-a" cx="9" cy="9" r="9"/><circle class="dot-b" cx="31.5" cy="9" r="8.25"/></svg>
+            </span>
+          </div>
+
+          <div class="copy-col">
+            <div class="copy-head">
+              <span class="copy-who" id="host-card-name">Anfitrião</span>
+              <span class="copy-badge muted" id="host-copy-badge">Aguardando</span>
+            </div>
+            <div class="copy-box">
+              <div class="copy-file-row">
+                <svg class="file-glyph" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <path d="M6 3h8l4 4v14H6V3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                  <path d="M14 3v4h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                  <polygon points="10,11 15,14 10,17" fill="currentColor"/>
+                </svg>
+                <span class="copy-filename mono" id="host-file">Esperando o anfitrião escolher o filme…</span>
+              </div>
+              <p class="warning small-text" id="format-warning" hidden></p>
+            </div>
+          </div>
         </div>
-        <div class="progress" id="hashing" hidden>
-          <p class="muted" id="hashing-text">Conferindo seu arquivo…</p>
-          <div class="bar"><div id="hashing-bar"></div></div>
-        </div>
-        <p class="muted" id="copy-status" hidden></p>
+
+        <p class="prepare-note muted" id="copy-status" hidden></p>
+        <p class="prepare-note warning" id="prepare-notice" hidden></p>
       </div>
 
-      <div class="stage" id="stage">
+      <div class="stage" id="stage" hidden>
         <video id="video" playsinline preload="auto"></video>
-        <button class="overlay" id="unlock" type="button" hidden>Toque para iniciar</button>
-        <button class="overlay small" id="unmute" type="button" hidden>Toque para ativar o som</button>
+        <div class="stage-dim" id="stage-dim" aria-hidden="true"></div>
+        <div class="scrim scrim-top" aria-hidden="true"></div>
+        <div class="scrim scrim-bottom" aria-hidden="true"></div>
+
+        <div class="video-notice" id="video-notice" role="status" aria-live="polite" hidden>
+          <span class="video-notice-icon" id="video-notice-icon" aria-hidden="true"></span>
+          <span class="video-notice-text" id="notice"></span>
+        </div>
+
+        <div class="center-notice" id="center-notice" aria-live="polite" hidden>
+          <span class="pair-emblem" id="center-emblem" data-state="together" aria-hidden="true">
+            <svg viewBox="0 0 56 24" width="44" height="24"><circle class="dot-a" cx="12" cy="12" r="11"/><circle class="dot-b" cx="26" cy="12" r="11"/></svg>
+          </span>
+          <p class="center-notice-title" id="center-notice-title"></p>
+          <p class="center-notice-detail" id="center-notice-detail"></p>
+        </div>
+
+        <div class="center-loading" id="center-loading" role="status" aria-live="polite" hidden>
+          <div class="center-loading-head">
+            <span class="spinner small-spin" id="center-loading-icon" aria-hidden="true"></span>
+            <span class="center-loading-title" id="center-loading-title"></span>
+          </div>
+          <p class="center-loading-detail" id="center-loading-detail" hidden></p>
+        </div>
+
+        <button class="overlay-btn primary" id="unlock" type="button" hidden>Toque para iniciar</button>
+        <button class="overlay-btn primary small" id="unmute" type="button" hidden>Toque para ativar o som</button>
+
+        <aside class="room-popover" id="room-popover" hidden>
+          <div class="popover-head">
+            <span class="popover-title">Sala</span>
+            <button class="ghost small" id="popover-close" type="button" aria-label="Fechar">Fechar</button>
+          </div>
+          <div class="popover-section">
+            <p class="popover-status" id="status"></p>
+            <p class="popover-meta mono" id="popover-code"></p>
+            <p class="popover-meta" id="popover-metrics"></p>
+          </div>
+          <div class="popover-actions">
+            <button class="secondary small" id="change-file" type="button">Trocar arquivo</button>
+          </div>
+        </aside>
+
         <div class="controls" id="controls">
-          <button class="icon" id="toggle" type="button" aria-label="Reproduzir">▶</button>
-          <span class="time mono" id="time">0:00</span>
-          <input id="seekbar" type="range" min="0" max="1000" value="0" step="1" aria-label="Posição">
-          <span class="time mono" id="duration">0:00</span>
-          <input id="volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="Volume">
-          <button class="icon" id="fullscreen" type="button" aria-label="Tela cheia">⛶</button>
+          <div class="seek-wrap" id="seek-wrap">
+            <div class="seek-track">
+              <div class="seek-buffered" id="seek-buffered"></div>
+              <div class="seek-fill" id="seek-fill"></div>
+            </div>
+            <div class="seek-peer" id="seek-peer" hidden></div>
+            <div class="seek-thumb" id="seek-thumb"></div>
+            <div class="seek-tip mono" id="seek-tip" hidden>0:00</div>
+            <input id="seekbar" type="range" min="0" max="1000" value="0" step="1" aria-label="Posição">
+          </div>
+
+          <div class="controls-row">
+            <div class="controls-left">
+              <button class="ctrl-btn" id="toggle" type="button" aria-label="Reproduzir">
+                <svg id="toggle-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><polygon points="7,4 20,12 7,20" fill="currentColor"/></svg>
+              </button>
+              <button class="ctrl-btn" id="back" type="button" aria-label="Voltar 10 segundos" title="Voltar 10 segundos · ←">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <path d="M6.5 8.5A7.5 7.5 0 1 1 5.5 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                  <polyline points="6.5,4 6.5,8.5 11,8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <button class="ctrl-btn" id="forward" type="button" aria-label="Avançar 10 segundos" title="Avançar 10 segundos · →">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <path d="M17.5 8.5A7.5 7.5 0 1 0 18.5 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                  <polyline points="17.5,4 17.5,8.5 13,8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <span class="time-group mono">
+                <span class="time-cur" id="time">0:00</span>
+                <span class="time-sep"> / </span>
+                <span class="time-dur" id="duration">0:00</span>
+              </span>
+              <span class="stream-hud" id="stream-hud" hidden></span>
+            </div>
+
+            <div class="controls-right">
+              <button class="ctrl-btn" id="mute" type="button" aria-label="Silenciar" title="Volume · M para silenciar">
+                <svg id="mute-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <polygon points="4,9.5 8,9.5 13,5 13,19 8,14.5 4,14.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                  <path d="M16 8.5a5 5 0 0 1 0 7M18.8 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+              </button>
+              <input class="vol-range" id="volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="Volume">
+              <button class="ctrl-btn" id="fullscreen" type="button" aria-label="Tela cheia" title="Tela cheia · F">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-      <p class="status" id="status"></p>
-      <p class="notice" id="notice" hidden></p>
     </section>
   </main>
 
-  <footer class="foot muted">
+  <footer class="foot muted" id="footer">
     Cifrado de ponta a ponta. O código da sala fica só no seu navegador.
   </footer>
 </body>

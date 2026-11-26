@@ -5,7 +5,7 @@ use std::{
 };
 use sync2gether::{
     network::{self, Event, relay::ClientTls},
-    protocol::{Media, Message, Presence, Snapshot, Transition},
+    protocol::{Media, Message, Playback, Presence, Side, Snapshot, Transition},
 };
 use sync2gether_relay::{Limits, Relay, ws};
 use sync2gether_web::guest::{Command, Guest, PlayerStatus};
@@ -446,4 +446,115 @@ async fn wrong_words_are_rejected_and_other_origins_cannot_connect() {
     assert!(tokio_tungstenite::connect_async(request).await.is_err());
     let request = format!("ws://{web}/outro").into_client_request().unwrap();
     assert!(tokio_tungstenite::connect_async(request).await.is_err());
+}
+
+#[test]
+fn web_theme_tokens_match_core_source_of_truth() {
+    let expected = sync2gether_core::theme::css_tokens();
+    let actual = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/static/tokens.css"),
+    )
+    .expect("web/static/tokens.css ausente");
+    assert_eq!(
+        actual, expected,
+        "web/static/tokens.css divergiu de sync2gether_core::theme::css_tokens()"
+    );
+}
+
+#[test]
+fn web_static_files_do_not_include_preview_code() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let forbidden = [
+        "previewFixture",
+        "runPreview",
+        "preview-backdrop",
+        "preview.js",
+        "preview.css",
+        "get(\"preview\")",
+        "Filme.de.demonstracao",
+    ];
+    for entry in std::fs::read_dir(root.join("web/static")).expect("web/static ausente") {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(
+            !name.starts_with("preview"),
+            "arquivo de preview não pode ficar em web/static/: {name}"
+        );
+        if matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("html" | "css" | "js")
+        ) {
+            let content = std::fs::read_to_string(&path).unwrap();
+            for pattern in forbidden {
+                assert!(
+                    !content.contains(pattern),
+                    "web/static/{name} contém referência ao modo preview ({pattern})"
+                );
+            }
+        }
+    }
+    let dockerfile =
+        std::fs::read_to_string(root.join("web/Dockerfile")).expect("web/Dockerfile ausente");
+    assert!(!dockerfile.contains("--preview"));
+    assert!(!dockerfile.contains("web/preview"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browser_guest_view_projects_pause_author_buffering_and_peer_leave() {
+    let (relay, web) = start_relay().await;
+    let (mut rx, code, origin) = host(relay).await;
+    let mut browser = Browser::new(&code, web);
+    let (tx, _peer) = host_connected(&mut rx, &mut browser).await;
+    browser
+        .until("conectado", |b| b.guest.view().connected)
+        .await;
+    browser
+        .guest
+        .set_media(Some(media()), Some("MinhaCopia.mp4".into()));
+
+    let host_ms = origin.elapsed().as_secs_f64() * 1000.0;
+    let mut state = snapshot(1, host_ms, None);
+    state.paused = true;
+    state.paused_by = Some(Side::Host);
+    state.waiting_buffer = true;
+    state.host.buffering = true;
+    state.host.playback = Some(Playback {
+        position: 42.0,
+        host_ms,
+        speed: 1.0,
+        paused: true,
+        seeking: false,
+    });
+    tx.send(Message::State(Box::new(state))).await.unwrap();
+    browser
+        .until("estado com quem pausou", |b| {
+            b.guest.view().paused_by == Some(Side::Host)
+        })
+        .await;
+    let view = browser.guest.view();
+    assert_eq!(view.paused_by, Some(Side::Host));
+    assert!(view.waiting_buffer);
+    assert!(view.host_buffering);
+    assert_eq!(view.guest_file_name.as_deref(), Some("MinhaCopia.mp4"));
+
+    let host_ms = origin.elapsed().as_secs_f64() * 1000.0;
+    let mut state = snapshot(2, host_ms, None);
+    state.paused = true;
+    state.paused_by = Some(Side::Guest);
+    tx.send(Message::State(Box::new(state))).await.unwrap();
+    browser
+        .until("pausado pelo convidado", |b| {
+            b.guest.view().paused_by == Some(Side::Guest)
+        })
+        .await;
+    assert_eq!(browser.guest.view().paused_by, Some(Side::Guest));
+
+    tx.send(Message::Bye).await.unwrap();
+    browser
+        .until("anfitrião saiu", |b| b.guest.view().peer_left)
+        .await;
+    let view = browser.guest.view();
+    assert!(view.peer_left);
+    assert!(view.ended);
+    assert!(view.notice.is_some());
 }

@@ -1,5 +1,6 @@
 use super::{Palette, strong};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Shape, Stroke, Vec2, vec2};
+use sync2gether_core::theme as tokens;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -18,15 +19,15 @@ pub(crate) enum Size {
 impl Size {
     fn height(self) -> f32 {
         match self {
-            Self::Large => 48.0,
-            Self::Medium => 40.0,
-            Self::Small => 32.0,
+            Self::Large => f32::from(tokens::BUTTON_LARGE_H_PX),
+            Self::Medium => f32::from(tokens::BUTTON_MEDIUM_H_PX),
+            Self::Small => f32::from(tokens::BUTTON_SMALL_H_PX),
         }
     }
     fn font(self) -> f32 {
         match self {
             Self::Large => 16.0,
-            Self::Medium => 15.0,
+            Self::Medium => f32::from(tokens::TEXT_BODY_PX),
             Self::Small => 14.0,
         }
     }
@@ -39,8 +40,8 @@ impl Size {
     }
     fn radius(self) -> u8 {
         match self {
-            Self::Large | Self::Medium => 8,
-            Self::Small => 6,
+            Self::Large | Self::Medium => tokens::RADIUS_CONTROL_PX,
+            Self::Small => tokens::RADIUS_SMALL_PX,
         }
     }
 }

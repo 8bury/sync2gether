@@ -1,0 +1,89 @@
+:root {
+  --background: #161616;
+  --surface: #202020;
+  --inset: #101010;
+  --raised: #202020;
+  --hover: #272727;
+  --disabled: #202020;
+  --action: #eeeeec;
+  --action-hover: #ffffff;
+  --action-ink: #141414;
+  --border: #2d2d2d;
+  --border-strong: #454545;
+  --text: #eeeeec;
+  --muted: #a4a4a1;
+  --faint: #8b8b88;
+  --accent: #eeeeec;
+  --success: #eeeeec;
+  --warning: #e6b39e;
+  --error: #e6b39e;
+  --font-sans: "Geist", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --text-body: 15px;
+  --text-small: 13px;
+  --text-heading: 20px;
+  --text-mono: 13px;
+  --radius-window: 10px;
+  --radius-control: 8px;
+  --radius-small: 6px;
+  --space-x: 12px;
+  --space-y: 10px;
+  --button-pad-x: 14px;
+  --button-pad-y: 8px;
+  --button-large-h: 48px;
+  --button-medium-h: 40px;
+  --button-small-h: 32px;
+  --player-controls-h: 106px;
+  --player-icon: 38px;
+  --player-side-wide: 28px;
+  --player-side-narrow: 16px;
+  --player-ink: #dededb;
+  --player-muted: #d8d8d5;
+  --player-accent: #eeeeec;
+  --player-warning: #e6b39e;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --background: #f5f5f3;
+    --surface: #ffffff;
+    --inset: #ecece9;
+    --raised: #ffffff;
+    --hover: #e9e9e6;
+    --disabled: #ecece9;
+    --action: #161616;
+    --action-hover: #000000;
+    --action-ink: #f5f5f3;
+    --border: #dddddb;
+    --border-strong: #bebebb;
+    --text: #161616;
+    --muted: #565653;
+    --faint: #6e6e6b;
+    --accent: #161616;
+    --success: #161616;
+    --warning: #9e4426;
+    --error: #9e4426;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --background: #f5f5f3;
+  --surface: #ffffff;
+  --inset: #ecece9;
+  --raised: #ffffff;
+  --hover: #e9e9e6;
+  --disabled: #ecece9;
+  --action: #161616;
+  --action-hover: #000000;
+  --action-ink: #f5f5f3;
+  --border: #dddddb;
+  --border-strong: #bebebb;
+  --text: #161616;
+  --muted: #565653;
+  --faint: #6e6e6b;
+  --accent: #161616;
+  --success: #161616;
+  --warning: #9e4426;
+  --error: #9e4426;
+  color-scheme: light;
+}

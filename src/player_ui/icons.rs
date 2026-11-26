@@ -1,8 +1,12 @@
 use crate::ui::kit::{self, Glyph};
 use eframe::egui::{self, Color32, Pos2, Stroke, vec2};
 
-const ICON_SIZE: f32 = 38.0;
-const INK: Color32 = Color32::from_rgb(222, 222, 219);
+const ICON_SIZE: f32 = sync2gether_core::theme::PLAYER_ICON_PX as f32;
+const INK: Color32 = Color32::from_rgb(
+    sync2gether_core::theme::PLAYER_INK.0,
+    sync2gether_core::theme::PLAYER_INK.1,
+    sync2gether_core::theme::PLAYER_INK.2,
+);
 
 pub(super) enum Icon {
     Play,

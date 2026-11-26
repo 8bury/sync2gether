@@ -1,7 +1,12 @@
 use super::kit;
 use eframe::egui::{self, Color32, RichText, Stroke};
+use sync2gether_core::theme::{self as tokens, Rgb};
 
 const MEDIUM_FAMILY: &str = "sans-medium";
+
+fn rgb(c: Rgb) -> Color32 {
+    Color32::from_rgb(c.0, c.1, c.2)
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
@@ -27,52 +32,26 @@ pub(crate) struct Palette {
 
 impl Palette {
     pub(crate) fn new(dark: bool) -> Self {
-        if dark {
-            let text = Color32::from_rgb(238, 238, 236);
-            let alert = Color32::from_rgb(230, 179, 158);
-            Self {
-                background: Color32::from_rgb(22, 22, 22),
-                surface: Color32::from_rgb(32, 32, 32),
-                inset: Color32::from_rgb(16, 16, 16),
-                raised: Color32::from_rgb(32, 32, 32),
-                hover: Color32::from_rgb(39, 39, 39),
-                disabled: Color32::from_rgb(32, 32, 32),
-                action: text,
-                action_hover: Color32::WHITE,
-                action_ink: Color32::from_rgb(20, 20, 20),
-                border: Color32::from_rgb(45, 45, 45),
-                border_strong: Color32::from_rgb(69, 69, 69),
-                text,
-                muted: Color32::from_rgb(164, 164, 161),
-                faint: Color32::from_rgb(139, 139, 136),
-                accent: text,
-                success: text,
-                warning: alert,
-                error: alert,
-            }
-        } else {
-            let text = Color32::from_rgb(22, 22, 22);
-            let alert = Color32::from_rgb(158, 68, 38);
-            Self {
-                background: Color32::from_rgb(245, 245, 243),
-                surface: Color32::WHITE,
-                inset: Color32::from_rgb(236, 236, 233),
-                raised: Color32::WHITE,
-                hover: Color32::from_rgb(233, 233, 230),
-                disabled: Color32::from_rgb(236, 236, 233),
-                action: text,
-                action_hover: Color32::BLACK,
-                action_ink: Color32::from_rgb(245, 245, 243),
-                border: Color32::from_rgb(221, 221, 219),
-                border_strong: Color32::from_rgb(190, 190, 187),
-                text,
-                muted: Color32::from_rgb(86, 86, 83),
-                faint: Color32::from_rgb(110, 110, 107),
-                accent: text,
-                success: text,
-                warning: alert,
-                error: alert,
-            }
+        let p = if dark { tokens::DARK } else { tokens::LIGHT };
+        Self {
+            background: rgb(p.background),
+            surface: rgb(p.surface),
+            inset: rgb(p.inset),
+            raised: rgb(p.raised),
+            hover: rgb(p.hover),
+            disabled: rgb(p.disabled),
+            action: rgb(p.action),
+            action_hover: rgb(p.action_hover),
+            action_ink: rgb(p.action_ink),
+            border: rgb(p.border),
+            border_strong: rgb(p.border_strong),
+            text: rgb(p.text),
+            muted: rgb(p.muted),
+            faint: rgb(p.faint),
+            accent: rgb(p.accent),
+            success: rgb(p.success),
+            warning: rgb(p.warning),
+            error: rgb(p.error),
         }
     }
 }
@@ -122,8 +101,8 @@ pub fn configure_theme(ctx: &egui::Context, light: bool) {
     visuals.panel_fill = colors.background;
     visuals.window_fill = colors.surface;
     visuals.window_stroke = Stroke::new(1.0, colors.border);
-    visuals.window_corner_radius = egui::CornerRadius::same(10);
-    visuals.menu_corner_radius = egui::CornerRadius::same(8);
+    visuals.window_corner_radius = egui::CornerRadius::same(tokens::RADIUS_WINDOW_PX);
+    visuals.menu_corner_radius = egui::CornerRadius::same(tokens::RADIUS_CONTROL_PX);
     let shadow = Color32::from_black_alpha(if light { 22 } else { 90 });
     visuals.window_shadow = egui::Shadow {
         offset: [0, 8],
@@ -159,7 +138,7 @@ pub fn configure_theme(ctx: &egui::Context, light: bool) {
         &mut visuals.widgets.hovered,
         &mut visuals.widgets.open,
     ] {
-        widget.corner_radius = egui::CornerRadius::same(6);
+        widget.corner_radius = egui::CornerRadius::same(tokens::RADIUS_SMALL_PX);
         widget.bg_fill = colors.raised;
         widget.weak_bg_fill = colors.raised;
         widget.bg_stroke = Stroke::new(1.0, colors.border);
@@ -185,19 +164,40 @@ pub fn configure_theme(ctx: &egui::Context, light: bool) {
             egui::Theme::Dark
         },
         |style| {
-            style.spacing.item_spacing = egui::vec2(12.0, 10.0);
-            style.spacing.button_padding = egui::vec2(14.0, 8.0);
+            style.spacing.item_spacing = egui::vec2(
+                f32::from(tokens::ITEM_SPACING_X_PX),
+                f32::from(tokens::ITEM_SPACING_Y_PX),
+            );
+            style.spacing.button_padding = egui::vec2(
+                f32::from(tokens::BUTTON_PAD_X_PX),
+                f32::from(tokens::BUTTON_PAD_Y_PX),
+            );
             style.spacing.interact_size.y = 34.0;
             style.spacing.menu_margin = egui::Margin::same(10);
             style.spacing.menu_spacing = 4.0;
             style.spacing.scroll = egui::style::ScrollStyle::floating();
             style.animation_time = 0.15;
             for (text_style, font) in [
-                (egui::TextStyle::Body, egui::FontId::proportional(15.0)),
-                (egui::TextStyle::Button, egui::FontId::proportional(15.0)),
-                (egui::TextStyle::Small, egui::FontId::proportional(13.0)),
-                (egui::TextStyle::Heading, egui::FontId::proportional(20.0)),
-                (egui::TextStyle::Monospace, egui::FontId::monospace(13.0)),
+                (
+                    egui::TextStyle::Body,
+                    egui::FontId::proportional(f32::from(tokens::TEXT_BODY_PX)),
+                ),
+                (
+                    egui::TextStyle::Button,
+                    egui::FontId::proportional(f32::from(tokens::TEXT_BODY_PX)),
+                ),
+                (
+                    egui::TextStyle::Small,
+                    egui::FontId::proportional(f32::from(tokens::TEXT_SMALL_PX)),
+                ),
+                (
+                    egui::TextStyle::Heading,
+                    egui::FontId::proportional(f32::from(tokens::TEXT_HEADING_PX)),
+                ),
+                (
+                    egui::TextStyle::Monospace,
+                    egui::FontId::monospace(f32::from(tokens::TEXT_MONO_PX)),
+                ),
             ] {
                 style.text_styles.insert(text_style, font);
             }

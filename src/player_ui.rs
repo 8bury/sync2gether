@@ -12,9 +12,13 @@ use crate::{
 use eframe::egui::{self, Color32, RichText, Stroke};
 use icons::{Icon, icon_button};
 
-const ACCENT: Color32 = Color32::from_rgb(238, 238, 236);
-const WIDE_PLAYER: f32 = 860.0;
-const CONTROLS_HEIGHT: f32 = 106.0;
+const ACCENT: Color32 = Color32::from_rgb(
+    sync2gether_core::theme::DARK.accent.0,
+    sync2gether_core::theme::DARK.accent.1,
+    sync2gether_core::theme::DARK.accent.2,
+);
+const WIDE_PLAYER: f32 = sync2gether_core::theme::PLAYER_WIDE_PX as f32;
+const CONTROLS_HEIGHT: f32 = sync2gether_core::theme::PLAYER_CONTROLS_H_PX as f32;
 
 pub enum Video<'a> {
     Texture(&'a egui::TextureHandle),

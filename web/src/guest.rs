@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use sync2gether_core::{
     code::Code,
     protocol::{
-        Control, Media, Message, Playback, Presence, Snapshot, StreamProgress, Verification,
+        Control, Media, Message, Playback, Presence, Side, Snapshot, StreamProgress, Verification,
         WebStreamAnswer, WebStreamOffer,
     },
     sync::{Clock, Controller, Correction},
@@ -83,16 +83,28 @@ pub struct View {
     pub host_duration: f64,
     pub host_ready: bool,
     pub host_loading: bool,
+    pub host_buffering: bool,
+    pub host_blocked: bool,
     pub host_web_stream: bool,
+    pub host_position: Option<f64>,
     pub guest_media: Option<Media>,
+    pub guest_file_name: Option<String>,
     pub matched: bool,
     pub mismatch: bool,
     pub paused: bool,
+    pub paused_by: Option<Side>,
     pub playing: bool,
     pub position: f64,
+    pub buffered_until: f64,
+    pub loaded: bool,
     pub watching: bool,
     pub ready: bool,
+    pub blocked: bool,
     pub buffering: bool,
+    pub waiting_buffer: bool,
+    pub preparing: bool,
+    pub scheduled: bool,
+    pub peer_left: bool,
     pub scheduled_start_ms: Option<f64>,
     pub drift_ms: Option<f64>,
     pub generation: u64,
@@ -120,6 +132,7 @@ pub struct Guest {
     watching_media: Option<Media>,
     connected: bool,
     reconnecting: bool,
+    peer_left: bool,
     peer: Option<String>,
     notice: Option<String>,
     error: Option<String>,
@@ -160,6 +173,7 @@ impl Guest {
             watching_media: None,
             connected: false,
             reconnecting: false,
+            peer_left: false,
             peer: None,
             notice: None,
             error: None,
@@ -426,22 +440,37 @@ impl Guest {
             host_duration: host.map_or(0.0, |h| h.duration),
             host_ready: host.is_some_and(|h| h.ready),
             host_loading: host.is_some_and(|h| h.loading),
+            host_buffering: host.is_some_and(|h| h.buffering),
+            host_blocked: host.is_some_and(|h| h.blocked),
             host_web_stream: host.is_some_and(|h| h.web_stream),
+            host_position: host
+                .and_then(|h| h.playback.as_ref())
+                .zip(host_now)
+                .map(|(p, now)| p.position_at(now)),
             guest_media: self.presence.media.clone(),
+            guest_file_name: self.presence.file_name.clone(),
             matched,
             mismatch: host.is_some_and(|h| {
                 h.media.is_some() && self.presence.media.is_some() && h.media != self.presence.media
             }),
             paused: state.is_none_or(|s| s.paused),
+            paused_by: state.and_then(|s| s.paused_by),
             playing: state
                 .zip(host_now)
                 .is_some_and(|(s, now)| s.playing_at(now)),
             position: state
                 .zip(host_now)
                 .map_or(self.player.position, |(s, now)| s.position_at(now)),
+            buffered_until: self.player.buffered_until,
+            loaded: self.player.loaded,
             watching: self.watching,
             ready: self.presence.ready,
+            blocked: self.presence.blocked,
             buffering: self.presence.buffering,
+            waiting_buffer: state.is_some_and(|s| s.waiting_buffer),
+            preparing: self.requested.is_some() && self.scheduled.is_none(),
+            scheduled: self.scheduled.is_some(),
+            peer_left: self.peer_left,
             scheduled_start_ms: self.scheduled_start_ms,
             drift_ms: state
                 .zip(host_now)
@@ -461,6 +490,7 @@ impl Guest {
                 self.disconnected();
                 self.connected = true;
                 self.reconnecting = false;
+                self.peer_left = false;
                 self.error = None;
                 self.peer = Some(peer);
                 self.last_heartbeat = f64::NEG_INFINITY;
@@ -482,6 +512,7 @@ impl Guest {
             }
             Event::PeerLeft => {
                 self.disconnected();
+                self.peer_left = true;
                 self.commands.push(Command::Pause { paused: true });
                 self.commands.push(Command::Close);
                 self.notice = Some(match &self.peer {

@@ -207,6 +207,9 @@ pub(super) fn connection_details(ui: &mut egui::Ui, view: &View, actions: &mut V
                 if view.role == Role::Host {
                     preparation::copy_button(ui, "Copiar código", code);
                 }
+                if let Some(link) = &view.web_link {
+                    preparation::copy_button(ui, "Copiar link para navegador", link);
+                }
             }
             if view.relay_offline {
                 ui.label("Sem contato com o servidor. Tentando de novo…");

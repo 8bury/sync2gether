@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-SOURCE_DIRS = ("src", "relay/src", "tests", "examples")
+SOURCE_DIRS = ("src", "relay/src", "core/src", "web/src", "tests", "examples")
 
 
 def comments(src):

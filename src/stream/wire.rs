@@ -9,7 +9,7 @@ pub const STATUS_OK: u8 = 0;
 pub const STATUS_ERR: u8 = 1;
 
 pub const MAX_PROBE_BYTES: u32 = 1024 * 1024;
-pub const MAX_HASH_TABLE_BYTES: usize = 32 * 1024 * 1024;
+pub use crate::protocol::MAX_HASH_TABLE_BYTES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {

@@ -139,6 +139,7 @@ fn demo_view(state: SessionState) -> crate::runtime::View {
     } else {
         view.internet = true;
         view.room_code = Some("4821-gato-lua".into());
+        view.web_link = crate::ui::web_link(Some("https://assistir.example"), &view);
     }
     view.matched = view.connected;
     view.ready = view.connected;

@@ -369,6 +369,16 @@ pub(super) fn room(ui: &mut egui::Ui, colors: Palette, view: &View, actions: &mu
         ui.add_space(if compact { 2.0 } else { 10.0 });
         if view.internet {
             invite_code(ui, colors, view, compact);
+            if let Some(link) = &view.web_link {
+                ui.add_space(if compact { 6.0 } else { 12.0 });
+                ui.label(
+                    RichText::new("Sem o app? A pessoa pode assistir pelo navegador.")
+                        .size(13.0)
+                        .color(colors.muted),
+                );
+                ui.add_space(6.0);
+                copy_button(ui, "Copiar link para navegador", link);
+            }
         } else {
             for address in super::room_addresses(view) {
                 ui.push_id(address, |ui| {

@@ -3,6 +3,7 @@ mod rooms;
 mod stream;
 mod sync;
 mod view;
+mod web_stream;
 
 use self::{
     files::FileResult,
@@ -82,6 +83,7 @@ pub struct View {
     pub room_key: String,
     pub internet: bool,
     pub room_code: Option<String>,
+    pub web_link: Option<String>,
     pub relay_offline: bool,
     pub preparing: bool,
     pub scheduled: bool,
@@ -428,7 +430,7 @@ impl Worker {
                     if self.view.role == Role::Host {
                         self.publish();
                     } else if self.view.role == Role::Guest && self.view.connected {
-                        self.send(Message::Presence(self.presence.clone()));
+                        self.send(Message::Presence(Box::new(self.presence.clone())));
                         let sent_ms = self.now();
                         self.pings.push_back(sent_ms);
                         while self.pings.len() > 16 {

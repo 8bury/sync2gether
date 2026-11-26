@@ -37,6 +37,11 @@ disponíveis em **Configurações → Opções avançadas de rede**.
 O app também verifica os arquivos, agenda o início, corrige desvios e reconecta
 o convidado sozinho. É possível abrir um filme sozinho.
 
+Quem não tem o app pode entrar como convidado **pelo navegador**, com um link
+que o anfitrião copia na sala: com a própria cópia do filme ou por streaming
+P2P direto (WebRTC). O navegador só toca os formatos que ele mesmo suporta,
+em geral MP4 com H.264 e AAC; veja [Convidado no navegador](docs/navegador.md).
+
 ## Instalação
 
 Baixe o pacote para seu sistema operacional e o arquivo `SHA256SUMS` em
@@ -187,6 +192,7 @@ bash scripts/check.sh
 | [Desenvolvimento e testes](docs/desenvolvimento.md) | Dependências, demo, capturas e testes com vídeo sintético |
 | [Arquitetura e sincronização](docs/arquitetura.md) | Módulos, libmpv, protocolo e correção de desvio |
 | [Salas pela internet e relay](docs/relay.md) | Código da sala, criptografia, reconexão e publicação do servidor |
+| [Convidado no navegador](docs/navegador.md) | Link para navegador, cópia própria, streaming WebRTC, limites e publicação da página |
 | [Diagnóstico](docs/diagnostico.md) | Logs, GDB e travamentos em Wayland |
 | [Empacotamento e Release](docs/empacotamento.md) | Builds para Linux, Windows e macOS |
 | [Histórico de validação](docs/validacao.md) | Ambientes e cenários testados nas revisões anteriores |

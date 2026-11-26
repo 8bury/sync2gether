@@ -49,6 +49,7 @@ impl Worker {
                         self.local_media.is_some()
                             && self.presence.media.is_some()
                             && !self.view.loading
+                            && !state.guest.web_guest
                     }
                     Role::Guest => state.host.media.is_some() && !state.host.loading,
                     Role::Local => false,

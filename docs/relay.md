@@ -105,6 +105,35 @@ entradas pendentes e 2 conexões pareadas por sala, 256 KiB/s por sentido e
 30 s de silêncio numa conexão pareada. Os registros mostram apenas contadores
 agregados a cada hora, sem números de sala nem endereços.
 
+## Navegadores por WebSocket
+
+O [convidado no navegador](navegador.md) não abre TCP puro, então o relay pode
+escutar também um WebSocket em `/relay`, numa porta separada (`--ws-listen` ou
+`RELAY_WS_LISTEN`). Cada mensagem binária do WebSocket carrega um trecho do
+mesmo fluxo de bytes da conexão TCP: o navegador envia `Join`, SPAKE2 e Noise
+exatamente como o app, e o anfitrião não percebe diferença. Por WebSocket só é
+aceito `Join`; `Host` e `Accept` recebem `Unknown`.
+
+O WebSocket não tem TLS próprio: publique-o atrás de um proxy HTTPS (Coolify,
+Traefik, Caddy ou Cloudflare). Opções:
+
+| Opção | Variável | Efeito |
+| --- | --- | --- |
+| `--ws-listen ENDEREÇO:PORTA` | `RELAY_WS_LISTEN` | Ativa o WebSocket |
+| `--ws-origin ORIGEM` (repetível) | `RELAY_WS_ORIGINS` (vírgulas) | Só aceita páginas dessas origens; sem a opção, qualquer origem |
+| `--ws-client-ip-header NOME` | `RELAY_WS_CLIENT_IP_HEADER` | Lê o IP do cliente nesse cabeçalho |
+
+Os limites por IP usam o endereço da conexão. Atrás de um proxy, todas as
+conexões vêm do proxy; com `RELAY_WS_CLIENT_IP_HEADER`, o relay usa o último
+endereço do cabeçalho indicado, mas **só quando a conexão vem de um endereço
+local ou privado** (o proxy na mesma rede). Escolha um cabeçalho que o proxy
+mais próximo sempre sobrescreve: `x-real-ip` no Traefik ou `cf-connecting-ip`
+atrás da Cloudflare. Pedidos sem o cabeçalho configurado são recusados.
+
+O upgrade e o primeiro quadro têm 5 s de prazo, no máximo 256 upgrades ficam
+pendentes ao mesmo tempo e cada mensagem tem até 24 KiB. Os registros continuam
+só com contadores agregados.
+
 ## Executar localmente
 
 Sem certificados (TCP puro, padrão para `127.0.0.1` e `localhost`):
@@ -163,6 +192,10 @@ Há duas formas suportadas de terminar TLS em produção:
    ```sh
    docker run --rm -p 127.0.0.1:7843:7843 sync2gether-relay
    ```
+
+Para receber navegadores, defina também `RELAY_WS_LISTEN=0.0.0.0:8080` e
+publique essa porta atrás do proxy HTTPS (ou pelo container `web/Dockerfile`,
+que repassa `/relay`), como descrito em [Convidado no navegador](navegador.md#publicação).
 
 No Coolify, a aplicação usa este repositório com o build pack Dockerfile:
 

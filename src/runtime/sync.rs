@@ -58,7 +58,7 @@ impl Worker {
                 if self.view.connected {
                     if matches!(control, Control::Play) {
                         self.refresh_presence();
-                        self.send(Message::Presence(self.presence.clone()));
+                        self.send(Message::Presence(Box::new(self.presence.clone())));
                     }
                     self.send(Message::Request(control));
                 }
@@ -197,6 +197,7 @@ impl Worker {
         self.presence.rtt_ms = self.clock.rtt_ms;
         self.presence.uncertainty_ms = self.clock.uncertainty_ms;
         self.presence.streaming = self.view.stream.active || self.guest_stream.is_some();
+        self.presence.web_stream = self.view.role == Role::Host && self.local_media.is_some();
         self.presence.stream_progress = if self.view.role == Role::Guest
             && (self.guest_stream.is_some()
                 || (self.view.stream.active && !self.view.stream.is_sender))

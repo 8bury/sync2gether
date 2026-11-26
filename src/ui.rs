@@ -23,6 +23,27 @@ use {
     theme::{feedback, medium_family, messages, quiet, section_label, title},
 };
 
+pub fn web_base<'a>(explicit: Option<&'a str>, relay: &str) -> Option<&'a str> {
+    use crate::network::relay::{DEFAULT_RELAY, DEFAULT_WEB_URL, relay_address};
+    match explicit.map(str::trim) {
+        Some("") => None,
+        Some(url) => Some(url),
+        None => (relay_address(relay).as_deref() == Ok(DEFAULT_RELAY)).then_some(DEFAULT_WEB_URL),
+    }
+}
+
+pub fn web_link(base: Option<&str>, view: &crate::runtime::View) -> Option<String> {
+    let base = base?.trim().trim_end_matches('/');
+    let local = ["http://localhost", "http://127.0.0.1", "http://[::1]"]
+        .iter()
+        .any(|prefix| base.starts_with(prefix));
+    if !(base.starts_with("https://") || local) || base.contains('#') {
+        return None;
+    }
+    let code = view.room_code.as_deref()?;
+    (view.internet && view.role == crate::runtime::Role::Host).then(|| format!("{base}/#{code}"))
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Screen {
     #[default]
@@ -335,5 +356,53 @@ fn draw_body(
                 });
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::{Role, View};
+
+    #[test]
+    fn browser_links_need_a_safe_base_and_an_internet_room_hosted_here() {
+        let view = View {
+            role: Role::Host,
+            internet: true,
+            room_code: Some("4821-gato-lua".into()),
+            ..View::default()
+        };
+        assert_eq!(
+            web_link(Some("https://assistir.example/"), &view).as_deref(),
+            Some("https://assistir.example/#4821-gato-lua")
+        );
+        assert_eq!(
+            web_link(Some("http://localhost:8080"), &view).as_deref(),
+            Some("http://localhost:8080/#4821-gato-lua")
+        );
+        assert_eq!(web_link(None, &view), None);
+        assert_eq!(web_link(Some("http://assistir.example"), &view), None);
+        assert_eq!(web_link(Some("https://a.example/#x"), &view), None);
+        let guest = View {
+            role: Role::Guest,
+            ..view.clone()
+        };
+        assert_eq!(web_link(Some("https://assistir.example"), &guest), None);
+    }
+
+    #[test]
+    fn the_published_page_is_the_default_only_for_the_default_relay() {
+        use crate::network::relay::{DEFAULT_RELAY, DEFAULT_WEB_URL};
+        assert_eq!(web_base(None, DEFAULT_RELAY), Some(DEFAULT_WEB_URL));
+        assert_eq!(
+            web_base(None, "relay.pedrosales.dev"),
+            Some(DEFAULT_WEB_URL)
+        );
+        assert_eq!(web_base(None, "relay.example.com:7843"), None);
+        assert_eq!(
+            web_base(Some("https://a.example"), "relay.example.com"),
+            Some("https://a.example")
+        );
+        assert_eq!(web_base(Some(""), DEFAULT_RELAY), None);
     }
 }

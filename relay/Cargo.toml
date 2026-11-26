@@ -10,13 +10,16 @@ publish = false
 workspace = true
 
 [dependencies]
+sync2gether-core = { path = "../core", default-features = false }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 rand = "0.10.3"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2.2.0"
-serde = { version = "1.0.229", features = ["derive"] }
+serde = "1.0.229"
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "sync", "time", "io-util", "macros", "signal"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
 rcgen = "0.14.10"

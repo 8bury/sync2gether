@@ -32,7 +32,14 @@ funcionalidades reais.
 - `src/network/relay.rs`: salas pela internet, código da sala e reconexão pelo relay.
 - `src/network/secure.rs`: SPAKE2 com o código e canal Noise cifrado.
 - `relay/`: servidor intermediário, sem dependências da interface; publicado
-  com `relay/Dockerfile`.
+  com `relay/Dockerfile`. `relay/src/ws.rs` recebe navegadores por WebSocket.
+- `core/`: mensagens, relógio, código da sala, handshake e formato do canal de
+  dados sem I/O, compartilhados pelo app, pelo relay e pelo WebAssembly.
+- `web/`: convidado no navegador. `web/src/` compila para WebAssembly (sem I/O)
+  e `web/static/` tem a página em JavaScript simples; `scripts/build-web.sh`
+  gera `target/web` e `web/Dockerfile` publica a página.
+- `src/stream/webrtc.rs` e `src/runtime/web_stream.rs`: streaming WebRTC do
+  anfitrião para o navegador.
 - `src/discovery.rs`: anúncios UDP na rede e confirmação TCP de salas em segundo plano.
 - `src/session.rs` e `src/sync.rs`: preparação confirmada, início agendado,
   relógio monotônico filtrado e correção de reprodução.
@@ -42,6 +49,10 @@ funcionalidades reais.
 - `tests/layout.rs`: teste da interface sem janela ou conexão.
 - `tests/network.rs`: comunicação TCP real em localhost.
 - `tests/relay.rs`: salas pela internet com relay real em localhost.
+- `tests/web.rs` e `tests/web_stream.rs`: convidado do navegador (compilado
+  nativamente) pelo WebSocket do relay e WebRTC do anfitrião contra `str0m`.
+- `tests/browser.rs`: Firefox headless real contra o runtime do anfitrião,
+  executado por `bash scripts/test-browser.sh`.
 - `tests/mvp.rs`: dois players reais com fixture sintética, executado por
   `bash scripts/test-mvp.sh`, incluindo proxy com atraso e jitter.
 

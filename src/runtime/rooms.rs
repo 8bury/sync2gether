@@ -346,7 +346,7 @@ impl Worker {
                     self.publish();
                 } else {
                     self.refresh_presence();
-                    self.send(Message::Presence(self.presence.clone()));
+                    self.send(Message::Presence(Box::new(self.presence.clone())));
                 }
             }
             network::Event::Disconnected => self.disconnected(),
@@ -362,7 +362,7 @@ impl Worker {
                 let received_ms = received_at.duration_since(self.origin).as_secs_f64() * 1000.0;
                 match (self.view.role, *message) {
                     (Role::Host, Message::Presence(p)) if p.valid() => {
-                        self.session.state.guest = p;
+                        self.session.state.guest = *p;
                         self.progress();
                     }
                     (Role::Host, Message::Request(c)) => self.control(c),
@@ -387,6 +387,10 @@ impl Worker {
                         })
                     }
                     (Role::Host, Message::StreamRequest) => self.handle_stream_request(),
+                    (Role::Host, Message::WebStreamOffer(offer)) => {
+                        self.handle_web_stream_offer(*offer)
+                    }
+                    (Role::Guest, Message::WebStreamAnswer(_)) => {}
                     (Role::Host, Message::StreamAnswer(answer)) if answer.valid() => {
                         self.handle_stream_answer(*answer);
                     }

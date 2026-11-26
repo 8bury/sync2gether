@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sync2gether::{
+    network::relay::DEFAULT_RELAY,
     protocol::Control,
     runtime::{Command, Role, Runtime, View},
     stream::StreamPhase,
@@ -35,15 +36,14 @@ fn mime(path: &Path) -> &'static str {
     }
 }
 
-async fn serve_http(listener: TcpListener, site: PathBuf, fixture: PathBuf, config: String) {
+async fn serve_http(listener: TcpListener, site: PathBuf, config: String) {
     let site = Arc::new(site);
-    let fixture = Arc::new(fixture);
     let config = Arc::new(config);
     loop {
         let Ok((mut stream, _)) = listener.accept().await else {
             continue;
         };
-        let (site, fixture, config) = (site.clone(), fixture.clone(), config.clone());
+        let (site, config) = (site.clone(), config.clone());
         tokio::spawn(async move {
             let mut request = Vec::new();
             let mut buffer = [0; 4096];
@@ -64,8 +64,6 @@ async fn serve_http(listener: TcpListener, site: PathBuf, fixture: PathBuf, conf
                 .to_owned();
             let (status, kind, body) = if path == "/config.js" {
                 ("200 OK", "text/javascript", config.as_bytes().to_vec())
-            } else if path == "/fixture.mp4" {
-                ("200 OK", "video/mp4", std::fs::read(&*fixture).unwrap())
             } else {
                 let relative = if path == "/" {
                     "index.html"
@@ -374,6 +372,50 @@ impl Browser {
         }
     }
 
+    async fn choose_file(&mut self, id: &str, path: &Path) {
+        let path = path.to_str().unwrap().to_owned();
+        match &self.protocol {
+            Protocol::Bidi { context } => {
+                let context = context.clone();
+                let found = self
+                    .call(
+                        "script.evaluate",
+                        json!({
+                            "expression": format!("document.getElementById('{id}')"),
+                            "target": { "context": context },
+                            "awaitPromise": false,
+                        }),
+                    )
+                    .await;
+                let element = found["result"]["sharedId"].as_str().unwrap().to_owned();
+                self.call(
+                    "input.setFiles",
+                    json!({
+                        "context": context,
+                        "element": { "sharedId": element },
+                        "files": [path],
+                    }),
+                )
+                .await;
+            }
+            Protocol::Cdp => {
+                let document = self.call("DOM.getDocument", json!({})).await;
+                let root = document["root"]["nodeId"].clone();
+                let found = self
+                    .call(
+                        "DOM.querySelector",
+                        json!({ "nodeId": root, "selector": format!("#{id}") }),
+                    )
+                    .await;
+                self.call(
+                    "DOM.setFileInputFiles",
+                    json!({ "files": [path], "nodeId": found["nodeId"] }),
+                )
+                .await;
+            }
+        }
+    }
+
     async fn text(&mut self, id: &str) -> String {
         self.eval(&format!("document.getElementById('{id}').textContent"))
             .await
@@ -427,11 +469,25 @@ struct Setup {
     host: Runtime,
     view: View,
     url: String,
+    fixture: PathBuf,
+}
+
+fn fixture() -> PathBuf {
+    let fixture = root().join(".cache/browser-fixture.mp4");
+    assert!(fixture.is_file(), "execute scripts/test-browser.sh");
+    fixture
 }
 
 async fn setup() -> Setup {
-    let fixture = root().join(".cache/browser-fixture.mp4");
-    assert!(fixture.is_file(), "execute scripts/test-browser.sh");
+    if let Ok(public) = std::env::var("SYNC2GETHER_TEST_PUBLIC_URL")
+        && !public.is_empty()
+    {
+        return host_room(
+            public.trim_end_matches('/').to_owned(),
+            DEFAULT_RELAY.into(),
+        )
+        .await;
+    }
     let site = root().join("target/web");
     assert!(site.join("pkg").is_dir(), "execute scripts/build-web.sh");
     let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -459,12 +515,16 @@ async fn setup() -> Setup {
         "export const RELAY_URL = \"ws://{ws_address}{}\";\n",
         ws::PATH
     );
-    tokio::spawn(serve_http(http, site, fixture.clone(), config));
+    tokio::spawn(serve_http(http, site, config));
+    host_room(origin, relay_address.to_string()).await
+}
 
+async fn host_room(origin: String, relay: String) -> Setup {
+    let fixture = fixture();
     let host = Runtime::start();
     let mut view = View::default();
     host.commands
-        .send(Command::OpenPath(fixture))
+        .send(Command::OpenPath(fixture.clone()))
         .await
         .unwrap();
     host_until(&host, &mut view, "abrir o filme", |v| {
@@ -472,7 +532,7 @@ async fn setup() -> Setup {
     })
     .await;
     host.commands
-        .send(Command::HostInternet(relay_address.to_string()))
+        .send(Command::HostInternet(relay))
         .await
         .unwrap();
     host_until(&host, &mut view, "código da sala", |v| {
@@ -484,6 +544,7 @@ async fn setup() -> Setup {
         host,
         view,
         url: format!("{origin}/#{code}"),
+        fixture,
     }
 }
 
@@ -540,6 +601,7 @@ async fn own_copy(mut firefox: Browser) {
         host,
         mut view,
         url,
+        fixture,
     } = setup().await;
     firefox.navigate(&url).await;
     firefox
@@ -554,20 +616,7 @@ async fn own_copy(mut firefox: Browser) {
         v.connected && v.role == Role::Host
     })
     .await;
-    firefox
-        .eval(
-            "(async () => {
-                const blob = await (await fetch('/fixture.mp4')).blob();
-                const file = new File([blob], 'filme.mp4', { type: 'video/mp4' });
-                const transfer = new DataTransfer();
-                transfer.items.add(file);
-                const input = document.getElementById('pick');
-                input.files = transfer.files;
-                input.dispatchEvent(new Event('change'));
-                return true;
-            })()",
-        )
-        .await;
+    firefox.choose_file("pick", &fixture).await;
     host_until(&host, &mut view, "cópias conferidas", |v| {
         v.matched && v.peer_ready
     })
@@ -584,6 +633,7 @@ async fn streaming(mut firefox: Browser) {
         host,
         mut view,
         url,
+        ..
     } = setup().await;
     firefox.navigate(&url).await;
     firefox

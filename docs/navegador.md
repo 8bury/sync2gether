@@ -132,7 +132,9 @@ Testes:
   ou Chromium headless (DevTools) contra o runtime real do anfitrião com um
   MP4 sintético (H.264 e AAC), nos dois modos. Requer Firefox, ffmpeg com
   libx264 e libmpv; sem Chrome (ou `SYNC2GETHER_TEST_CHROME`), os casos do
-  Chrome são pulados. Não faz parte do `check.sh`.
+  Chrome são pulados. Não faz parte do `check.sh`. Com
+  `SYNC2GETHER_TEST_PUBLIC_URL=https://sync2gether.pedrosales.dev`, os mesmos
+  casos usam a página publicada e o relay padrão, para conferir a publicação.
 
 ## Validação
 

@@ -222,6 +222,7 @@ export class Player {
 
   unlock() {
     const video = this.video;
+    if (this.loaded && video.readyState < HAVE_FUTURE_DATA) return Promise.resolve();
     const wasPaused = video.paused;
     return video.play().then(() => { if (wasPaused) video.pause(); }, () => {});
   }

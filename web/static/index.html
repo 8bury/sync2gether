@@ -181,9 +181,14 @@
 
         <aside class="subtitle-popover" id="subtitle-popover" hidden>
           <div class="popover-head">
-            <span class="popover-title">Legendas</span>
+            <span class="popover-title" id="track-popover-title">Legendas</span>
             <button class="ghost small" id="subtitle-close" type="button" aria-label="Fechar">Fechar</button>
           </div>
+          <div class="track-section" id="audio-section" hidden>
+            <p class="track-section-label">Áudio</p>
+            <div class="subtitle-list" id="audio-list" role="radiogroup" aria-label="Faixa de áudio"></div>
+          </div>
+          <p class="track-section-label" id="subtitle-section-label" hidden>Legendas</p>
           <div class="subtitle-list" role="radiogroup" aria-label="Faixa de legenda">
             <button class="subtitle-option is-selected" id="sub-opt-off" type="button" role="radio" aria-checked="true">
               <span class="subtitle-option-label">Desativadas</span>

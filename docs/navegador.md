@@ -23,17 +23,37 @@ Também é possível abrir a página sem link e colar o código.
 
 ## O que funciona no navegador
 
-A reprodução usa o `<video>` do navegador, sem decodificação própria. Funcionam
-os formatos que o navegador toca: em geral **MP4 com H.264 e AAC** e **WebM com
-VP8/VP9/AV1 e Opus**. A página avisa quando o arquivo do anfitrião tem uma
-extensão que costuma falhar (MKV, AVI, TS e outras) e quando o vídeo abre sem
-uma faixa reproduzível. Áudio **AC-3, E-AC-3 e DTS**, comum em arquivos MKV,
-não toca na maioria dos navegadores; a página avisa quando percebe que o áudio
-não está sendo decodificado. A página suporta legendas externas (`.srt` e
-`.vtt`) via `<track>` e WebVTT: o convidado pode abrir um arquivo local (`.srt`
-é convertido para WebVTT na página) ou receber a legenda que o anfitrião
-compartilhar pelo canal cifrado da sala, com controle para ativar, desativar e
-ajustar o atraso. A troca de faixas embutidas continua no app.
+A reprodução usa o `<video>` do navegador, sem decodificação própria:
+
+- **Com a própria cópia do convidado**, funcionam os formatos que o navegador toca
+  nativamente: em geral **MP4 com H.264 e AAC** e **WebM com VP8/VP9/AV1 e
+  Opus**. Áudio **AC-3, E-AC-3 e DTS** não toca direto na maioria dos
+  navegadores; a página avisa quando percebe que o áudio não está sendo
+  decodificado.
+- **Por streaming P2P direto**, formatos nativos de faixa única (como MP4 com
+  H.264 e AAC ou WebM com VP8/VP9/AV1 e Opus) continuam usando o envio direto do
+  arquivo original em blocos verificados por BLAKE3. Para **MKV** (e outros
+  contêineres como AVI, TS e FLV), áudio **AC-3, E-AC-3 ou DTS**, ou arquivos
+  com **múltiplas faixas de áudio**, o app do anfitrião reempacota o fluxo sob
+  demanda para **MP4 fragmentado (fMP4)** usando as bibliotecas do FFmpeg
+  carregadas dinamicamente (`libavformat`, `libavcodec`, `libswresample` e
+  `libavutil`), **sem recodificar o vídeo** e convertendo apenas o áudio
+  incompatível para AAC estéreo. A página reproduz o fluxo por **Media Source
+  Extensions (MSE)**, usa um índice de quadros-chave para buscar qualquer
+  posição rapidamente e permite escolher a faixa de áudio no menu de faixas do
+  player sem perder a sincronia da sala.
+- Se o computador do anfitrião não tiver as bibliotecas do FFmpeg disponíveis
+  (por exemplo, no pacote Windows atual, onde o FFmpeg fica estático dentro da
+  `libmpv-2.dll`), o anfitrião faz fallback automático para o streaming direto do
+  arquivo original com os avisos de formato habituais. Se o navegador não
+  suportar o codec de vídeo (por exemplo, HEVC em navegadores sem decodificador),
+  a página avisa para usar o app de desktop, já que recodificar vídeo fica fora
+  do escopo.
+
+A página também suporta legendas externas (`.srt` e `.vtt`) via `<track>` e
+WebVTT: o convidado pode abrir um arquivo local (`.srt` é convertido para WebVTT
+na página) ou receber a legenda que o anfitrião compartilhar pelo canal cifrado
+da sala, com controle para ativar, desativar e ajustar o atraso.
 
 O streaming guarda até 256 MiB de blocos na memória (128 MiB em celulares e
 aparelhos com pouca memória). Não há cache em disco: depois de uma
@@ -58,8 +78,13 @@ iniciar**.
   ficam no `sessionStorage` da aba, apagado ao sair da sala.
 - No streaming, a oferta e a resposta WebRTC (incluindo as impressões digitais
   DTLS) passam pelo canal cifrado da sala, então outro computador não consegue
-  se passar pelo anfitrião. Cada bloco é conferido com a tabela de hashes, cujo
-  resumo também veio pelo canal cifrado.
+  se passar pelo anfitrião. No envio direto do arquivo original, cada bloco é
+  conferido com a tabela de hashes BLAKE3, cujo resumo também veio pelo canal
+  cifrado. No modo MSE, o índice de quadros-chave, o segmento de inicialização e
+  os fragmentos fMP4 são gerados sob demanda pelo anfitrião e trafegam pelo
+  mesmo canal de dados WebRTC (SCTP sobre DTLS autenticado com as impressões
+  digitais trocadas no canal Noise), mantendo integridade e autenticidade de
+  ponta a ponta sem envolver o relay.
 - **Limite importante:** quem publica a página controla o JavaScript que lê o
   fragmento. A garantia de "o servidor não vê o código" vale enquanto a página
   servida for a deste repositório. O app de desktop não depende disso.
@@ -124,7 +149,8 @@ firefox --headless --screenshot="$PWD/.cache/web-paused.png" --window-size=1440,
 ```
 
 Os cenários disponíveis em `web/preview/` são `entry`, `connecting`, `ended`,
-`prepare`, `player`, `paused`, `reconnecting`, `buffering`, `subtitles` e
+`prepare`, `mkv-prepare`, `mkv-prepare-fallback`, `mkv-streaming`, `audio-menu`,
+`player`, `paused`, `reconnecting`, `buffering`, `subtitles` e
 `subtitles-menu`, com `&theme=light` ou `&theme=dark` opcionais. O build padrão
 (`bash scripts/build-web.sh`) e o `web/Dockerfile` nunca incluem `web/preview/`
 e ignoram `?preview=`.
@@ -144,37 +170,44 @@ O código fica em:
   aos pedidos de trecho do vídeo;
 - `web/preview/`: fixtures e ponto de entrada usados apenas com
   `scripts/build-web.sh --preview` para revisão visual e capturas em `.cache/`;
-- `src/stream/webrtc.rs` e `src/runtime/web_stream.rs`: o lado do anfitrião,
-  com `str0m` e criptografia em Rust puro.
+- `src/stream/webrtc.rs`, `src/stream/ffmpeg.rs`, `src/stream/remux.rs` e
+  `src/runtime/web_stream.rs`: o lado do anfitrião, com `str0m`, carregamento
+  dinâmico das bibliotecas FFmpeg e reempacotamento incremental em fMP4.
 
 Testes:
 
 - `tests/web.rs`: relay real com WebSocket, anfitrião real e o convidado do
   navegador compilado nativamente (código errado, origem recusada, relógio,
-  preparação, início agendado, reconexão e saída);
+  preparação, início agendado, reconexão, compatibilidade de protocolo e saída);
 - `tests/web_stream.rs`: WebRTC do anfitrião contra um cliente `str0m` em
   localhost, com tabela de hashes, blocos verificados, recusa e cancelamento;
+- `tests/remux.rs`: reempacotamento incremental de MKV sintético com H.264 e
+  duas faixas AC-3, índice de quadros-chave, timestamps `tfdt`, troca de faixa
+  de áudio, fallback sem bibliotecas FFmpeg e entrega pelo canal de dados WebRTC;
 - `bash scripts/test-browser.sh`: Firefox headless (WebDriver BiDi) e Chrome
   ou Chromium headless (DevTools) contra o runtime real do anfitrião com um
-  MP4 sintético (H.264 e AAC), nos dois modos. Requer Firefox, ffmpeg com
-  libx264 e libmpv; sem Chrome (ou `SYNC2GETHER_TEST_CHROME`), os casos do
-  Chrome são pulados. Não faz parte do `check.sh`. Com
-  `SYNC2GETHER_TEST_PUBLIC_URL=https://sync2gether.pedrosales.dev`, os mesmos
-  casos usam a página publicada e o relay padrão, para conferir a publicação.
+  MP4 sintético (H.264 e AAC) nos dois modos e um MKV sintético (H.264 com duas
+  faixas AC-3) via MSE com busca para trecho não carregado e troca de faixa de
+  áudio. Requer Firefox, ffmpeg com libx264 e libmpv; sem Chrome (ou
+  `SYNC2GETHER_TEST_CHROME`), os casos do Chrome são pulados. Não faz parte do
+  `check.sh`. Com `SYNC2GETHER_TEST_PUBLIC_URL=https://sync2gether.pedrosales.dev`,
+  os mesmos casos usam a página publicada e o relay padrão, para conferir a
+  publicação.
 
 ## Validação
 
-Em CachyOS (Arch), com relay e anfitrião em localhost, os quatro casos de
-`scripts/test-browser.sh` passaram no Firefox 160 e no Chrome 157 headless: a
-página entra pelo link, tira o código da barra de endereço, confere a cópia
-local ou recebe o filme por WebRTC, começa junto com o anfitrião e pausa
-quando ele pausa. A diferença medida pelo anfitrião ficou abaixo de 80 ms.
-Os testes usam reprodução sem som e autoplay liberado nas preferências do
-navegador de teste. Os mesmos quatro casos também passaram contra a página
-publicada em `https://sync2gether.pedrosales.dev` e o relay padrão (TLS na
-porta 7843 e WebSocket atrás de Traefik e Caddy), com anfitrião e navegador no
-mesmo computador.
+Em CachyOS (Arch) e Ubuntu 24.04, com relay e anfitrião em localhost, os casos
+de `scripts/test-browser.sh` passaram no Firefox e no Chrome headless: a página
+entra pelo link, tira o código da barra de endereço, confere a cópia local ou
+recebe o filme por WebRTC (tanto MP4 direto quanto MKV com duas faixas AC-3 via
+MSE, incluindo busca para posição não carregada e troca de faixa de áudio),
+começa junto com o anfitrião e pausa quando ele pausa. A diferença medida pelo
+anfitrião ficou abaixo de 80 ms. Os testes usam reprodução sem som e autoplay
+liberado nas preferências do navegador de teste. Os quatro casos originais
+também passaram contra a página publicada em `https://sync2gether.pedrosales.dev`
+e o relay padrão (TLS na porta 7843 e WebSocket atrás de Traefik e Caddy), com
+anfitrião e navegador no mesmo computador.
 
 Ainda não foram testados: Safari (desktop e iOS), navegadores de celular,
-redes reais com NAT entre os dois lados, arquivos MKV ou com áudio AC-3/DTS,
-filmes longos e a página atrás do proxy da Cloudflare.
+redes reais com NAT entre os dois lados, filmes longos em MSE e a página atrás
+do proxy da Cloudflare.

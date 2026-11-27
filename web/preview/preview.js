@@ -1,5 +1,6 @@
 import {
   bindEvents,
+  setAudioTracks,
   setSubtitleMenuOpen,
   show,
   showEnded,
@@ -28,6 +29,7 @@ function previewFixture(scenario) {
     host_buffering: false,
     host_blocked: false,
     host_web_stream: true,
+    host_web_remux: true,
     host_position: 754,
     guest_media: { hash: "a".repeat(64), bytes: 1_450_000_000 },
     guest_file_name: "Filme de demonstracao.mp4",
@@ -90,6 +92,43 @@ function previewFixture(scenario) {
         paused: true,
         playing: false,
       };
+    case "mkv-prepare":
+      return {
+        ...base,
+        host_file_name: "Filme.de.demonstracao.1080p.AC3.mkv",
+        host_web_remux: true,
+        guest_media: null,
+        guest_file_name: null,
+        matched: false,
+        playing: false,
+        paused: true,
+        loaded: false,
+        watching: false,
+        ready: false,
+        drift_ms: null,
+      };
+    case "mkv-prepare-fallback":
+      return {
+        ...base,
+        host_file_name: "Filme.de.demonstracao.1080p.AC3.mkv",
+        host_web_remux: false,
+        guest_media: null,
+        guest_file_name: null,
+        matched: false,
+        playing: false,
+        paused: true,
+        loaded: false,
+        watching: false,
+        ready: false,
+        drift_ms: null,
+      };
+    case "mkv-streaming":
+    case "audio-menu":
+      return {
+        ...base,
+        host_file_name: "Filme.de.demonstracao.1080p.AC3.mkv",
+        guest_file_name: "Filme.de.demonstracao.1080p.AC3.mkv",
+      };
     case "player":
     default:
       return base;
@@ -115,7 +154,21 @@ function runPreview(scenario) {
   }
   document.getElementById("stage").classList.add("preview-backdrop");
   showRoom(previewFixture(scenario));
-  if (scenario === "subtitles" || scenario === "subtitles-menu") {
+  if (scenario === "mkv-streaming" || scenario === "audio-menu") {
+    const sampleVtt = "WEBVTT\n\n00:00:00.000 --> 02:00:00.000\nO mesmo filme, no mesmo segundo.\n";
+    subtitles.setHost("Filme.de.demonstracao.pt-BR.srt", sampleVtt);
+    setAudioTracks(
+      [
+        { index: 0, language: "por", title: "Português (Dublado)", codec: "ac3", channels: 6, default: true },
+        { index: 1, language: "eng", title: "Original", codec: "dts", channels: 6, default: false },
+      ],
+      0,
+    );
+    const hud = document.getElementById("stream-hud");
+    hud.hidden = false;
+    hud.textContent = "Streaming adaptado (6.4 Mbit/s)";
+    setSubtitleMenuOpen(scenario === "audio-menu");
+  } else if (scenario === "subtitles" || scenario === "subtitles-menu") {
     const sampleVtt = "WEBVTT\n\n00:00:00.000 --> 02:00:00.000\nO mesmo filme, no mesmo segundo.\n";
     subtitles.setHost("Filme.de.demonstracao.pt-BR.srt", sampleVtt);
     subtitles.delayMs = 500;

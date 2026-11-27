@@ -707,6 +707,8 @@ body.in-player.controls-hidden .controls {
   bottom: calc(var(--player-controls-h) + 8px);
   right: var(--player-side-wide);
   width: min(320px, calc(100% - 32px));
+  max-height: calc(100dvh - var(--player-controls-h) - 88px);
+  overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-window);
@@ -717,6 +719,21 @@ body.in-player.controls-hidden .controls {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.track-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.track-section-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 .subtitle-list {
   display: flex;

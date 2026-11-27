@@ -1,5 +1,5 @@
 use super::{
-    ChunkIndex, StreamEvent, StreamPhase, StreamTelemetry, file_bitrate_bps, file_io, nat,
+    ChunkIndex, StreamEvent, StreamPhase, StreamTelemetry, file_bitrate_bps, file_io, nat, remux,
 };
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -16,7 +16,10 @@ use str0m::{
     channel::ChannelId,
     net::{Protocol, Receive},
 };
-use sync2gether_core::datachannel::{self, Item, Request};
+use sync2gether_core::{
+    datachannel::{self, Item, Request},
+    protocol::WebStreamMse,
+};
 use tokio::{net::UdpSocket, sync::mpsc, task::JoinHandle};
 
 const OPEN_TIMEOUT: Duration = Duration::from_secs(20);
@@ -30,6 +33,7 @@ pub struct WebHost {
     path: PathBuf,
     index: Arc<ChunkIndex>,
     duration: f64,
+    remux: Option<Arc<remux::RemuxSession>>,
 }
 
 fn local_addresses(allow_loopback: bool) -> Vec<IpAddr> {
@@ -82,12 +86,20 @@ pub async fn prepare(
     if bound.is_empty() {
         return Err(crate::i18n::text().stream_errors.no_udp_port.into());
     }
+    let probe_path = path.clone();
+    let remux = tokio::task::spawn_blocking(move || remux::RemuxSession::open(&probe_path))
+        .await
+        .ok()
+        .and_then(|res| res.ok())
+        .flatten()
+        .map(Arc::new);
     let mut host = WebHost {
         rtc: Rtc::builder().build(Instant::now()),
         sockets: HashMap::new(),
         path,
         index,
         duration,
+        remux,
     };
     for (socket, local, reflexive) in bound {
         let socket = UdpSocket::from_std(socket).map_err(|e| e.to_string())?;
@@ -129,6 +141,9 @@ impl WebHost {
     }
     pub fn digest(&self) -> &str {
         &self.index.digest
+    }
+    pub fn mse_info(&self) -> Option<WebStreamMse> {
+        self.remux.as_ref().map(|r| r.probe().web_stream_mse())
     }
 
     fn drain(&mut self, happenings: &mut Vec<Happening>) -> Result<Instant, String> {
@@ -204,7 +219,7 @@ impl WebHost {
         let mut channel: Option<ChannelId> = None;
         let mut queue: VecDeque<Item> = VecDeque::new();
         let mut current: Option<Outgoing> = None;
-        let mut reading: Option<JoinHandle<(u32, io::Result<Vec<u8>>)>> = None;
+        let mut reading: Option<JoinHandle<(Item, io::Result<Vec<u8>>)>> = None;
         let mut happenings = Vec::new();
         let mut report = tokio::time::interval(TELEMETRY);
         report.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -226,6 +241,15 @@ impl WebHost {
                         }
                         Ok(Request::Chunk(index)) if queue.len() < MAX_QUEUE => {
                             queue.push_back(Item::Chunk(index))
+                        }
+                        Ok(Request::MseIndex) if queue.len() < MAX_QUEUE => {
+                            queue.push_back(Item::MseIndex)
+                        }
+                        Ok(Request::MseInit(track)) if queue.len() < MAX_QUEUE => {
+                            queue.push_back(Item::MseInit(track))
+                        }
+                        Ok(Request::MseSegment { track, segment }) if queue.len() < MAX_QUEUE => {
+                            queue.push_back(Item::MseSegment { track, segment })
                         }
                         _ => {
                             return Err(
@@ -254,8 +278,24 @@ impl WebHost {
                                 pieces: datachannel::fragments(Item::HashTable, &table).collect(),
                             });
                         }
+                        Some(Item::MseIndex) => {
+                            let pieces = match &self.remux {
+                                Some(session) => {
+                                    let data = session.probe().encoded_index();
+                                    datachannel::fragments(Item::MseIndex, &data).collect()
+                                }
+                                None => VecDeque::from([datachannel::failure(Item::MseIndex)]),
+                            };
+                            current = Some(Outgoing { pieces });
+                        }
                         Some(Item::Chunk(index)) => {
                             reading = Some(self.read_chunk(&file, index));
+                        }
+                        Some(Item::MseInit(track)) => {
+                            reading = Some(self.remux_init(track));
+                        }
+                        Some(Item::MseSegment { track, segment }) => {
+                            reading = Some(self.remux_segment(track, segment));
                         }
                         None => {}
                     }
@@ -286,11 +326,17 @@ impl WebHost {
                 done = async { reading.as_mut().unwrap().await }, if reading.is_some() => {
                     reading = None;
                     let pieces = match done {
-                        Ok((index, Ok(data))) => {
-                            telemetry.sent_chunk(index);
-                            datachannel::fragments(Item::Chunk(index), &data).collect()
+                        Ok((item, Ok(data))) => {
+                            match item {
+                                Item::Chunk(index) => telemetry.sent_chunk(index),
+                                Item::MseSegment { segment, .. } => {
+                                    telemetry.sent_segment(segment, data.len() as u64);
+                                }
+                                _ => telemetry.sent_bytes(data.len() as u64),
+                            }
+                            datachannel::fragments(item, &data).collect()
                         }
-                        Ok((index, Err(_))) => VecDeque::from([datachannel::failure(Item::Chunk(index))]),
+                        Ok((item, Err(_))) => VecDeque::from([datachannel::failure(item)]),
                         Err(_) => VecDeque::new(),
                     };
                     current = Some(Outgoing { pieces });
@@ -308,7 +354,7 @@ impl WebHost {
         }
     }
 
-    fn read_chunk(&self, file: &Arc<File>, index: u32) -> JoinHandle<(u32, io::Result<Vec<u8>>)> {
+    fn read_chunk(&self, file: &Arc<File>, index: u32) -> JoinHandle<(Item, io::Result<Vec<u8>>)> {
         let file = file.clone();
         let chunks = &self.index;
         let valid = (index as usize) < chunks.hashes.len();
@@ -318,7 +364,7 @@ impl WebHost {
         tokio::task::spawn_blocking(move || {
             if !valid {
                 return (
-                    index,
+                    Item::Chunk(index),
                     Err(io::Error::other(
                         crate::i18n::text().stream_errors.chunk_out_of_file,
                     )),
@@ -326,7 +372,34 @@ impl WebHost {
             }
             let mut buffer = vec![0; len];
             let result = file_io::read_exact_at(&file, &mut buffer, offset).map(|()| buffer);
-            (index, result)
+            (Item::Chunk(index), result)
+        })
+    }
+
+    fn remux_init(&self, track: u8) -> JoinHandle<(Item, io::Result<Vec<u8>>)> {
+        let remux = self.remux.clone();
+        tokio::task::spawn_blocking(move || {
+            let item = Item::MseInit(track);
+            let Some(session) = remux else {
+                return (item, Err(io::Error::other("Remux indisponível")));
+            };
+            (item, session.init_segment(track).map_err(io::Error::other))
+        })
+    }
+
+    fn remux_segment(&self, track: u8, segment: u32) -> JoinHandle<(Item, io::Result<Vec<u8>>)> {
+        let remux = self.remux.clone();
+        tokio::task::spawn_blocking(move || {
+            let item = Item::MseSegment { track, segment };
+            let Some(session) = remux else {
+                return (item, Err(io::Error::other("Remux indisponível")));
+            };
+            (
+                item,
+                session
+                    .media_segment(track, segment)
+                    .map_err(io::Error::other),
+            )
         })
     }
 
@@ -393,6 +466,13 @@ impl Telemetry {
     fn sent_chunk(&mut self, index: u32) {
         self.unique.insert(index);
         self.sent += self.chunk_size;
+    }
+    fn sent_segment(&mut self, index: u32, bytes: u64) {
+        self.unique.insert(index);
+        self.sent += bytes;
+    }
+    fn sent_bytes(&mut self, bytes: u64) {
+        self.sent += bytes;
     }
     fn snapshot(&mut self, phase: StreamPhase) -> StreamTelemetry {
         let now = Instant::now();

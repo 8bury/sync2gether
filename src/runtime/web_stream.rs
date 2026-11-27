@@ -57,6 +57,7 @@ impl Worker {
                         duration,
                         chunk_size: host.chunk_size(),
                         hash_table_digest: host.digest().to_owned(),
+                        mse: host.mse_info(),
                     }),
                     host: Box::new(host),
                 },

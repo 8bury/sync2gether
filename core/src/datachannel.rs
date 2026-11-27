@@ -3,10 +3,15 @@ use std::io;
 pub const LABEL: &str = "sync2gether-stream";
 pub const FRAGMENT: usize = 16 * 1024 - HEADER;
 pub const HEADER: usize = 14;
+pub const NO_AUDIO_TRACK: u8 = u8::MAX;
+pub const MAX_MSE_SEGMENT_INDEX: u32 = 0x00FF_FFFF;
 
 const OP_HASH_TABLE: u8 = 1;
 const OP_CHUNK: u8 = 2;
 const OP_CANCEL: u8 = 3;
+const OP_MSE_INDEX: u8 = 4;
+const OP_MSE_INIT: u8 = 5;
+const OP_MSE_SEGMENT: u8 = 6;
 
 const STATUS_OK: u8 = 0;
 const STATUS_ERR: u8 = 1;
@@ -16,6 +21,9 @@ pub enum Request {
     HashTable,
     Chunk(u32),
     Cancel,
+    MseIndex,
+    MseInit(u8),
+    MseSegment { track: u8, segment: u32 },
 }
 
 impl Request {
@@ -28,6 +36,13 @@ impl Request {
                 out
             }
             Self::Cancel => vec![OP_CANCEL],
+            Self::MseIndex => vec![OP_MSE_INDEX],
+            Self::MseInit(track) => vec![OP_MSE_INIT, track],
+            Self::MseSegment { track, segment } => {
+                let mut out = vec![OP_MSE_SEGMENT, track];
+                out.extend_from_slice(&segment.to_be_bytes());
+                out
+            }
         }
     }
     pub fn decode(bytes: &[u8]) -> io::Result<Self> {
@@ -35,6 +50,21 @@ impl Request {
             [OP_HASH_TABLE] => Ok(Self::HashTable),
             [OP_CHUNK, a, b, c, d] => Ok(Self::Chunk(u32::from_be_bytes([*a, *b, *c, *d]))),
             [OP_CANCEL] => Ok(Self::Cancel),
+            [OP_MSE_INDEX] => Ok(Self::MseIndex),
+            [OP_MSE_INIT, track] => Ok(Self::MseInit(*track)),
+            [OP_MSE_SEGMENT, track, a, b, c, d] => {
+                let segment = u32::from_be_bytes([*a, *b, *c, *d]);
+                if segment > MAX_MSE_SEGMENT_INDEX {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Pedido de streaming inválido",
+                    ));
+                }
+                Ok(Self::MseSegment {
+                    track: *track,
+                    segment,
+                })
+            }
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Pedido de streaming inválido",
@@ -47,6 +77,47 @@ impl Request {
 pub enum Item {
     HashTable,
     Chunk(u32),
+    MseIndex,
+    MseInit(u8),
+    MseSegment { track: u8, segment: u32 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MseSegmentInfo {
+    pub start_ms: u64,
+    pub duration_ms: u32,
+}
+
+pub fn encode_mse_index(segments: &[MseSegmentInfo]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + segments.len() * 12);
+    out.extend_from_slice(&(segments.len() as u32).to_be_bytes());
+    for seg in segments {
+        out.extend_from_slice(&seg.start_ms.to_be_bytes());
+        out.extend_from_slice(&seg.duration_ms.to_be_bytes());
+    }
+    out
+}
+
+pub fn decode_mse_index(bytes: &[u8]) -> io::Result<Vec<MseSegmentInfo>> {
+    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "Índice MSE inválido");
+    if bytes.len() < 4 {
+        return Err(invalid());
+    }
+    let count = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    if count > crate::protocol::MAX_MSE_SEGMENTS as usize || bytes.len() != 4 + count * 12 {
+        return Err(invalid());
+    }
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let base = 4 + i * 12;
+        let start_ms = u64::from_be_bytes(bytes[base..base + 8].try_into().unwrap());
+        let duration_ms = u32::from_be_bytes(bytes[base + 8..base + 12].try_into().unwrap());
+        out.push(MseSegmentInfo {
+            start_ms,
+            duration_ms,
+        });
+    }
+    Ok(out)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,6 +133,12 @@ fn item_parts(item: Item) -> (u8, u32) {
     match item {
         Item::HashTable => (OP_HASH_TABLE, 0),
         Item::Chunk(index) => (OP_CHUNK, index),
+        Item::MseIndex => (OP_MSE_INDEX, 0),
+        Item::MseInit(track) => (OP_MSE_INIT, u32::from(track)),
+        Item::MseSegment { track, segment } => (
+            OP_MSE_SEGMENT,
+            (u32::from(track) << 24) | (segment & MAX_MSE_SEGMENT_INDEX),
+        ),
     }
 }
 
@@ -102,6 +179,12 @@ pub fn decode(bytes: &[u8]) -> io::Result<Fragment<'_>> {
     let item = match bytes[1] {
         OP_HASH_TABLE if index == 0 => Item::HashTable,
         OP_CHUNK => Item::Chunk(index),
+        OP_MSE_INDEX if index == 0 => Item::MseIndex,
+        OP_MSE_INIT if index <= u32::from(u8::MAX) => Item::MseInit(index as u8),
+        OP_MSE_SEGMENT => Item::MseSegment {
+            track: (index >> 24) as u8,
+            segment: index & MAX_MSE_SEGMENT_INDEX,
+        },
         _ => return Err(invalid()),
     };
     let ok = match bytes[0] {
@@ -172,12 +255,57 @@ mod tests {
 
     #[test]
     fn requests_roundtrip_and_reject_garbage() {
-        for request in [Request::HashTable, Request::Chunk(77_000), Request::Cancel] {
+        for request in [
+            Request::HashTable,
+            Request::Chunk(77_000),
+            Request::Cancel,
+            Request::MseIndex,
+            Request::MseInit(0),
+            Request::MseInit(NO_AUDIO_TRACK),
+            Request::MseSegment {
+                track: 2,
+                segment: 1_234,
+            },
+        ] {
             assert_eq!(Request::decode(&request.encode()).unwrap(), request);
         }
         assert!(Request::decode(&[]).is_err());
         assert!(Request::decode(&[2, 0, 0]).is_err());
+        assert!(Request::decode(&[6, 0, 0x01, 0, 0, 0]).is_err());
         assert!(Request::decode(&[9]).is_err());
+    }
+
+    #[test]
+    fn mse_index_and_items_roundtrip() {
+        let entries = vec![
+            MseSegmentInfo {
+                start_ms: 0,
+                duration_ms: 4000,
+            },
+            MseSegmentInfo {
+                start_ms: 4000,
+                duration_ms: 3960,
+            },
+        ];
+        let encoded = encode_mse_index(&entries);
+        assert_eq!(decode_mse_index(&encoded).unwrap(), entries);
+        assert!(decode_mse_index(&[0, 0]).is_err());
+        assert!(decode_mse_index(&[0, 0, 0, 2, 0]).is_err());
+
+        for item in [
+            Item::MseIndex,
+            Item::MseInit(1),
+            Item::MseSegment {
+                track: 3,
+                segment: 42_000,
+            },
+        ] {
+            let pieces: Vec<Vec<u8>> = fragments(item, b"hello").collect();
+            let frag = decode(&pieces[0]).unwrap();
+            assert_eq!(frag.item, item);
+            assert!(frag.ok);
+            assert_eq!(frag.data, b"hello");
+        }
     }
 
     #[test]

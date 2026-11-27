@@ -202,6 +202,7 @@ impl Worker {
         self.presence.uncertainty_ms = self.clock.uncertainty_ms;
         self.presence.streaming = self.view.stream.active || self.guest_stream.is_some();
         self.presence.web_stream = self.view.role == Role::Host && self.local_media.is_some();
+        self.presence.web_remux = self.presence.web_stream && crate::stream::ffmpeg::is_available();
         self.presence.stream_progress = if self.view.role == Role::Guest
             && (self.guest_stream.is_some()
                 || (self.view.stream.active && !self.view.stream.is_sender))

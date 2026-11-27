@@ -89,6 +89,7 @@ pub struct View {
     pub host_buffering: bool,
     pub host_blocked: bool,
     pub host_web_stream: bool,
+    pub host_web_remux: bool,
     pub host_position: Option<f64>,
     pub guest_media: Option<Media>,
     pub guest_file_name: Option<String>,
@@ -448,6 +449,7 @@ impl Guest {
             host_buffering: host.is_some_and(|h| h.buffering),
             host_blocked: host.is_some_and(|h| h.blocked),
             host_web_stream: host.is_some_and(|h| h.web_stream),
+            host_web_remux: host.is_some_and(|h| h.web_remux),
             host_position: host
                 .and_then(|h| h.playback.as_ref())
                 .zip(host_now)
@@ -473,10 +475,17 @@ impl Guest {
             blocked: self.presence.blocked,
             buffering: self.presence.buffering,
             waiting_buffer: state.is_some_and(|s| s.waiting_buffer),
-            preparing: self.requested.is_some() && self.scheduled.is_none(),
-            scheduled: self.scheduled.is_some(),
+            preparing: state
+                .and_then(|s| s.transition.as_ref())
+                .is_some_and(|t| t.start_at_ms.is_none()),
+            scheduled: state
+                .and_then(|s| s.transition.as_ref())
+                .is_some_and(|t| t.start_at_ms.is_some()),
             peer_left: self.peer_left,
-            scheduled_start_ms: self.scheduled_start_ms,
+            scheduled_start_ms: state
+                .and_then(|s| s.transition.as_ref())
+                .and_then(|t| t.start_at_ms)
+                .and(self.scheduled_start_ms),
             drift_ms: state
                 .zip(host_now)
                 .filter(|_| matched)
@@ -612,6 +621,7 @@ impl Guest {
         self.player_operation = None;
         self.prepared = None;
         self.scheduled = None;
+        self.scheduled_start_ms = None;
         self.last_pause = None;
         self.controller.reset(self.now);
         self.command(Command::Pause { paused: true });

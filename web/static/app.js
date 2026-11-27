@@ -44,6 +44,8 @@ const app = {
   controlsVisible: true,
   popoverOpen: false,
   subtitleMenuOpen: false,
+  audioTracks: [],
+  activeAudioTrack: null,
   forcePrepare: false,
   unmutedVolume: 1,
   prevPeer: null,
@@ -69,10 +71,73 @@ export const subtitles = new Subtitles($("video"), {
   onChange: () => renderSubtitles(),
 });
 
+function audioTrackLabel(track) {
+  if (track.title && track.language) return `${track.title} · ${track.language}`;
+  if (track.title) return track.title;
+  if (track.language) return track.language;
+  return `Faixa ${track.index + 1}`;
+}
+
+function audioTrackTag(track) {
+  const codec = (track.codec || "").toUpperCase();
+  const ch = track.channels >= 6 ? " 5.1" : track.channels === 2 ? " 2.0" : track.channels === 1 ? " 1.0" : "";
+  return `${codec}${ch}`.trim();
+}
+
+export function setAudioTracks(tracks, activeIndex) {
+  app.audioTracks = Array.isArray(tracks) ? tracks : [];
+  app.activeAudioTrack = activeIndex ?? null;
+  renderSubtitles();
+}
+
 function renderSubtitles() {
   const btn = $("subtitles-btn");
   const showing = subtitles.isShowing();
   btn.classList.toggle("is-active", showing);
+
+  const hasAudio = app.audioTracks.length > 0;
+  $("track-popover-title").textContent = hasAudio ? "Faixas" : "Legendas";
+  btn.setAttribute("aria-label", hasAudio ? "Áudio e legendas" : "Legendas");
+  btn.title = hasAudio ? "Áudio e legendas" : "Legendas";
+  $("audio-section").hidden = !hasAudio;
+  $("subtitle-section-label").hidden = !hasAudio;
+
+  const audioList = $("audio-list");
+  audioList.innerHTML = "";
+  for (const track of app.audioTracks) {
+    const selected = track.index === app.activeAudioTrack;
+    const item = document.createElement("button");
+    item.className = "subtitle-option" + (selected ? " is-selected" : "");
+    item.type = "button";
+    item.setAttribute("role", "radio");
+    item.setAttribute("aria-checked", String(selected));
+    item.dataset.audioIndex = String(track.index);
+    const label = document.createElement("span");
+    label.className = "subtitle-option-label";
+    label.textContent = audioTrackLabel(track);
+    label.title = label.textContent;
+    item.appendChild(label);
+    const tagText = audioTrackTag(track);
+    if (tagText) {
+      const tag = document.createElement("span");
+      tag.className = "subtitle-option-tag";
+      tag.textContent = tagText;
+      item.appendChild(tag);
+    }
+    item.addEventListener("click", () => {
+      noteActivity();
+      if (app.stream) {
+        if (app.stream.selectAudioTrack(track.index)) {
+          app.activeAudioTrack = track.index;
+          renderSubtitles();
+        }
+      } else {
+        app.activeAudioTrack = track.index;
+        renderSubtitles();
+      }
+    });
+    audioList.appendChild(item);
+  }
 
   const offBtn = $("sub-opt-off");
   const hostBtn = $("sub-opt-host");
@@ -276,6 +341,7 @@ function leave() {
   forget();
   app.stream?.stop();
   app.stream = null;
+  setAudioTracks([], null);
   subtitles.clearAll();
   setPlayerMode(false);
   showEnded("Você saiu da sala.", "");
@@ -285,6 +351,7 @@ function chooseFile(file) {
   if (!file || !app.guest) return;
   app.stream?.stop();
   app.stream = null;
+  setAudioTracks([], null);
   app.forcePrepare = false;
   const id = ++app.hashJob;
   app.guest.set_loading(file.name, 0, file.size);
@@ -325,7 +392,14 @@ export function startStreaming(createStream) {
   app.forcePrepare = false;
   $("hashing").hidden = true;
   app.stream?.stop();
-  app.stream = createStream({ guest: app.guest, player, pump, now });
+  setAudioTracks([], null);
+  app.stream = createStream({
+    guest: app.guest,
+    player,
+    pump,
+    now,
+    onTracksChange: (tracks, active) => setAudioTracks(tracks, active),
+  });
 }
 
 function setPlayerMode(active) {
@@ -470,9 +544,13 @@ function renderRoom(view) {
   $("host-card-name").textContent = view.peer || "Anfitrião";
   $("host-file").textContent = hostFile || (view.host_loading ? "O anfitrião está abrindo o filme…" : "Esperando o anfitrião escolher o filme…");
   const risky = hostFile && RISKY_FORMATS.test(hostFile);
-  $("format-warning").hidden = !risky;
-  $("format-warning").textContent = risky
-    ? "Este formato costuma não tocar no navegador (MKV e áudio AC-3/DTS, por exemplo). Se não funcionar, use o app."
+  const formatWarning = $("format-warning");
+  formatWarning.hidden = !risky;
+  formatWarning.className = risky && view.host_web_remux ? "muted small-text" : "warning small-text";
+  formatWarning.textContent = risky
+    ? (view.host_web_remux
+      ? "Este formato pode não tocar pela sua cópia local, mas funciona por streaming (o anfitrião adapta vídeo e áudio para o navegador)."
+      : "Este formato costuma não tocar no navegador (MKV e áudio AC-3/DTS, por exemplo). Se não funcionar, use o app.")
     : "";
   $("stream").hidden = !(view.host_web_stream && view.host_media);
 
@@ -546,16 +624,20 @@ function renderRoom(view) {
     status = "Esperando o anfitrião.";
   } else if (!view.matched) {
     status = "Escolha sua cópia do filme ou assista por streaming.";
-  } else if (view.buffering || view.host_buffering) {
+  } else if (view.buffering || view.host_buffering || view.waiting_buffer) {
     status = "Carregando…";
+  } else if (view.preparing) {
+    status = "Preparando…";
+  } else if (view.scheduled) {
+    status = "Começando…";
   } else if (view.playing && view.drift_ms !== null) {
     status = `Sincronizado (diferença de ${Math.abs(view.drift_ms).toFixed(0)} ms).`;
-  } else if (view.scheduled_start_ms !== null && !view.playing) {
-    status = "Começando…";
   } else if (!view.clock_ready) {
     status = "Acertando os relógios…";
   } else if (!view.host_ready) {
     status = "Esperando o anfitrião ficar pronto.";
+  } else if (!view.ready) {
+    status = "Carregando…";
   } else {
     status = "Pronto. Qualquer um pode apertar reproduzir.";
   }
@@ -627,7 +709,15 @@ function renderRoom(view) {
   const toggle = $("toggle");
   const toggleIcon = $("toggle-icon");
   const canControl = view.connected && view.matched;
-  toggle.disabled = !canControl;
+  const canPlay = canControl
+    && view.ready
+    && view.host_ready
+    && view.clock_ready
+    && !view.blocked
+    && !view.host_blocked
+    && !view.buffering
+    && !view.host_buffering;
+  toggle.disabled = !(view.playing || cancelling || canPlay);
   $("back").disabled = !canControl;
   $("forward").disabled = !canControl;
   $("seekbar").disabled = !canControl;

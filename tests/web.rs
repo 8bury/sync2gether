@@ -790,3 +790,167 @@ async fn host_shares_subtitles_only_with_web_guests_and_resends_on_reconnect() {
         .await
         .unwrap();
 }
+
+#[test]
+fn protocol_stays_compatible_with_older_web_and_desktop_clients() {
+    let legacy_presence = r#"{"media":null,"file_name":null,"loading":false,"verification":null,"ready":false,"blocked":false,"ended":false,"duration":0.0,"clock_ready":false,"rtt_ms":0.0,"uncertainty_ms":0.0,"playback":null}"#;
+    let parsed: Presence = serde_json::from_str(legacy_presence).unwrap();
+    assert!(!parsed.web_guest);
+    assert!(!parsed.web_stream);
+    assert!(!parsed.web_remux);
+
+    let legacy_answer = r#"{"WebStreamAnswer":{"id":1,"sdp":"v=0\r\na=fingerprint:sha-256 AA:BB\r\n","media":{"hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":4096},"file_name":"filme.mp4","duration":10.0,"chunk_size":4096,"hash_table_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}"#;
+    let message: Message = serde_json::from_str(legacy_answer).unwrap();
+    assert!(matches!(
+        message,
+        Message::WebStreamAnswer(answer) if answer.valid() && answer.mse.is_none()
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn guest_view_tracks_preparing_scheduled_and_playing_transitions() {
+    let (relay, web) = start_relay().await;
+    let (mut rx, code, origin) = host(relay).await;
+    let mut browser = Browser::new(&code, web);
+    let (tx, _peer) = host_connected(&mut rx, &mut browser).await;
+    browser
+        .until("conectado", |b| b.guest.view().connected)
+        .await;
+    let generation = browser
+        .guest
+        .set_media(Some(media()), Some("Filme.mkv".into()));
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        assert!(Instant::now() < deadline, "relógio não aqueceu");
+        let now = browser.now();
+        browser.guest.player_status(
+            PlayerStatus {
+                generation,
+                measured_ms: now,
+                duration: 60.0,
+                speed: 1.0,
+                paused: true,
+                loaded: true,
+                ..PlayerStatus::default()
+            },
+            now,
+        );
+        host_until(
+            &mut browser,
+            &mut rx,
+            &tx,
+            origin,
+            |message| matches!(message, Message::Presence(p) if p.clock_ready && p.ready),
+        )
+        .await;
+        if browser.guest.view().clock_ready {
+            break;
+        }
+    }
+
+    let host_ms = origin.elapsed().as_secs_f64() * 1000.0;
+    let recovery = Transition {
+        id: 1,
+        position: 0.0,
+        resume: false,
+        start_at_ms: None,
+    };
+    tx.send(Message::State(Box::new(snapshot(
+        1,
+        host_ms,
+        Some(recovery),
+    ))))
+    .await
+    .unwrap();
+    browser
+        .until("preparando busca inicial", |b| b.guest.view().preparing)
+        .await;
+    let view = browser.guest.view();
+    assert!(view.preparing);
+    assert!(!view.scheduled);
+    assert!(view.scheduled_start_ms.is_none());
+
+    let (token, _) = browser.prepared[0];
+    let now = browser.now();
+    browser.guest.player_prepared(token, now);
+    host_until(&mut browser, &mut rx, &tx, origin, |message| {
+        matches!(message, Message::Prepared { id: 1 })
+    })
+    .await;
+
+    let host_ms = origin.elapsed().as_secs_f64() * 1000.0;
+    tx.send(Message::State(Box::new(snapshot(2, host_ms, None))))
+        .await
+        .unwrap();
+    browser
+        .until("pronto após busca inicial", |b| !b.guest.view().preparing)
+        .await;
+    assert!(!browser.guest.view().scheduled);
+
+    let host_ms = origin.elapsed().as_secs_f64() * 1000.0;
+    let play = Transition {
+        id: 2,
+        position: 0.0,
+        resume: true,
+        start_at_ms: None,
+    };
+    tx.send(Message::State(Box::new(snapshot(3, host_ms, Some(play)))))
+        .await
+        .unwrap();
+    browser
+        .until("preparando reprodução", |b| b.prepared.len() == 2)
+        .await;
+    let (token, _) = browser.prepared[1];
+    let now = browser.now();
+    browser.guest.player_prepared(token, now);
+    host_until(&mut browser, &mut rx, &tx, origin, |message| {
+        matches!(message, Message::Prepared { id: 2 })
+    })
+    .await;
+
+    let host_ms = origin.elapsed().as_secs_f64() * 1000.0;
+    let scheduled = Transition {
+        id: 2,
+        position: 0.0,
+        resume: true,
+        start_at_ms: Some(host_ms + 1500.0),
+    };
+    let now = browser.now();
+    browser.guest.player_status(
+        PlayerStatus {
+            generation,
+            measured_ms: now,
+            duration: 60.0,
+            speed: 1.0,
+            paused: true,
+            loaded: true,
+            ..PlayerStatus::default()
+        },
+        now,
+    );
+    tx.send(Message::State(Box::new(snapshot(
+        4,
+        host_ms,
+        Some(scheduled),
+    ))))
+    .await
+    .unwrap();
+    browser
+        .until("início agendado", |b| b.guest.view().scheduled)
+        .await;
+    assert!(!browser.guest.view().preparing);
+    assert!(browser.guest.view().scheduled_start_ms.is_some());
+
+    let host_ms = origin.elapsed().as_secs_f64() * 1000.0;
+    let mut playing = snapshot(5, host_ms, None);
+    playing.paused = false;
+    tx.send(Message::State(Box::new(playing))).await.unwrap();
+    browser
+        .until("tocando sem agendamento pendente", |b| {
+            let v = b.guest.view();
+            v.playing && !v.scheduled && !v.preparing
+        })
+        .await;
+    assert!(browser.guest.view().scheduled_start_ms.is_none());
+}

@@ -39,8 +39,9 @@ o convidado sozinho. É possível abrir um filme sozinho.
 
 Quem não tem o app pode entrar como convidado **pelo navegador**, com um link
 que o anfitrião copia na sala: com a própria cópia do filme ou por streaming
-P2P direto (WebRTC). O navegador só toca os formatos que ele mesmo suporta,
-em geral MP4 com H.264 e AAC; veja [Convidado no navegador](docs/navegador.md).
+P2P direto (WebRTC). No streaming, o anfitrião também adapta MKV e áudio
+AC-3/E-AC-3/DTS sob demanda para MSE (sem recodificar vídeo) com escolha de
+faixa de áudio; veja [Convidado no navegador](docs/navegador.md).
 
 A interface está disponível em português (Brasil) e inglês. Na primeira
 abertura, o app segue o idioma do sistema (inglês quando ele não é português);

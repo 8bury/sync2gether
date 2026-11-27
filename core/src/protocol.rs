@@ -7,6 +7,9 @@ pub const MAX_HASH_TABLE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_SUBTITLE_BYTES: usize = 1024 * 1024;
 pub const MAX_SUBTITLE_CHUNK: usize = 6 * 1024;
 pub const MAX_SUBTITLE_CHUNKS: u32 = 256;
+pub const MAX_AUDIO_TRACKS: usize = 32;
+pub const MAX_MSE_SEGMENTS: u32 = 100_000;
+pub const MAX_MSE_SEGMENT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Media {
@@ -94,6 +97,63 @@ impl WebStreamOffer {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioTrackInfo {
+    pub index: u8,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub codec: String,
+    pub channels: u8,
+    pub default: bool,
+}
+impl AudioTrackInfo {
+    pub fn valid(&self) -> bool {
+        self.index < u8::MAX
+            && !self.codec.is_empty()
+            && self.codec.len() <= 32
+            && self.codec.bytes().all(|b| b.is_ascii_graphic())
+            && self
+                .language
+                .as_deref()
+                .is_none_or(|s| !s.is_empty() && s.len() <= 32 && !s.chars().any(char::is_control))
+            && self
+                .title
+                .as_deref()
+                .is_none_or(|s| !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WebStreamMse {
+    pub mime: String,
+    pub duration: f64,
+    pub segments: u32,
+    #[serde(default)]
+    pub audio_tracks: Vec<AudioTrackInfo>,
+    #[serde(default)]
+    pub default_audio: Option<u8>,
+    #[serde(default)]
+    pub audio_transcoded: bool,
+}
+impl WebStreamMse {
+    pub fn valid(&self) -> bool {
+        self.mime.starts_with("video/")
+            && self.mime.len() <= 128
+            && !self.mime.chars().any(char::is_control)
+            && self.duration.is_finite()
+            && self.duration >= 0.0
+            && self.segments > 0
+            && self.segments <= MAX_MSE_SEGMENTS
+            && self.audio_tracks.len() <= MAX_AUDIO_TRACKS
+            && self.audio_tracks.iter().all(AudioTrackInfo::valid)
+            && self.default_audio.is_none_or(|selected| {
+                self.audio_tracks
+                    .iter()
+                    .any(|track| track.index == selected)
+            })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WebStreamAnswer {
     pub id: u64,
@@ -103,6 +163,8 @@ pub struct WebStreamAnswer {
     pub duration: f64,
     pub chunk_size: u32,
     pub hash_table_digest: String,
+    #[serde(default)]
+    pub mse: Option<WebStreamMse>,
 }
 impl WebStreamAnswer {
     pub fn valid(&self) -> bool {
@@ -117,6 +179,7 @@ impl WebStreamAnswer {
             && (4096..=4 * 1024 * 1024).contains(&self.chunk_size)
             && self.media.bytes.div_ceil(u64::from(self.chunk_size)) <= max_chunks
             && valid_hex_64(&self.hash_table_digest)
+            && self.mse.as_ref().is_none_or(WebStreamMse::valid)
     }
 }
 
@@ -255,6 +318,8 @@ pub struct Presence {
     pub web_guest: bool,
     #[serde(default)]
     pub web_stream: bool,
+    #[serde(default)]
+    pub web_remux: bool,
 }
 impl Presence {
     pub fn valid(&self) -> bool {
@@ -476,8 +541,39 @@ mod tests {
             duration: 60.0,
             chunk_size: 256 * 1024,
             hash_table_digest: "b".repeat(64),
+            mse: None,
         };
         assert!(answer.valid());
+        let mse = WebStreamMse {
+            mime: "video/mp4; codecs=\"avc1.64001f, mp4a.40.2\"".into(),
+            duration: 60.0,
+            segments: 15,
+            audio_tracks: vec![AudioTrackInfo {
+                index: 0,
+                language: Some("por".into()),
+                title: Some("Português".into()),
+                codec: "ac3".into(),
+                channels: 6,
+                default: true,
+            }],
+            default_audio: Some(0),
+            audio_transcoded: true,
+        };
+        assert!(
+            WebStreamAnswer {
+                mse: Some(mse.clone()),
+                ..answer.clone()
+            }
+            .valid()
+        );
+        assert!(
+            !WebStreamMse {
+                default_audio: Some(2),
+                ..mse.clone()
+            }
+            .valid()
+        );
+        assert!(!WebStreamMse { segments: 0, ..mse }.valid());
         assert!(
             !WebStreamAnswer {
                 file_name: "/home/x.mp4".into(),

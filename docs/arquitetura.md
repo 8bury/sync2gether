@@ -136,10 +136,17 @@ vídeo, GPU ou sincronização entre PCs.
   verificados em memória). `web/static/` tem a página em JavaScript simples,
   o adaptador do `<video>` e o Service Worker. Veja
   [Convidado no navegador](navegador.md).
-- `stream/webrtc.rs` e `runtime/web_stream.rs` servem o streaming para o
-  navegador com `str0m` (sem OpenSSL): uma porta UDP por interface IPv4,
-  candidatos STUN, oferta e resposta pelo canal Noise, fragmentos de 16 KiB e
-  cancelamento quando o navegador pula para outro trecho.
+- `stream/webrtc.rs`, `stream/ffmpeg.rs`, `stream/remux.rs` e
+  `runtime/web_stream.rs` servem o streaming para o navegador com `str0m` (sem
+  OpenSSL): uma porta UDP por interface IPv4, candidatos STUN, oferta e resposta
+  pelo canal Noise, fragmentos de 16 KiB e cancelamento quando o navegador pula
+  para outro trecho. Para arquivos nativos de faixa única, envia o arquivo
+  original em blocos verificados; para MKV, áudio AC-3/E-AC-3/DTS ou múltiplas
+  faixas de áudio, carrega dinamicamente as bibliotecas FFmpeg (`libavformat`,
+  `libavcodec`, `libswresample`, `libavutil`) para gerar sob demanda segmentos
+  fMP4 com cópia direta de vídeo, conversão apenas do áudio incompatível para
+  AAC e índice de quadros-chave para busca rápida no MSE (`web/static/mse.js`).
+  Sem as bibliotecas FFmpeg no anfitrião, cai de volta para o envio direto.
 - `network.rs` implementa TCP com mensagens enquadradas, limite de tamanho,
   autenticação da sala, timeout de heartbeat e reconexão.
 - `protocol.rs` define as mensagens Serde e a versão do protocolo.

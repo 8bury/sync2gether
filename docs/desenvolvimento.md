@@ -221,6 +221,27 @@ precisam de display.
 O teste fica ignorado no comando Cargo padrão porque depende de libmpv e FFmpeg;
 o CI o executa explicitamente em Arch e Ubuntu.
 
+## Teste de remux com múltiplas versões do FFmpeg
+
+O carregador dinâmico (`src/stream/ffmpeg.rs`) aceita somente conjuntos exatos de
+versões principais verificados do FFmpeg (6.x, 7.x, 8.x e 9.x) e recua para
+streaming direto se encontrar outra combinação ou se a verificação em tempo de
+execução de `AVFrame` falhar.
+
+Para validar `tests/remux.rs` e os testes de navegador MKV/AC-3 contra outra versão
+compartilhada do FFmpeg (por exemplo, builds `linux64-lgpl-shared` de
+`BtbN/FFmpeg-Builds` extraídos em `target/ffmpeg/n7.1`, `target/ffmpeg/n8.1` ou
+`target/ffmpeg/n9.0`), aponte `SYNC2GETHER_FFMPEG_DIR` para o diretório `lib/`:
+
+```sh
+SYNC2GETHER_FFMPEG_DIR="$PWD/target/ffmpeg/n7.1/lib" \
+SYNC2GETHER_EXPECT_FFMPEG_MAJORS="61,61,59,5" \
+cargo test --locked --test remux -- --nocapture
+
+SYNC2GETHER_FFMPEG_DIR="$PWD/target/ffmpeg/n7.1/lib" \
+bash scripts/test-browser.sh mkv_ac3
+```
+
 Para validar o renderizador com uma janela real, libmpv, FFmpeg e o mesmo
 ambiente de áudio virtual:
 

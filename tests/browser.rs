@@ -478,13 +478,24 @@ fn fixture() -> PathBuf {
     fixture
 }
 
+fn mkv_fixture() -> PathBuf {
+    let fixture = root().join(".cache/browser-fixture.mkv");
+    assert!(fixture.is_file(), "execute scripts/test-browser.sh");
+    fixture
+}
+
 async fn setup() -> Setup {
+    setup_with_fixture(fixture()).await
+}
+
+async fn setup_with_fixture(fixture: PathBuf) -> Setup {
     if let Ok(public) = std::env::var("SYNC2GETHER_TEST_PUBLIC_URL")
         && !public.is_empty()
     {
         return host_room(
             public.trim_end_matches('/').to_owned(),
             DEFAULT_RELAY.into(),
+            fixture,
         )
         .await;
     }
@@ -516,11 +527,10 @@ async fn setup() -> Setup {
         ws::PATH
     );
     tokio::spawn(serve_http(http, site, config));
-    host_room(origin, relay_address.to_string()).await
+    host_room(origin, relay_address.to_string(), fixture).await
 }
 
-async fn host_room(origin: String, relay: String) -> Setup {
-    let fixture = fixture();
+async fn host_room(origin: String, relay: String, fixture: PathBuf) -> Setup {
     let host = Runtime::start();
     let mut view = View::default();
     host.commands
@@ -705,6 +715,108 @@ async fn streaming(mut firefox: Browser) {
     firefox
         .eval("(() => { const v = document.getElementById('video'); return v.duration > 15; })()")
         .await;
+}
+
+async fn streaming_mkv(mut browser: Browser) {
+    let Setup {
+        host,
+        mut view,
+        url,
+        ..
+    } = setup_with_fixture(mkv_fixture()).await;
+    browser.navigate(&url).await;
+    browser
+        .until(
+            "botão de streaming MKV",
+            "!document.getElementById('room').hidden && !document.getElementById('stream').hidden",
+        )
+        .await;
+    host_until(&host, &mut view, "convidado do navegador MKV", |v| {
+        v.connected && v.peer_name.is_some()
+    })
+    .await;
+    let warn = browser.text("format-warning").await;
+    assert!(
+        warn.contains("streaming"),
+        "aviso de formato MKV deveria indicar suporte por streaming: {warn:?}"
+    );
+    browser
+        .eval("document.getElementById('stream').click(); true")
+        .await;
+    host_until(&host, &mut view, "streaming MKV ativo", |v| {
+        v.stream.is_sender && v.stream.phase == StreamPhase::Streaming
+    })
+    .await;
+    host_until(&host, &mut view, "cópia MKV pronta", |v| {
+        v.matched && v.peer_ready
+    })
+    .await;
+    browser
+        .until(
+            "menu de faixas de áudio populado",
+            "document.querySelectorAll('#audio-list button').length === 2",
+        )
+        .await;
+
+    play_in_sync(&mut browser, &host, &mut view).await;
+
+    host.commands
+        .send(Command::Control(Control::Seek(12.0)))
+        .await
+        .unwrap();
+    browser
+        .until(
+            "seek para posição não carregada no MKV",
+            "(() => { const v = document.getElementById('video'); return v.currentTime >= 11.5 && v.readyState >= 3; })()",
+        )
+        .await;
+
+    browser
+        .eval("document.getElementById('subtitles-btn').click(); document.querySelector('#audio-list button[data-audio-index=\"1\"]').click(); true")
+        .await;
+    browser
+        .until(
+            "segunda faixa de áudio selecionada",
+            "document.querySelector('#audio-list button[data-audio-index=\"1\"]').getAttribute('aria-checked') === 'true'",
+        )
+        .await;
+
+    host.commands
+        .send(Command::Control(Control::Play))
+        .await
+        .unwrap();
+    browser
+        .until(
+            "reprodução após troca de faixa de áudio",
+            "(() => { const v = document.getElementById('video'); return !v.paused && v.currentTime >= 12.5; })()",
+        )
+        .await;
+    host.commands
+        .send(Command::Control(Control::Pause))
+        .await
+        .unwrap();
+    browser
+        .until(
+            "pausar MKV no navegador",
+            "document.getElementById('video').paused",
+        )
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Firefox, libmpv e scripts/test-browser.sh"]
+async fn firefox_guest_streams_mkv_ac3_via_mse_and_switches_audio() {
+    streaming_mkv(Browser::firefox("stream-mkv").await).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Chrome ou Chromium, libmpv e scripts/test-browser.sh"]
+async fn chrome_guest_streams_mkv_ac3_via_mse_and_switches_audio() {
+    let Some(binary) = chrome_binary() else {
+        eprintln!("Chrome/Chromium não encontrado; defina SYNC2GETHER_TEST_CHROME");
+        return;
+    };
+    streaming_mkv(Browser::chrome(&binary, "stream-mkv").await).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -1,4 +1,5 @@
 import { WebStreamClient } from "./pkg/sync2gether_web.js";
+import { MseController } from "./mse.js";
 
 const LABEL = "sync2gether-stream";
 const ICE_SERVERS = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
@@ -81,15 +82,17 @@ function gathered(pc) {
 }
 
 class Stream {
-  constructor({ guest, player, pump, now }) {
+  constructor({ guest, player, pump, now, onTracksChange }) {
     this.guest = guest;
     this.player = player;
     this.ask = pump;
     this.now = now;
+    this.onTracksChange = onTracksChange;
     this.id = (crypto.getRandomValues(new Uint32Array(1))[0] >>> 1) + 1;
     this.phase = "preparing";
     this.error = null;
     this.client = null;
+    this.mse = null;
     this.answer = null;
     this.started = false;
     this.pending = [];
@@ -104,8 +107,6 @@ class Stream {
   async start() {
     current = this;
     try {
-      await serviceWorker();
-      if (this.phase === "failed") return;
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       this.pc = pc;
       const dc = pc.createDataChannel(LABEL, { ordered: true });
@@ -113,11 +114,21 @@ class Stream {
       this.dc = dc;
       dc.onopen = () => {
         this.phase = "streaming";
-        this.flush();
+        if (this.mse) {
+          this.mse.onOpen();
+        } else {
+          this.flush();
+        }
         this.ask();
       };
       dc.onmessage = (event) => {
-        if (!this.client || !(event.data instanceof ArrayBuffer)) return;
+        if (!(event.data instanceof ArrayBuffer)) return;
+        if (this.mse) {
+          this.mse.onMessage(event.data);
+          this.started = this.mse.started;
+          return;
+        }
+        if (!this.client) return;
         this.client.on_message(new Uint8Array(event.data));
         const error = this.client.error();
         if (error) {
@@ -162,7 +173,38 @@ class Stream {
     if (this.phase !== "negotiating") return;
     clearTimeout(this.timer);
     this.answer = answer;
-    this.client = new WebStreamClient(answer.media.bytes, answer.chunk_size, answer.hash_table_digest, budget());
+    if (answer.mse) {
+      if (typeof MediaSource === "undefined" || !MediaSource.isTypeSupported(answer.mse.mime)) {
+        this.fail("Este navegador não suporta o codec de vídeo deste arquivo. Use o app de desktop.", true);
+        return;
+      }
+      this.mse = new MseController({
+        answer,
+        video: this.player.video,
+        player: this.player,
+        guest: this.guest,
+        send: (bytes) => {
+          if (!this.dc || this.dc.readyState !== "open") return false;
+          this.dc.send(bytes);
+          return true;
+        },
+        fail: (msg, notify) => this.fail(msg, notify),
+        onTracksChange: (tracks, active) => this.onTracksChange?.(tracks, active),
+        ask: () => {
+          this.started = Boolean(this.mse?.started);
+          this.ask();
+        },
+      });
+    } else {
+      try {
+        await serviceWorker();
+      } catch (error) {
+        this.fail(String(error && error.message || error), true);
+        return;
+      }
+      if (this.phase === "failed") return;
+      this.client = new WebStreamClient(answer.media.bytes, answer.chunk_size, answer.hash_table_digest, budget());
+    }
     this.phase = "connecting";
     try {
       await this.pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
@@ -170,6 +212,18 @@ class Stream {
       this.fail("A resposta de streaming do anfitrião não pôde ser usada.", true);
     }
     this.ask();
+  }
+
+  audioTracks() {
+    return this.mse ? this.mse.tracks : [];
+  }
+
+  activeAudioTrack() {
+    return this.mse ? this.mse.activeTrack : null;
+  }
+
+  selectAudioTrack(trackIndex) {
+    return this.mse ? this.mse.selectAudioTrack(trackIndex) : false;
   }
 
   flush() {
@@ -207,15 +261,19 @@ class Stream {
   }
 
   pump() {
-    if (!this.client || this.phase === "failed") return;
+    if ((!this.client && !this.mse) || this.phase === "failed") return;
+    this.mse?.pump();
     const time = this.now();
     if (time - this.lastProgress < PROGRESS_MS) return;
     const elapsed = Math.max(1, time - this.lastProgress);
-    const received = this.client.received_bytes();
+    const received = this.mse ? this.mse.receivedBytes : this.client.received_bytes();
     this.bps = this.lastProgress ? Math.round((received - this.lastBytes) * 8000 / elapsed) : 0;
     this.lastProgress = time;
     this.lastBytes = received;
-    this.guest.stream_progress(this.client.progress(this.bps, this.phase !== "streaming"));
+    const progress = this.mse
+      ? this.mse.progress(this.bps, this.phase !== "streaming")
+      : this.client.progress(this.bps, this.phase !== "streaming");
+    this.guest.stream_progress(progress);
   }
 
   describe() {
@@ -227,6 +285,11 @@ class Stream {
         return "Conectando direto ao computador do anfitrião…";
       case "streaming": {
         const mbps = (this.bps / 1e6).toFixed(1);
+        if (this.mse) {
+          return this.started
+            ? `Streaming adaptado (${mbps} Mbit/s)`
+            : "Preparando o fluxo de vídeo e áudio…";
+        }
         return this.started ? `Streaming direto do anfitrião (${mbps} Mbit/s).` : "Recebendo a lista de blocos…";
       }
       default:
@@ -236,6 +299,8 @@ class Stream {
 
   close() {
     clearTimeout(this.timer);
+    this.mse?.close();
+    this.mse = null;
     for (const { port } of this.pending) port.postMessage({ missing: true });
     this.pending = [];
     if (this.dc) {

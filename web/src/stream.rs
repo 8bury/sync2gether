@@ -174,6 +174,7 @@ impl StreamClient {
                     Err(_) => self.assembly = None,
                 }
             }
+            Item::MseIndex | Item::MseInit(_) | Item::MseSegment { .. } => {}
         }
     }
 
@@ -350,7 +351,10 @@ mod tests {
                         client.on_message(&piece);
                     }
                 }
-                Request::Cancel => {}
+                Request::Cancel
+                | Request::MseIndex
+                | Request::MseInit(_)
+                | Request::MseSegment { .. } => {}
             }
         }
     }

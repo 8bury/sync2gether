@@ -464,7 +464,8 @@ fn web_theme_tokens_match_core_source_of_truth() {
     let actual = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/static/tokens.css"),
     )
-    .expect("web/static/tokens.css ausente");
+    .expect("web/static/tokens.css ausente")
+    .replace("\r\n", "\n");
     assert_eq!(
         actual, expected,
         "web/static/tokens.css divergiu de sync2gether_core::theme::css_tokens()"

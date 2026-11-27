@@ -179,6 +179,46 @@
           </div>
         </aside>
 
+        <aside class="subtitle-popover" id="subtitle-popover" hidden>
+          <div class="popover-head">
+            <span class="popover-title">Legendas</span>
+            <button class="ghost small" id="subtitle-close" type="button" aria-label="Fechar">Fechar</button>
+          </div>
+          <div class="subtitle-list" role="radiogroup" aria-label="Faixa de legenda">
+            <button class="subtitle-option is-selected" id="sub-opt-off" type="button" role="radio" aria-checked="true">
+              <span class="subtitle-option-label">Desativadas</span>
+            </button>
+            <button class="subtitle-option" id="sub-opt-host" type="button" role="radio" aria-checked="false" hidden>
+              <span class="subtitle-option-tag">Anfitrião</span>
+              <span class="subtitle-option-label mono" id="sub-host-name"></span>
+            </button>
+            <button class="subtitle-option" id="sub-opt-local" type="button" role="radio" aria-checked="false" hidden>
+              <span class="subtitle-option-tag">Seu arquivo</span>
+              <span class="subtitle-option-label mono" id="sub-local-name"></span>
+            </button>
+          </div>
+          <div class="subtitle-delay" id="subtitle-delay" hidden>
+            <div class="subtitle-delay-head">
+              <span class="subtitle-delay-label">Atraso</span>
+              <span class="subtitle-delay-value mono" id="sub-delay-value">0.0 s</span>
+            </div>
+            <div class="subtitle-delay-btns">
+              <button class="secondary small" id="sub-delay-m500" type="button">-0.5s</button>
+              <button class="secondary small" id="sub-delay-m100" type="button">-0.1s</button>
+              <button class="secondary small" id="sub-delay-reset" type="button" aria-label="Zerar atraso" title="Zerar atraso">0s</button>
+              <button class="secondary small" id="sub-delay-p100" type="button">+0.1s</button>
+              <button class="secondary small" id="sub-delay-p500" type="button">+0.5s</button>
+            </div>
+          </div>
+          <p class="feedback error small-text" id="subtitle-error" hidden></p>
+          <div class="popover-actions">
+            <label class="secondary small file subtitle-pick-btn">
+              <input id="subtitle-pick" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip">
+              <span>Escolher .srt ou .vtt</span>
+            </label>
+          </div>
+        </aside>
+
         <div class="controls" id="controls">
           <div class="seek-wrap" id="seek-wrap">
             <div class="seek-track">
@@ -224,6 +264,12 @@
                 </svg>
               </button>
               <input class="vol-range" id="volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="Volume">
+              <button class="ctrl-btn" id="subtitles-btn" type="button" aria-label="Legendas" aria-expanded="false" aria-controls="subtitle-popover" title="Legendas">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <rect x="2.5" y="4.5" width="19" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                  <path d="M6.5 10.5h4M13.5 10.5h4M6.5 14.5h11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+              </button>
               <button class="ctrl-btn" id="fullscreen" type="button" aria-label="Tela cheia" title="Tela cheia · F">
                 <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
                   <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>

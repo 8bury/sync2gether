@@ -621,7 +621,43 @@ async fn own_copy(mut firefox: Browser) {
         v.matched && v.peer_ready
     })
     .await;
+
+    let srt_path = root().join(".cache/browser-fixture.srt");
+    std::fs::write(
+        &srt_path,
+        "1\r\n00:00:00,000 --> 00:00:30,000\r\nLegenda compartilhada do anfitrião\r\n",
+    )
+    .unwrap();
+    host.commands
+        .send(Command::ShareSubtitlePath(srt_path))
+        .await
+        .unwrap();
+    host_until(&host, &mut view, "legenda compartilhada", |v| {
+        v.shared_subtitle.as_deref() == Some("browser-fixture.srt")
+    })
+    .await;
+
     play_in_sync(&mut firefox, &host, &mut view).await;
+    firefox
+        .until(
+            "cue da legenda compartilhada visível",
+            "(() => { const v = document.getElementById('video'); const t = v.textTracks && v.textTracks[0]; return Boolean(t && t.mode === 'showing' && t.activeCues && t.activeCues.length > 0 && t.activeCues[0].text.includes('Legenda compartilhada')); })()",
+        )
+        .await;
+    firefox
+        .eval("document.getElementById('subtitles-btn').click(); document.getElementById('sub-delay-p500').click(); true")
+        .await;
+    assert_eq!(firefox.text("sub-delay-value").await, "+0.5 s");
+    firefox
+        .eval("document.getElementById('sub-opt-off').click(); true")
+        .await;
+    firefox
+        .until(
+            "legenda desativada",
+            "document.getElementById('video').textTracks.length === 0",
+        )
+        .await;
+
     firefox
         .eval("document.getElementById('leave').click(); true")
         .await;

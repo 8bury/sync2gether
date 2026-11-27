@@ -94,13 +94,19 @@ impl App {
     }
 
     #[cfg(feature = "demo")]
-    pub fn demo(state: SessionState, screenshot: Option<std::path::PathBuf>) -> Self {
+    pub fn demo(
+        state: SessionState,
+        screenshot: Option<std::path::PathBuf>,
+        room_panel: bool,
+    ) -> Self {
+        let mut inputs = crate::ui::Inputs::default();
+        inputs.room_panel = room_panel;
         Self {
             state,
             demo: true,
             runtime: None,
             view: View::default(),
-            inputs: crate::ui::Inputs::default(),
+            inputs,
             web_url: None,
             texture: None,
             renderer: None,

@@ -4,6 +4,9 @@ pub const VERSION: u32 = 5;
 pub const PORT: u16 = 7842;
 pub const MAX_MESSAGE: usize = 16 * 1024;
 pub const MAX_HASH_TABLE_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_SUBTITLE_BYTES: usize = 1024 * 1024;
+pub const MAX_SUBTITLE_CHUNK: usize = 6 * 1024;
+pub const MAX_SUBTITLE_CHUNKS: u32 = 256;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Media {
@@ -114,6 +117,27 @@ impl WebStreamAnswer {
             && (4096..=4 * 1024 * 1024).contains(&self.chunk_size)
             && self.media.bytes.div_ceil(u64::from(self.chunk_size)) <= max_chunks
             && valid_hex_64(&self.hash_table_digest)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubtitleChunk {
+    pub id: u64,
+    pub name: String,
+    pub index: u32,
+    pub total: u32,
+    pub data: String,
+}
+impl SubtitleChunk {
+    pub fn valid(&self) -> bool {
+        self.id != 0
+            && valid_file_name(&self.name)
+            && self.total > 0
+            && self.total <= MAX_SUBTITLE_CHUNKS
+            && self.index < self.total
+            && !self.data.is_empty()
+            && self.data.len() <= MAX_SUBTITLE_CHUNK
+            && !self.data.contains('\0')
     }
 }
 
@@ -394,6 +418,8 @@ pub enum Message {
     Bye,
     WebStreamOffer(Box<WebStreamOffer>),
     WebStreamAnswer(Box<WebStreamAnswer>),
+    SubtitleChunk(Box<SubtitleChunk>),
+    SubtitleClear,
 }
 
 #[cfg(test)]

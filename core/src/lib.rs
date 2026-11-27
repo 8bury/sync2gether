@@ -7,6 +7,7 @@ pub mod protocol;
 pub mod relay_wire;
 #[cfg(feature = "crypto")]
 pub mod secure;
+pub mod subtitle;
 pub mod sync;
 pub mod theme;
 

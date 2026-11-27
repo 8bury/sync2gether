@@ -174,6 +174,34 @@ pub(super) fn room_contents(
             inputs.player.fullscreen = false;
             actions.push(Command::Open);
         }
+        if view.role == Role::Host && view.file.is_some() {
+            ui.add_space(12.0);
+            section_label(ui, colors, strings.player.shared_subtitle);
+            if let Some(name) = &view.shared_subtitle {
+                ui.add(egui::Label::new(name).truncate())
+                    .on_hover_text(name);
+                ui.add_space(6.0);
+                if kit::Button::new(kit::Kind::Secondary, strings.player.change_shared_subtitle)
+                    .size(kit::Size::Medium)
+                    .fill_width(ui)
+                    .show(ui, colors)
+                    .clicked()
+                {
+                    actions.push(Command::ShareSubtitle);
+                }
+                ui.add_space(4.0);
+                if quiet(ui, colors, strings.player.stop_sharing_subtitle).clicked() {
+                    actions.push(Command::ClearSharedSubtitle);
+                }
+            } else if kit::Button::new(kit::Kind::Secondary, strings.player.share_subtitle)
+                .size(kit::Size::Medium)
+                .fill_width(ui)
+                .show(ui, colors)
+                .clicked()
+            {
+                actions.push(Command::ShareSubtitle);
+            }
+        }
         ui.add_space(12.0);
         super::stream::room_section(ui, colors, view, actions);
         feedback(ui, view);

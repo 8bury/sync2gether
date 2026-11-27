@@ -556,6 +556,24 @@ fn track_menu(ui: &mut egui::Ui, view: &View, demo: bool, actions: &mut Vec<Comm
             }
             ui.separator();
         }
+        if view.role == Role::Host {
+            ui.label(RichText::new(t.shared_subtitle).strong());
+            if let Some(name) = &view.shared_subtitle {
+                ui.add(egui::Label::new(name).truncate())
+                    .on_hover_text(name);
+                if ui.button(t.change_shared_subtitle).clicked() {
+                    actions.push(Command::ShareSubtitle);
+                    ui.close();
+                }
+                if ui.button(t.stop_sharing_subtitle).clicked() {
+                    actions.push(Command::ClearSharedSubtitle);
+                    ui.close();
+                }
+            } else if ui.button(t.share_subtitle).clicked() {
+                actions.push(Command::ShareSubtitle);
+                ui.close();
+            }
+        }
     });
 }
 fn toggle(view: &View) -> Control {

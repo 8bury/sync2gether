@@ -7,6 +7,7 @@ use sync2gether_core::{
         Control, Media, Message, Playback, Presence, Side, Snapshot, StreamProgress, Verification,
         WebStreamAnswer, WebStreamOffer,
     },
+    subtitle::SubtitleAssembler,
     sync::{Clock, Controller, Correction},
 };
 
@@ -57,6 +58,8 @@ pub enum Command {
     Speed { speed: f64 },
     StreamAnswer { answer: Box<WebStreamAnswer> },
     StreamStopped { id: u64 },
+    SubtitleReceived { name: String, vtt: String },
+    SubtitleCleared,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -142,6 +145,7 @@ pub struct Guest {
     now: f64,
     commands: Vec<Command>,
     stream: Option<(u64, Option<Media>)>,
+    subtitles: SubtitleAssembler,
 }
 
 impl Guest {
@@ -183,6 +187,7 @@ impl Guest {
             now: 0.0,
             commands: Vec::new(),
             stream: None,
+            subtitles: SubtitleAssembler::default(),
         })
     }
 
@@ -556,6 +561,15 @@ impl Guest {
                     self.commands.push(Command::StreamStopped { id });
                 }
             }
+            Message::SubtitleChunk(chunk) if chunk.valid() => {
+                if let Some((name, vtt)) = self.subtitles.push(*chunk) {
+                    self.commands.push(Command::SubtitleReceived { name, vtt });
+                }
+            }
+            Message::SubtitleClear => {
+                self.subtitles.clear();
+                self.commands.push(Command::SubtitleCleared);
+            }
             Message::Pong {
                 sent_ms,
                 received_ms,
@@ -610,6 +624,7 @@ impl Guest {
         self.snapshot = None;
         self.pings.clear();
         self.reset_operation();
+        self.subtitles.clear();
         self.failed = None;
         self.scheduled_start_ms = None;
     }

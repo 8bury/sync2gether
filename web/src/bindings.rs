@@ -5,6 +5,7 @@ use crate::{
 use sync2gether_core::{
     chunks::{CHUNK_SIZE, Identifier},
     protocol::{Control, Media, StreamProgress, Verification},
+    subtitle::{SubtitleError, from_bytes, shift_webvtt},
 };
 use wasm_bindgen::prelude::*;
 
@@ -205,4 +206,21 @@ impl WebStreamClient {
     pub fn progress(&self, transfer_bps: f64, reconnecting: bool) -> String {
         json(&self.0.progress(transfer_bps.max(0.0) as u64, reconnecting))
     }
+}
+
+#[wasm_bindgen]
+pub fn parse_subtitle(bytes: &[u8]) -> Result<String, JsError> {
+    from_bytes(bytes).map_err(|error| {
+        JsError::new(match error {
+            SubtitleError::TooLarge => "A legenda é grande demais (limite de 1 MiB).",
+            SubtitleError::Empty | SubtitleError::InvalidFormat | SubtitleError::InvalidName => {
+                "Não foi possível ler esta legenda. Escolha um arquivo .srt ou .vtt válido."
+            }
+        })
+    })
+}
+
+#[wasm_bindgen]
+pub fn shift_subtitle(vtt: &str, delay_ms: i32) -> String {
+    shift_webvtt(vtt, i64::from(delay_ms))
 }

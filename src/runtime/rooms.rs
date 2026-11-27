@@ -81,6 +81,7 @@ impl Worker {
         self.close_network();
         self.net_rx = None;
         self.stop_stream(false);
+        self.clear_shared_subtitle(false);
         self.disconnected();
         self.session = Session::default();
         self.view.role = Role::Local;
@@ -352,7 +353,12 @@ impl Worker {
                 let received_ms = received_at.duration_since(self.origin).as_secs_f64() * 1000.0;
                 match (self.view.role, *message) {
                     (Role::Host, Message::Presence(p)) if p.valid() => {
+                        let became_web_guest = !self.session.state.guest.web_guest && p.web_guest;
                         self.session.state.guest = *p;
+                        if became_web_guest {
+                            self.queue_shared_subtitle();
+                            self.drain_subtitle_outbox();
+                        }
                         self.progress();
                     }
                     (Role::Host, Message::Request(c)) => {
@@ -383,6 +389,8 @@ impl Worker {
                         self.handle_web_stream_offer(*offer)
                     }
                     (Role::Guest, Message::WebStreamAnswer(_)) => {}
+                    (Role::Guest, Message::SubtitleChunk(_)) => {}
+                    (Role::Guest, Message::SubtitleClear) => {}
                     (Role::Host, Message::StreamAnswer(answer)) if answer.valid() => {
                         self.handle_stream_answer(*answer);
                     }

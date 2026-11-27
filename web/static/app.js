@@ -1,6 +1,7 @@
-import init, { WebGuest } from "./pkg/sync2gether_web.js";
+import init, { WebGuest, parse_subtitle, shift_subtitle } from "./pkg/sync2gether_web.js";
 import { Player, now } from "./player.js";
 import { RELAY_URL } from "./config.js";
+import { Subtitles, formatDelay } from "./subtitles.js";
 import {
   ICON_ALERT,
   ICON_CANCEL,
@@ -42,6 +43,7 @@ const app = {
   lastActivity: 0,
   controlsVisible: true,
   popoverOpen: false,
+  subtitleMenuOpen: false,
   forcePrepare: false,
   unmutedVolume: 1,
   prevPeer: null,
@@ -60,6 +62,63 @@ const player = new Player($("video"), {
   muted: () => { $("unmute").hidden = false; },
   notice: (message) => { app.notice = message; render(true); },
 });
+
+export const subtitles = new Subtitles($("video"), {
+  parse: (bytes) => parse_subtitle(bytes),
+  shift: (vtt, delayMs) => shift_subtitle(vtt, delayMs),
+  onChange: () => renderSubtitles(),
+});
+
+function renderSubtitles() {
+  const btn = $("subtitles-btn");
+  const showing = subtitles.isShowing();
+  btn.classList.toggle("is-active", showing);
+
+  const offBtn = $("sub-opt-off");
+  const hostBtn = $("sub-opt-host");
+  const localBtn = $("sub-opt-local");
+
+  const setOpt = (el, selected) => {
+    el.classList.toggle("is-selected", selected);
+    el.setAttribute("aria-checked", String(selected));
+  };
+
+  setOpt(offBtn, subtitles.active === "off");
+  hostBtn.hidden = !subtitles.host;
+  if (subtitles.host) {
+    $("sub-host-name").textContent = subtitles.host.name;
+    $("sub-host-name").title = subtitles.host.name;
+  }
+  setOpt(hostBtn, subtitles.active === "host");
+
+  localBtn.hidden = !subtitles.local;
+  if (subtitles.local) {
+    $("sub-local-name").textContent = subtitles.local.name;
+    $("sub-local-name").title = subtitles.local.name;
+  }
+  setOpt(localBtn, subtitles.active === "local");
+
+  const delayWrap = $("subtitle-delay");
+  delayWrap.hidden = !showing;
+  $("sub-delay-value").textContent = formatDelay(subtitles.delayMs);
+  $("sub-delay-reset").disabled = subtitles.delayMs === 0;
+
+  const errEl = $("subtitle-error");
+  errEl.hidden = !subtitles.error;
+  errEl.textContent = subtitles.error || "";
+}
+
+export function setSubtitleMenuOpen(open) {
+  app.subtitleMenuOpen = Boolean(open);
+  $("subtitle-popover").hidden = !app.subtitleMenuOpen;
+  $("subtitles-btn").setAttribute("aria-expanded", String(app.subtitleMenuOpen));
+  if (app.subtitleMenuOpen && app.popoverOpen) {
+    app.popoverOpen = false;
+    $("room-popover").hidden = true;
+    $("presence-btn").setAttribute("aria-expanded", "false");
+  }
+  renderSubtitles();
+}
 
 function call(action) {
   if (!app.guest) return;
@@ -129,6 +188,12 @@ function pump() {
       closeSocket();
     } else if (command.kind.startsWith("stream_")) {
       app.stream?.command(command);
+    } else if (command.kind === "subtitle_received") {
+      subtitles.setHost(command.name, command.vtt);
+      const peer = app.view?.peer || "o anfitrião";
+      setToast(`Legenda compartilhada por ${peer}.`);
+    } else if (command.kind === "subtitle_cleared") {
+      subtitles.clearHost();
     } else {
       player.run(command);
     }
@@ -211,6 +276,7 @@ function leave() {
   forget();
   app.stream?.stop();
   app.stream = null;
+  subtitles.clearAll();
   setPlayerMode(false);
   showEnded("Você saiu da sala.", "");
 }
@@ -269,6 +335,7 @@ function setPlayerMode(active) {
     app.popoverOpen = false;
     $("room-popover").hidden = true;
     $("presence-btn").setAttribute("aria-expanded", "false");
+    setSubtitleMenuOpen(false);
   }
 }
 
@@ -310,6 +377,7 @@ function noteActivity() {
 function updateControlsVisibility(view) {
   if (!document.body.classList.contains("in-player")) return;
   const keep = app.popoverOpen
+    || app.subtitleMenuOpen
     || app.dragging
     || !view.playing
     || !view.connected
@@ -367,6 +435,7 @@ function render(force) {
     } else {
       showEnded("Sala encerrada", view.notice || "");
     }
+    subtitles.clearAll();
     player.unload(0);
     return;
   }
@@ -683,10 +752,11 @@ export function bindEvents() {
   $("back").addEventListener("click", () => seekBy(-10));
   $("forward").addEventListener("click", () => seekBy(10));
   $("video").addEventListener("click", () => {
-    if (app.popoverOpen) {
+    if (app.popoverOpen || app.subtitleMenuOpen) {
       app.popoverOpen = false;
       $("room-popover").hidden = true;
       $("presence-btn").setAttribute("aria-expanded", "false");
+      setSubtitleMenuOpen(false);
       return;
     }
     togglePlay();
@@ -752,9 +822,55 @@ export function bindEvents() {
 
   $("presence-btn").addEventListener("click", () => {
     noteActivity();
+    if (app.subtitleMenuOpen) setSubtitleMenuOpen(false);
     app.popoverOpen = !app.popoverOpen;
     $("room-popover").hidden = !app.popoverOpen;
     $("presence-btn").setAttribute("aria-expanded", String(app.popoverOpen));
+  });
+  $("subtitles-btn").addEventListener("click", () => {
+    noteActivity();
+    setSubtitleMenuOpen(!app.subtitleMenuOpen);
+  });
+  $("subtitle-close").addEventListener("click", () => {
+    setSubtitleMenuOpen(false);
+  });
+  $("sub-opt-off").addEventListener("click", () => {
+    noteActivity();
+    subtitles.select("off");
+  });
+  $("sub-opt-host").addEventListener("click", () => {
+    noteActivity();
+    subtitles.select("host");
+  });
+  $("sub-opt-local").addEventListener("click", () => {
+    noteActivity();
+    subtitles.select("local");
+  });
+  $("sub-delay-m500").addEventListener("click", () => {
+    noteActivity();
+    subtitles.adjustDelay(-500);
+  });
+  $("sub-delay-m100").addEventListener("click", () => {
+    noteActivity();
+    subtitles.adjustDelay(-100);
+  });
+  $("sub-delay-reset").addEventListener("click", () => {
+    noteActivity();
+    subtitles.resetDelay();
+  });
+  $("sub-delay-p100").addEventListener("click", () => {
+    noteActivity();
+    subtitles.adjustDelay(100);
+  });
+  $("sub-delay-p500").addEventListener("click", () => {
+    noteActivity();
+    subtitles.adjustDelay(500);
+  });
+  $("subtitle-pick").addEventListener("change", (event) => {
+    noteActivity();
+    const file = event.target.files[0];
+    event.target.value = "";
+    subtitles.loadLocalFile(file);
   });
   $("popover-close").addEventListener("click", () => {
     app.popoverOpen = false;
@@ -791,10 +907,11 @@ export function bindEvents() {
       event.preventDefault();
       noteActivity();
       toggleMute();
-    } else if (event.key === "Escape" && app.popoverOpen) {
+    } else if (event.key === "Escape" && (app.popoverOpen || app.subtitleMenuOpen)) {
       app.popoverOpen = false;
       $("room-popover").hidden = true;
       $("presence-btn").setAttribute("aria-expanded", "false");
+      setSubtitleMenuOpen(false);
     }
   });
 

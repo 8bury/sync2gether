@@ -42,6 +42,9 @@ struct Args {
     #[cfg(feature = "demo")]
     #[arg(long, requires = "demo")]
     demo_light: bool,
+    #[cfg(feature = "demo")]
+    #[arg(long, requires = "demo")]
+    demo_room_panel: bool,
 }
 
 fn main() -> eframe::Result {
@@ -87,6 +90,7 @@ fn main() -> eframe::Result {
                 return Ok(Box::new(App::demo(
                     _args.demo_state.into(),
                     _args.demo_shot,
+                    _args.demo_room_panel,
                 )));
             }
             let mut commands = Vec::new();

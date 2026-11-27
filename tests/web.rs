@@ -4,8 +4,12 @@ use std::{
     time::{Duration, Instant},
 };
 use sync2gether::{
-    network::{self, Event, relay::ClientTls},
+    network::{
+        self, Event,
+        relay::{ClientTls, Code},
+    },
     protocol::{Media, Message, Playback, Presence, Side, Snapshot, Transition},
+    runtime::{Command as RuntimeCommand, Runtime, View as RuntimeView},
 };
 use sync2gether_relay::{Limits, Relay, ws};
 use sync2gether_web::guest::{Command, Guest, PlayerStatus};
@@ -75,6 +79,8 @@ struct Browser {
     connect_at: Option<f64>,
     prepared: Vec<(u64, f64)>,
     scheduled: Vec<(u64, f64)>,
+    subtitles: Vec<(String, String)>,
+    subtitles_cleared: usize,
     connects: usize,
 }
 
@@ -91,6 +97,8 @@ impl Browser {
             connect_at: None,
             prepared: Vec::new(),
             scheduled: Vec::new(),
+            subtitles: Vec::new(),
+            subtitles_cleared: 0,
             connects: 0,
         }
     }
@@ -119,6 +127,8 @@ impl Browser {
                 }
                 Command::Prepare { token, position } => self.prepared.push((token, position)),
                 Command::Schedule { token, at } => self.scheduled.push((token, at)),
+                Command::SubtitleReceived { name, vtt } => self.subtitles.push((name, vtt)),
+                Command::SubtitleCleared => self.subtitles_cleared += 1,
                 _ => {}
             }
         }
@@ -557,4 +567,226 @@ async fn browser_guest_view_projects_pause_author_buffering_and_peer_leave() {
     assert!(view.peer_left);
     assert!(view.ended);
     assert!(view.notice.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_shared_subtitle_roundtrips_through_encrypted_relay_channel() {
+    let (relay, web) = start_relay().await;
+    let (mut rx, code, _origin) = host(relay).await;
+    let mut browser = Browser::new(&code, web);
+    let (tx, _peer) = host_connected(&mut rx, &mut browser).await;
+    browser
+        .until("conectado", |b| b.guest.view().connected)
+        .await;
+
+    let mut srt = String::from("\u{feff}");
+    for i in 1..=260 {
+        let start = i * 2;
+        let end = start + 1;
+        srt.push_str(&format!(
+            "{i}\r\n00:{:02}:{:02},000 --> 00:{:02}:{:02},500\r\nLinha compartilhada número {i}\r\n\r\n",
+            start / 60,
+            start % 60,
+            end / 60,
+            end % 60,
+        ));
+    }
+    let vtt = sync2gether_core::subtitle::to_webvtt(&srt).unwrap();
+    let chunks = sync2gether_core::subtitle::split_chunks(1, "Filme.pt-BR.srt", &vtt).unwrap();
+    assert!(chunks.len() > 1);
+    for chunk in chunks {
+        tx.send(Message::SubtitleChunk(Box::new(chunk)))
+            .await
+            .unwrap();
+    }
+    browser
+        .until("legenda recebida", |b| !b.subtitles.is_empty())
+        .await;
+    assert_eq!(browser.subtitles[0].0, "Filme.pt-BR.srt");
+    assert_eq!(browser.subtitles[0].1, vtt);
+
+    tx.send(Message::SubtitleClear).await.unwrap();
+    browser
+        .until("legenda removida", |b| b.subtitles_cleared == 1)
+        .await;
+}
+
+async fn runtime_until(
+    runtime: &Runtime,
+    view: &mut RuntimeView,
+    what: &str,
+    done: impl Fn(&RuntimeView) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        while let Ok(next) = runtime.views.try_recv() {
+            *view = next;
+        }
+        if done(view) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "runtime: {what}; status={} erro={:?}",
+            view.status,
+            view.error
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn assert_desktop_guest_receives_no_subtitles(rx: &mut mpsc::Receiver<Event>) {
+    let mut states = 0usize;
+    let deadline = Instant::now() + Duration::from_millis(700);
+    while Instant::now() < deadline {
+        match timeout(Duration::from_millis(50), rx.recv()).await {
+            Ok(Some(Event::Message(message, _))) => match *message {
+                Message::SubtitleChunk(_) | Message::SubtitleClear => {
+                    panic!("convidado desktop recebeu mensagem de legenda");
+                }
+                Message::State(_) => states += 1,
+                _ => {}
+            },
+            Ok(Some(Event::Disconnected | Event::PeerLeft)) => {
+                panic!("convidado desktop desconectou inesperadamente");
+            }
+            Ok(Some(Event::Rejected(error))) => {
+                panic!("convidado desktop recusado: {error}");
+            }
+            Ok(Some(_)) | Err(_) => {}
+            Ok(None) => panic!("tarefa de rede do convidado desktop encerrou"),
+        }
+    }
+    assert!(states > 0, "convidado desktop deixou de receber estados");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_shares_subtitles_only_with_web_guests_and_resends_on_reconnect() {
+    let (relay, web) = start_relay().await;
+    let dir =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".cache/web-subtitle-gate-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let srt_path = dir.join("legenda.srt");
+    std::fs::write(
+        &srt_path,
+        "1\r\n00:00:01,000 --> 00:00:05,000\r\nLegenda de teste\r\n",
+    )
+    .unwrap();
+
+    let mut host = Runtime::start();
+    let mut view = RuntimeView::default();
+    host.commands
+        .send(RuntimeCommand::HostInternet(relay.to_string()))
+        .await
+        .unwrap();
+    runtime_until(&host, &mut view, "código da sala desktop", |v| {
+        v.room_code.is_some()
+    })
+    .await;
+    let desktop_code = view.room_code.clone().unwrap();
+
+    let (guest_events, mut guest_rx) = mpsc::channel(64);
+    let guest_task = tokio::spawn(network::relay::guest_with_tls(
+        relay.to_string(),
+        Code::parse(&desktop_code).unwrap(),
+        ClientTls::webpki(),
+        guest_events,
+        Instant::now(),
+    ));
+    let guest_tx = loop {
+        match next(&mut guest_rx).await {
+            Event::Connected(tx) => break tx,
+            Event::Rejected(error) => panic!("recusado: {error}"),
+            _ => {}
+        }
+    };
+    guest_tx
+        .send(Message::Presence(Box::default()))
+        .await
+        .unwrap();
+    runtime_until(&host, &mut view, "convidado desktop conectado", |v| {
+        v.connected
+    })
+    .await;
+
+    host.commands
+        .send(RuntimeCommand::ShareSubtitlePath(srt_path.clone()))
+        .await
+        .unwrap();
+    runtime_until(
+        &host,
+        &mut view,
+        "legenda compartilhada no anfitrião",
+        |v| v.shared_subtitle.as_deref() == Some("legenda.srt"),
+    )
+    .await;
+    assert_desktop_guest_receives_no_subtitles(&mut guest_rx).await;
+
+    host.commands
+        .send(RuntimeCommand::ClearSharedSubtitle)
+        .await
+        .unwrap();
+    runtime_until(&host, &mut view, "legenda limpa no anfitrião", |v| {
+        v.shared_subtitle.is_none()
+    })
+    .await;
+    assert_desktop_guest_receives_no_subtitles(&mut guest_rx).await;
+
+    let _ = guest_tx.send(Message::Bye).await;
+    guest_task.abort();
+
+    host.commands
+        .send(RuntimeCommand::HostInternet(relay.to_string()))
+        .await
+        .unwrap();
+    runtime_until(&host, &mut view, "código da sala web", |v| {
+        v.room_code
+            .as_deref()
+            .is_some_and(|code| code != desktop_code)
+    })
+    .await;
+    let web_code = view.room_code.clone().unwrap();
+
+    host.commands
+        .send(RuntimeCommand::ShareSubtitlePath(srt_path))
+        .await
+        .unwrap();
+    runtime_until(&host, &mut view, "legenda pronta para o navegador", |v| {
+        v.shared_subtitle.as_deref() == Some("legenda.srt")
+    })
+    .await;
+
+    let mut browser = Browser::new(&web_code, web);
+    browser
+        .until("legenda recebida ao conectar", |b| b.subtitles.len() == 1)
+        .await;
+    assert_eq!(browser.subtitles[0].0, "legenda.srt");
+    assert!(browser.subtitles[0].1.contains("Legenda de teste"));
+
+    let first_connects = browser.connects;
+    if let Some(mut socket) = browser.socket.take() {
+        let _ = socket.close(None).await;
+    }
+    let now = browser.now();
+    browser.guest.socket_closed(now);
+    browser
+        .until("legenda reenviada após reconexão", |b| {
+            b.connects > first_connects && b.guest.view().connected && b.subtitles.len() >= 2
+        })
+        .await;
+    assert_eq!(browser.subtitles[1], browser.subtitles[0]);
+
+    host.commands
+        .send(RuntimeCommand::ClearSharedSubtitle)
+        .await
+        .unwrap();
+    browser
+        .until("legenda removida no navegador", |b| {
+            b.subtitles_cleared == 1
+        })
+        .await;
+
+    tokio::task::spawn_blocking(move || host.shutdown())
+        .await
+        .unwrap();
 }

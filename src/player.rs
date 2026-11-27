@@ -88,6 +88,7 @@ pub enum Command {
     Subtitle,
     AudioTrack(i64),
     SubtitleTrack(Option<i64>),
+    AddSubtitle(PathBuf),
     Shutdown,
 }
 
@@ -617,6 +618,10 @@ fn run(
                             &id.map_or_else(|| "no".into(), |id| id.to_string()),
                         ],
                     ),
+                    Command::AddSubtitle(path) => match mpv_load_path(&path) {
+                        Some(path) => api.command(handle, &["sub-add", path.as_ref(), "select"]),
+                        None => Err(crate::i18n::text().player_errors.non_utf8.into()),
+                    },
                 };
                 if let Err(error) = result {
                     let _ = events.blocking_send(Event::Error(error));

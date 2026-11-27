@@ -1,4 +1,13 @@
-import { bindEvents, show, showEnded, showEntry, showRoom, start } from "./app.js";
+import {
+  bindEvents,
+  setSubtitleMenuOpen,
+  show,
+  showEnded,
+  showEntry,
+  showRoom,
+  start,
+  subtitles,
+} from "./app.js";
 
 function previewFixture(scenario) {
   const base = {
@@ -106,6 +115,16 @@ function runPreview(scenario) {
   }
   document.getElementById("stage").classList.add("preview-backdrop");
   showRoom(previewFixture(scenario));
+  if (scenario === "subtitles" || scenario === "subtitles-menu") {
+    const sampleVtt = "WEBVTT\n\n00:00:00.000 --> 02:00:00.000\nO mesmo filme, no mesmo segundo.\n";
+    subtitles.setHost("Filme.de.demonstracao.pt-BR.srt", sampleVtt);
+    subtitles.delayMs = 500;
+    const cue = document.createElement("div");
+    cue.className = "preview-cue";
+    cue.textContent = "O mesmo filme, no mesmo segundo.";
+    document.getElementById("stage").appendChild(cue);
+    setSubtitleMenuOpen(scenario === "subtitles-menu");
+  }
 }
 
 const previewScenario = new URLSearchParams(location.search).get("preview");

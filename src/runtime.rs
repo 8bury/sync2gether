@@ -1,6 +1,7 @@
 mod files;
 mod rooms;
 mod stream;
+mod subtitle;
 mod sync;
 mod view;
 mod web_stream;
@@ -9,6 +10,7 @@ use self::{
     files::FileResult,
     rooms::BackgroundResult,
     stream::{GuestSession, StreamPrepResult},
+    subtitle::{SharedSubtitle, SubtitleLoad},
 };
 use crate::{
     discovery, network, player,
@@ -95,12 +97,16 @@ pub struct View {
     pub peer_stream: Option<StreamProgress>,
     pub can_stream: bool,
     pub peer_streaming: bool,
+    pub shared_subtitle: Option<String>,
 }
 
 pub enum Command {
     Open,
     OpenPath(PathBuf),
     CancelOpen,
+    ShareSubtitle,
+    ShareSubtitlePath(PathBuf),
+    ClearSharedSubtitle,
     StartStream,
     StopStream,
     Host(String),
@@ -247,6 +253,11 @@ struct Worker {
     stream_rx: mpsc::Receiver<StreamEvent>,
     stream_prep_tx: mpsc::Sender<StreamPrepResult>,
     stream_prep_rx: mpsc::Receiver<StreamPrepResult>,
+    subtitle_id: u64,
+    shared_subtitle: Option<SharedSubtitle>,
+    subtitle_outbox: VecDeque<Message>,
+    subtitle_tx: mpsc::Sender<SubtitleLoad>,
+    subtitle_rx: mpsc::Receiver<SubtitleLoad>,
 }
 
 impl Worker {
@@ -255,6 +266,7 @@ impl Worker {
         let (background_tx, background_rx) = mpsc::channel(4);
         let (stream_tx, stream_rx) = mpsc::channel(32);
         let (stream_prep_tx, stream_prep_rx) = mpsc::channel(8);
+        let (subtitle_tx, subtitle_rx) = mpsc::channel(4);
         Self {
             player,
             background: None,
@@ -309,6 +321,11 @@ impl Worker {
             stream_rx,
             stream_prep_tx,
             stream_prep_rx,
+            subtitle_id: 0,
+            shared_subtitle: None,
+            subtitle_outbox: VecDeque::new(),
+            subtitle_tx,
+            subtitle_rx,
         }
     }
 
@@ -354,6 +371,7 @@ impl Worker {
     fn disconnected(&mut self) {
         self.on_control_disconnected();
         self.outgoing = None;
+        self.subtitle_outbox.clear();
         self.view.connected = false;
         self.clock = Clock::default();
         self.snapshot = None;
@@ -372,6 +390,9 @@ impl Worker {
             Command::Open => self.open(None),
             Command::OpenPath(path) => self.open(Some(path)),
             Command::CancelOpen => self.cancel_open(),
+            Command::ShareSubtitle => self.share_subtitle(None),
+            Command::ShareSubtitlePath(path) => self.share_subtitle(Some(path)),
+            Command::ClearSharedSubtitle => self.clear_shared_subtitle(true),
             Command::StartStream => self.start_stream(),
             Command::StopStream => self.stop_stream(true),
             Command::HostAuto(port) => {
@@ -428,10 +449,12 @@ impl Worker {
                 Some((id, result)) = self.background_rx.recv() => self.background_event(id, result),
                 Some(event) = player_events.recv() => self.player_event(event),
                 Some(file) = self.file_rx.recv() => self.file_event(file),
+                Some(subtitle) = self.subtitle_rx.recv() => self.subtitle_event(subtitle),
                 Some(prep) = self.stream_prep_rx.recv() => self.stream_prep_event(prep),
                 Some(event) = self.stream_rx.recv() => self.stream_event(event),
                 event = recv_network(&mut self.net_rx) => self.network_event(event),
                 _ = monitor.tick() => {
+                    self.drain_subtitle_outbox();
                     self.progress();
                     self.correct();
                 }

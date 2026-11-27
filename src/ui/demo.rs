@@ -147,6 +147,9 @@ fn demo_view(t: &'static crate::i18n::Strings, state: SessionState) -> crate::ru
             | SessionState::PeerLeft
     );
     view.status = state.label(t).into();
+    if matches!(state, SessionState::Synchronized | SessionState::Paused) {
+        view.shared_subtitle = Some(t.demo.subtitle.into());
+    }
     if view.watching && view.connected {
         view.peer_drift = Some(0.0);
     }

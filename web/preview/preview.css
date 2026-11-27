@@ -1,3 +1,21 @@
 .stage.preview-backdrop video {
   background: radial-gradient(circle at 50% 42%, #242424 0%, #141414 60%, #0b0b0b 100%);
 }
+.preview-cue {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--player-controls-h) + 28px);
+  transform: translateX(-50%);
+  max-width: calc(100% - 48px);
+  padding: 4px 12px;
+  border-radius: 4px;
+  background: rgba(12, 12, 12, 0.78);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: clamp(16px, 2.2vw, 26px);
+  line-height: 1.35;
+  text-align: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  z-index: 9;
+}

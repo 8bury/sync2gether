@@ -144,6 +144,7 @@ impl Worker {
                     Ok(Some((path, media, index))) => {
                         self.previous = None;
                         self.stop_stream(true);
+                        self.clear_shared_subtitle(self.view.role == super::Role::Host);
                         self.local_media = Some((path.clone(), Arc::new(index)));
                         if self.view.role == super::Role::Host {
                             self.session.apply(Control::Pause, self.now());

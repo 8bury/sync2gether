@@ -187,7 +187,10 @@ do player usam ícones com dicas e nomes acessíveis para play/pause, saltos de
 10 segundos, volume, áudio/legendas e tela cheia. Em janelas com 860 pixels ou
 mais, o volume fica numa barra ao lado do ícone, que silencia com um clique; em
 janelas menores, o ícone abre o menu de volume. O ícone de legendas abre o menu
-de faixas. O título omite a extensão de vídeo. Avisos sobre
+de faixas; quando você é o anfitrião, esse menu e o painel da sala também
+permitem compartilhar um arquivo de legenda `.srt` ou `.vtt` (até 1 MiB) pelo
+canal cifrado da sala, carregando-o no seu player e enviando-o ao convidado no
+navegador. O título omite a extensão de vídeo. Avisos sobre
 reconexão, preparação e falhas aparecem sobre o vídeo quando necessários;
 o estado normal da sessão fica nos detalhes da sala.
 

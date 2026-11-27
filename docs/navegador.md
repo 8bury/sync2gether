@@ -29,7 +29,11 @@ VP8/VP9/AV1 e Opus**. A página avisa quando o arquivo do anfitrião tem uma
 extensão que costuma falhar (MKV, AVI, TS e outras) e quando o vídeo abre sem
 uma faixa reproduzível. Áudio **AC-3, E-AC-3 e DTS**, comum em arquivos MKV,
 não toca na maioria dos navegadores; a página avisa quando percebe que o áudio
-não está sendo decodificado. Legendas e troca de faixas ficam para o app.
+não está sendo decodificado. A página suporta legendas externas (`.srt` e
+`.vtt`) via `<track>` e WebVTT: o convidado pode abrir um arquivo local (`.srt`
+é convertido para WebVTT na página) ou receber a legenda que o anfitrião
+compartilhar pelo canal cifrado da sala, com controle para ativar, desativar e
+ajustar o atraso. A troca de faixas embutidas continua no app.
 
 O streaming guarda até 256 MiB de blocos na memória (128 MiB em celulares e
 aparelhos com pouca memória). Não há cache em disco: depois de uma
@@ -120,22 +124,24 @@ firefox --headless --screenshot="$PWD/.cache/web-paused.png" --window-size=1440,
 ```
 
 Os cenários disponíveis em `web/preview/` são `entry`, `connecting`, `ended`,
-`prepare`, `player`, `paused`, `reconnecting` e `buffering`, com `&theme=light`
-ou `&theme=dark` opcionais. O build padrão (`bash scripts/build-web.sh`) e o
-`web/Dockerfile` nunca incluem `web/preview/` e ignoram `?preview=`.
+`prepare`, `player`, `paused`, `reconnecting`, `buffering`, `subtitles` e
+`subtitles-menu`, com `&theme=light` ou `&theme=dark` opcionais. O build padrão
+(`bash scripts/build-web.sh`) e o `web/Dockerfile` nunca incluem `web/preview/`
+e ignoram `?preview=`.
 
 O código fica em:
 
 - `core/`: mensagens, relógio, código da sala, handshake SPAKE2/Noise sem I/O,
-  hashes dos blocos, formato do canal de dados e tokens de tema (`theme.rs`),
-  compilados para o app, o relay e o WebAssembly;
+  hashes dos blocos, formato do canal de dados, conversão/deslocamento de
+  legendas (`subtitle.rs`) e tokens de tema (`theme.rs`), compilados para o app,
+  o relay e o WebAssembly;
 - `web/src/`: o convidado sem I/O (`guest.rs`, `link.rs`) e o cliente de blocos
   do streaming (`stream.rs`), exportados para JavaScript em `bindings.rs`;
 - `web/static/`: a página, os tokens CSS gerados a partir de `core/src/theme.rs`
   (`tokens.css`, verificados por teste em `tests/web.rs`), os controles e avisos
-  sobre o vídeo no mesmo visual do app (`ui.js`, `style.css`), o adaptador do
-  `<video>`, o Worker de hash e o Service Worker que responde aos pedidos de
-  trecho do vídeo;
+  sobre o vídeo no mesmo visual do app (`ui.js`, `subtitles.js`, `style.css`),
+  o adaptador do `<video>`, o Worker de hash e o Service Worker que responde
+  aos pedidos de trecho do vídeo;
 - `web/preview/`: fixtures e ponto de entrada usados apenas com
   `scripts/build-web.sh --preview` para revisão visual e capturas em `.cache/`;
 - `src/stream/webrtc.rs` e `src/runtime/web_stream.rs`: o lado do anfitrião,

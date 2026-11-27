@@ -18,6 +18,19 @@ pub use tracks::{Track, TrackKind};
 
 pub const WIDTH: usize = 960;
 pub const HEIGHT: usize = 540;
+const BUILTIN_SCRIPTS: [&std::ffi::CStr; 11] = [
+    c"load-scripts",
+    c"osc",
+    c"ytdl",
+    c"load-stats-overlay",
+    c"load-osd-console",
+    c"load-console",
+    c"load-auto-profiles",
+    c"load-select",
+    c"load-commands",
+    c"load-context-menu",
+    c"load-positioning",
+];
 pub type Frames = Arc<Mutex<Option<Vec<u8>>>>;
 #[derive(Clone, Debug)]
 pub struct Status {
@@ -476,6 +489,10 @@ fn run(
             if unsafe { (api.option)(handle, name.as_ptr(), value.as_ptr()) } < 0 {
                 return Err(crate::i18n::text().player_errors.config.into());
             }
+        }
+        for name in BUILTIN_SCRIPTS {
+            // SAFETY: strings C estáticas, handle válido e ainda não inicializado.
+            let _ = unsafe { (api.option)(handle, name.as_ptr(), c"no".as_ptr()) };
         }
         if gl.is_none() {
             // SAFETY: opção C estática, handle válido e ainda não inicializado.

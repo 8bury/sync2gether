@@ -13,9 +13,10 @@ use self::{
     subtitle::{SharedSubtitle, SubtitleLoad},
 };
 use crate::{
-    discovery, network, player,
+    discovery,
+    host::Host,
+    network, player,
     protocol::{Control, Media, Message, PORT, Presence, Snapshot, StreamProgress, Verification},
-    session::Session,
     stream::{ChunkIndex, StreamEvent, StreamTelemetry, host::HostPending},
     sync::{Clock, Controller},
 };
@@ -210,7 +211,7 @@ struct Worker {
     background_rx: mpsc::Receiver<(u64, BackgroundResult)>,
     approval: Option<(u64, tokio::sync::oneshot::Sender<bool>)>,
     view: View,
-    session: Session,
+    host: Host,
     clock: Clock,
     snapshot: Option<Snapshot>,
     origin: Instant,
@@ -233,7 +234,6 @@ struct Worker {
     previous: Option<Presence>,
     file_cancel: Option<Arc<AtomicBool>>,
     fatal_error: Option<String>,
-    recover: bool,
     files: mpsc::Sender<FileResult>,
     file_rx: mpsc::Receiver<FileResult>,
     pings: VecDeque<f64>,
@@ -281,7 +281,7 @@ impl Worker {
                 status: crate::i18n::text().common.local_playback.into(),
                 ..Default::default()
             },
-            session: Session::default(),
+            host: Host::default(),
             clock: Clock::default(),
             snapshot: None,
             controller: Controller::default(),
@@ -303,7 +303,6 @@ impl Worker {
             previous: None,
             file_cancel: None,
             fatal_error: None,
-            recover: false,
             files,
             file_rx,
             pings: VecDeque::new(),
@@ -377,10 +376,15 @@ impl Worker {
         self.outgoing = None;
         self.subtitle_outbox.clear();
         self.view.connected = false;
+        self.pings.clear();
+        if self.view.role == Role::Host {
+            self.host.on_disconnected(self.now());
+            self.flush_host();
+            self.snapshot = None;
+            return;
+        }
         self.clock = Clock::default();
         self.snapshot = None;
-        self.pings.clear();
-        self.session.disconnect(self.now());
         self.reset_operation();
         self.view.last_start_ms = None;
         self.view.last_start_id = None;
@@ -463,17 +467,21 @@ impl Worker {
                     self.correct();
                 }
                 _ = heartbeat.tick() => {
-                    self.refresh_presence();
                     if self.view.role == Role::Host {
-                        self.publish();
-                    } else if self.view.role == Role::Guest && self.view.connected {
-                        self.send(Message::Presence(Box::new(self.presence.clone())));
-                        let sent_ms = self.now();
-                        self.pings.push_back(sent_ms);
-                        while self.pings.len() > 16 {
-                            self.pings.pop_front();
+                        self.sync_host_inputs();
+                        self.host.heartbeat(self.now());
+                        self.flush_host();
+                    } else {
+                        self.refresh_presence();
+                        if self.view.role == Role::Guest && self.view.connected {
+                            self.send(Message::Presence(Box::new(self.presence.clone())));
+                            let sent_ms = self.now();
+                            self.pings.push_back(sent_ms);
+                            while self.pings.len() > 16 {
+                                self.pings.pop_front();
+                            }
+                            self.send(Message::Ping { sent_ms });
                         }
-                        self.send(Message::Ping { sent_ms });
                     }
                     self.update_view();
                     if views.send(self.view.clone()).is_err() {

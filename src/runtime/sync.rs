@@ -1,5 +1,6 @@
 use super::{Role, Worker};
 use crate::{
+    host::{HostNotice, HostOutput, PlayerCommand as HostPlayerCommand, PlayerStatus},
     player,
     protocol::{Control, Message, Playback, Side, Snapshot, StreamProgress},
     stream::{CHUNK_SIZE, StreamPhase},
@@ -13,6 +14,23 @@ const BUFFER_MIN_CLEAR_LOCAL: Duration = Duration::from_millis(1200);
 const BUFFER_STREAM_CLEAR_WAIT: Duration = Duration::from_secs(4);
 const BUFFER_MAX_RECOVERY: Duration = Duration::from_secs(12);
 
+pub(super) fn to_host_player_status(status: &player::Status) -> PlayerStatus {
+    PlayerStatus {
+        generation: status.generation,
+        measured_ms: status.measured_ms,
+        position: status.position,
+        duration: status.duration,
+        speed: status.speed,
+        paused: status.paused,
+        seeking: status.seeking,
+        loaded: status.loaded,
+        buffering: status.buffering,
+        blocked: status.blocked,
+        ended: status.ended,
+        cache_time: status.cache_time,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum BufferLatch {
     #[default]
@@ -22,11 +40,99 @@ pub(super) enum BufferLatch {
 }
 
 impl Worker {
+    pub(super) fn sync_host_inputs(&mut self) {
+        self.host.set_generation(self.generation);
+        self.host.set_fatal_error(self.fatal_error.is_some());
+        self.host
+            .set_stream_errored(matches!(self.view.stream.phase, StreamPhase::Error(_)));
+        let streaming = self.view.stream.active;
+        let web_stream = self.local_media.is_some();
+        let web_remux = web_stream && crate::stream::ffmpeg::is_available();
+        let presence = self.host.presence_mut();
+        presence.media = self.presence.media.clone();
+        presence.file_name = self.presence.file_name.clone();
+        presence.loading = self.presence.loading;
+        presence.verification = self.presence.verification;
+        presence.streaming = streaming;
+        presence.web_stream = web_stream;
+        presence.web_remux = web_remux;
+    }
+
+    pub(super) fn flush_host(&mut self) {
+        let outputs = self.host.take_outputs();
+        self.presence = self.host.presence().clone();
+        self.snapshot = self.host.snapshot().cloned();
+        self.view.watching = self.host.watching();
+        self.view.peer_left = self.host.peer_left();
+        self.view.scheduled_start_ms = self.host.scheduled_start_ms();
+        self.view.last_start_ms = self.host.last_start_ms();
+        self.view.last_start_id = self.host.last_start_id();
+        if self.view.stream.phase == StreamPhase::Complete
+            && let Some(state) = self.host.snapshot()
+            && state.guest.media.is_some()
+            && state.guest.media != state.host.media
+        {
+            self.stop_stream(false);
+        }
+        for output in outputs {
+            match output {
+                HostOutput::Send(message) => self.send(message),
+                HostOutput::Player(command) => match command {
+                    HostPlayerCommand::Prepare { token, position } => {
+                        self.player(player::Command::Prepare {
+                            id: token,
+                            position,
+                        });
+                    }
+                    HostPlayerCommand::Schedule { token, at_ms } => {
+                        let delay = (at_ms - self.now()).max(0.0);
+                        let at = Instant::now() + Duration::from_secs_f64(delay / 1000.0);
+                        self.player(player::Command::Schedule { id: token, at });
+                    }
+                    HostPlayerCommand::Pause { paused } => {
+                        self.player(player::Command::Pause(paused));
+                    }
+                    HostPlayerCommand::Seek { position } => {
+                        self.player(player::Command::Seek(position));
+                    }
+                    HostPlayerCommand::Speed { speed } => {
+                        self.player(player::Command::Speed(speed));
+                    }
+                },
+                HostOutput::Notice(notice) => {
+                    let errors = &crate::i18n::text().errors;
+                    self.view.notice = Some(match notice {
+                        HostNotice::Reconnected => errors.reconnected.into(),
+                        HostNotice::StartCancelled => errors.start_cancelled.into(),
+                        HostNotice::StartTimeout => errors.start_timeout.into(),
+                    });
+                }
+                HostOutput::ClearNotice => self.view.notice = None,
+                HostOutput::Disconnect => self.disconnected(),
+                HostOutput::WebGuestJoined => {
+                    self.queue_shared_subtitle();
+                    self.drain_subtitle_outbox();
+                }
+                HostOutput::StreamRequest => self.handle_stream_request(),
+                HostOutput::StreamAnswer(answer) => self.handle_stream_answer(*answer),
+                HostOutput::WebStreamOffer(offer) => self.handle_web_stream_offer(*offer),
+                HostOutput::StreamStop { id } => self.handle_stream_stop(id),
+                HostOutput::SubtitleRequest { track } => self.request_embedded_subtitle(track),
+            }
+        }
+    }
+
     pub(super) fn control(&mut self, control: Control) {
         self.control_by(control, Side::Host);
     }
 
     pub(super) fn control_by(&mut self, control: Control, by: Side) {
+        if self.view.role == Role::Host {
+            self.sync_host_inputs();
+            self.host.control(control, by, self.now());
+            self.flush_host();
+            return;
+        }
         if !control.valid() {
             return;
         }
@@ -48,16 +154,7 @@ impl Worker {
                     self.player(player::Command::Seek(p.min(self.view.player.duration)))
                 }
             },
-            Role::Host => {
-                self.refresh_presence();
-                if self.session.request(control, by, self.now()) {
-                    if matches!(control, Control::Play) {
-                        self.view.watching = true;
-                        self.watching_media = self.presence.media.clone();
-                    }
-                    self.publish();
-                }
-            }
+            Role::Host => {}
             Role::Guest => {
                 if self.view.connected {
                     if matches!(control, Control::Play) {
@@ -71,6 +168,34 @@ impl Worker {
     }
 
     pub(super) fn player_event(&mut self, event: player::Event) {
+        if self.view.role == Role::Host {
+            self.sync_host_inputs();
+            let now = self.now();
+            match event {
+                player::Event::Status(status) => {
+                    if status.generation == self.generation {
+                        self.view.player = status.clone();
+                    }
+                    self.host.player_status(to_host_player_status(&status), now);
+                }
+                player::Event::Prepared { id } => self.host.player_prepared(id, now),
+                player::Event::Started { id, at } => {
+                    let local = at.duration_since(self.origin).as_secs_f64() * 1000.0;
+                    self.host.player_started(id, local, now);
+                }
+                player::Event::Missed { id } => self.host.player_missed(id, now),
+                player::Event::Unavailable(error) => {
+                    self.fatal_error = Some(error);
+                    self.host.player_unavailable(now);
+                }
+                player::Event::Error(error) => {
+                    self.view.error = Some(error);
+                    self.host.player_error(now);
+                }
+            }
+            self.flush_host();
+            return;
+        }
         match event {
             player::Event::Status(status) if status.generation == self.generation => {
                 if self.view.role == Role::Local
@@ -97,10 +222,7 @@ impl Worker {
             {
                 let id = self.player_operation.unwrap().1;
                 self.prepared = Some(id);
-                if self.view.role == Role::Host {
-                    self.session.prepared(id, false, self.now());
-                    self.publish();
-                } else if self.view.role == Role::Guest {
+                if self.view.role == Role::Guest {
                     self.send(Message::Prepared { id });
                 }
             }
@@ -139,6 +261,12 @@ impl Worker {
     }
 
     pub(super) fn refresh_presence(&mut self) {
+        if self.view.role == Role::Host {
+            self.sync_host_inputs();
+            self.host.refresh_presence(self.now());
+            self.presence = self.host.presence().clone();
+            return;
+        }
         self.refresh_stream_cache_stats();
         let p = &self.view.player;
         let now = self.now();
@@ -201,8 +329,8 @@ impl Worker {
         self.presence.rtt_ms = self.clock.rtt_ms;
         self.presence.uncertainty_ms = self.clock.uncertainty_ms;
         self.presence.streaming = self.view.stream.active || self.guest_stream.is_some();
-        self.presence.web_stream = self.view.role == Role::Host && self.local_media.is_some();
-        self.presence.web_remux = self.presence.web_stream && crate::stream::ffmpeg::is_available();
+        self.presence.web_stream = false;
+        self.presence.web_remux = false;
         self.presence.stream_progress = if self.view.role == Role::Guest
             && (self.guest_stream.is_some()
                 || (self.view.stream.active && !self.view.stream.is_sender))
@@ -231,19 +359,6 @@ impl Worker {
             paused: p.paused || self.presence.blocked,
             seeking: p.seeking,
         });
-        if self.view.role == Role::Host {
-            self.session.state.host = self.presence.clone();
-        }
-    }
-
-    pub(super) fn publish(&mut self) {
-        if self.view.role != Role::Host {
-            return;
-        }
-        self.refresh_presence();
-        let state = self.session.snapshot(self.now());
-        self.send(Message::State(Box::new(state.clone())));
-        self.apply_snapshot(state);
     }
 
     pub(super) fn operation_failed(&mut self, id: u64) {
@@ -253,26 +368,19 @@ impl Worker {
         self.reset_operation();
         self.failed = Some(id);
         self.view.notice = Some(crate::i18n::text().errors.start_cancelled.into());
-        if self.view.role == Role::Host {
-            self.session.fail(id, self.now());
-            self.publish();
-        } else {
-            self.send(Message::Failed { id });
-        }
+        self.send(Message::Failed { id });
     }
 
     pub(super) fn apply_snapshot(&mut self, state: Snapshot) {
+        if self.view.role == Role::Host {
+            self.host.apply_snapshot(state, self.now());
+            self.flush_host();
+            return;
+        }
         if self.view.role == Role::Guest
             && let Some(session) = &self.guest_stream
             && let Some(host_media) = &state.host.media
             && host_media != &session.media
-        {
-            self.stop_stream(false);
-        }
-        if self.view.role == Role::Host
-            && self.view.stream.phase == StreamPhase::Complete
-            && state.guest.media.is_some()
-            && state.guest.media != state.host.media
         {
             self.stop_stream(false);
         }
@@ -325,9 +433,7 @@ impl Worker {
                     self.operation_failed(t.id);
                     return;
                 }
-                if self.scheduled != Some(t.id)
-                    && (self.view.role == Role::Guest || self.session.host_can_arm())
-                {
+                if self.scheduled != Some(t.id) {
                     let Some(host_now) = self.clock.host_now(self.now()) else {
                         self.operation_failed(t.id);
                         return;
@@ -343,9 +449,7 @@ impl Worker {
                         id: self.player_operation.unwrap().0,
                         at,
                     });
-                    if self.view.role == Role::Guest {
-                        self.send(Message::Armed { id: t.id });
-                    }
+                    self.send(Message::Armed { id: t.id });
                 }
             }
         } else if state.paused && self.last_pause != Some(state.revision) {
@@ -359,21 +463,14 @@ impl Worker {
             return;
         }
         self.check_stream_timeout();
-        self.refresh_presence();
         if self.view.role == Role::Host {
-            let before = self.session.state.revision;
-            if self.recover && self.session.ready() {
-                self.recover = false;
-                self.session
-                    .apply(Control::Seek(self.session.position(self.now())), self.now());
-            }
-            if self.session.advance(self.now()) {
-                self.view.notice = Some(crate::i18n::text().errors.start_timeout.into());
-            }
-            if self.session.state.revision != before {
-                self.publish();
-            }
-        } else if (!self.clock.ready(self.now()) || !self.presence.ready || self.presence.blocked)
+            self.sync_host_inputs();
+            self.host.progress(self.now());
+            self.flush_host();
+            return;
+        }
+        self.refresh_presence();
+        if (!self.clock.ready(self.now()) || !self.presence.ready || self.presence.blocked)
             && let Some(id) = self.scheduled
         {
             self.operation_failed(id);
@@ -382,6 +479,12 @@ impl Worker {
 
     pub(super) fn correct(&mut self) {
         if self.view.role == Role::Local {
+            return;
+        }
+        if self.view.role == Role::Host {
+            self.sync_host_inputs();
+            self.host.correct(self.now());
+            self.flush_host();
             return;
         }
         let Some(state) = self.snapshot.clone() else {

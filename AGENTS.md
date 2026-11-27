@@ -33,16 +33,15 @@ funcionalidades reais.
 - `src/network/secure.rs`: SPAKE2 com o código e canal Noise cifrado.
 - `relay/`: servidor intermediário, sem dependências da interface; publicado
   com `relay/Dockerfile`. `relay/src/ws.rs` recebe navegadores por WebSocket.
-- `core/`: mensagens, relógio, código da sala, handshake e formato do canal de
-  dados sem I/O, compartilhados pelo app, pelo relay e pelo WebAssembly.
+- `core/`: mensagens, relógio, código da sala, sessão e máquina de estados do
+  anfitrião (`session.rs` e `host.rs`), handshake e formato do canal de dados
+  sem I/O, compartilhados pelo app, pelo relay e pelo WebAssembly.
 - `web/`: convidado no navegador. `web/src/` compila para WebAssembly (sem I/O)
   e `web/static/` tem a página em JavaScript simples; `scripts/build-web.sh`
   gera `target/web` e `web/Dockerfile` publica a página.
 - `src/stream/webrtc.rs` e `src/runtime/web_stream.rs`: streaming WebRTC do
   anfitrião para o navegador.
 - `src/discovery.rs`: anúncios UDP na rede e confirmação TCP de salas em segundo plano.
-- `src/session.rs` e `src/sync.rs`: preparação confirmada, início agendado,
-  relógio monotônico filtrado e correção de reprodução.
 - `src/media.rs`: identidade dos arquivos locais.
 - `src/i18n.rs` e `src/i18n/`: idiomas e textos visíveis (português do Brasil e
   inglês). Não escreva textos de interface fora dessa tabela.

@@ -3,10 +3,12 @@ pub mod chunks;
 pub mod code;
 pub mod datachannel;
 pub mod frame;
+pub mod host;
 pub mod protocol;
 pub mod relay_wire;
 #[cfg(feature = "crypto")]
 pub mod secure;
+pub mod session;
 pub mod subtitle;
 pub mod sync;
 pub mod theme;

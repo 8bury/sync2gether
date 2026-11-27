@@ -9,7 +9,7 @@ const WEB_OFFER_COOLDOWN: Duration = Duration::from_secs(2);
 
 impl Worker {
     pub(super) fn handle_web_stream_offer(&mut self, offer: WebStreamOffer) {
-        if self.view.role != Role::Host || !offer.valid() || !self.session.state.guest.web_guest {
+        if self.view.role != Role::Host || !offer.valid() || !self.host.guest_is_web() {
             return;
         }
         let (Some((path, index)), Some(media), Some(file_name)) = (

@@ -13,8 +13,7 @@ pub mod network;
 pub mod player;
 pub mod preferences;
 pub mod runtime;
-pub mod session;
 pub mod stream;
-pub use sync2gether_core::{protocol, sync};
+pub use sync2gether_core::{host, protocol, session, sync};
 
 pub mod discovery;

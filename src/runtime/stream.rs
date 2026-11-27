@@ -460,8 +460,7 @@ impl Worker {
                 if self.view.role == Role::Guest && self.guest_stream.is_some() {
                     self.schedule_stream_reconnect(error);
                 } else {
-                    let notify =
-                        self.view.role == Role::Guest || self.session.state.guest.web_guest;
+                    let notify = self.view.role == Role::Guest || self.host.guest_is_web();
                     self.stop_stream(notify);
                     self.view.stream.phase = StreamPhase::Error(error.clone());
                     self.view.notice = Some(error);
@@ -548,8 +547,7 @@ impl Worker {
                 {
                     self.schedule_stream_reconnect(error);
                 } else {
-                    let notify =
-                        self.view.role == Role::Guest || self.session.state.guest.web_guest;
+                    let notify = self.view.role == Role::Guest || self.host.guest_is_web();
                     self.stop_stream(notify);
                     self.view.stream.phase = StreamPhase::Error(error.clone());
                     self.view.notice = Some(error);

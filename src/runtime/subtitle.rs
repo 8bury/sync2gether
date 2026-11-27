@@ -88,7 +88,7 @@ impl Worker {
                 self.view.error = Some(error);
             }
             SubtitleLoad::Embedded { track, result } => {
-                if !self.view.connected || !self.session.state.guest.web_guest {
+                if !self.view.connected || !self.host.guest_is_web() {
                     return;
                 }
                 match result {
@@ -108,10 +108,7 @@ impl Worker {
     }
 
     pub(super) fn request_embedded_subtitle(&mut self, track: u8) {
-        if self.view.role != Role::Host
-            || !self.view.connected
-            || !self.session.state.guest.web_guest
-        {
+        if self.view.role != Role::Host || !self.view.connected || !self.host.guest_is_web() {
             return;
         }
         if let Some(cached) = self.embedded_subtitle_cache.get(&track).cloned() {
@@ -155,7 +152,7 @@ impl Worker {
         let had = self.shared_subtitle.take().is_some();
         self.view.shared_subtitle = None;
         self.subtitle_outbox.clear();
-        if notify && had && self.view.connected && self.session.state.guest.web_guest {
+        if notify && had && self.host.can_send(&Message::SubtitleClear) {
             self.subtitle_outbox.push_back(Message::SubtitleClear);
             self.drain_subtitle_outbox();
         }
@@ -163,7 +160,7 @@ impl Worker {
 
     pub(super) fn queue_shared_subtitle(&mut self) {
         self.subtitle_outbox.clear();
-        if !self.view.connected || !self.session.state.guest.web_guest {
+        if !self.view.connected || !self.host.guest_is_web() {
             return;
         }
         if let Some(shared) = &self.shared_subtitle {
@@ -175,7 +172,7 @@ impl Worker {
     }
 
     pub(super) fn drain_subtitle_outbox(&mut self) {
-        if !self.view.connected || !self.session.state.guest.web_guest {
+        if !self.view.connected || !self.host.guest_is_web() {
             self.subtitle_outbox.clear();
             return;
         }

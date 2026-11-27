@@ -2,6 +2,7 @@ use crate::protocol::{Control, Presence, Side, Snapshot, Transition};
 
 pub const PREPARE_TIMEOUT_MS: f64 = 10_000.0;
 pub const AUTO_RESUME_STABLE_MS: f64 = 1_000.0;
+
 pub struct Session {
     pub state: Snapshot,
     pub connected: bool,
@@ -13,6 +14,7 @@ pub struct Session {
     last_operation: u64,
     buffer_ready_since: Option<f64>,
 }
+
 impl Default for Session {
     fn default() -> Self {
         Self {
@@ -38,6 +40,7 @@ impl Default for Session {
         }
     }
 }
+
 impl Session {
     pub fn matched(&self) -> bool {
         self.connected
@@ -46,9 +49,11 @@ impl Session {
             && self.state.host.media.is_some()
             && self.state.host.media == self.state.guest.media
     }
+
     pub fn any_buffering(&self) -> bool {
         self.state.host.buffering || self.state.guest.buffering
     }
+
     pub fn ready(&self) -> bool {
         self.matched()
             && self.state.guest.clock_ready
@@ -57,9 +62,11 @@ impl Session {
             && !self.state.host.buffering
             && !self.state.guest.buffering
     }
+
     pub fn position(&self, now: f64) -> f64 {
         self.state.position_at(now)
     }
+
     pub fn request(&mut self, command: Control, by: Side, now: f64) -> bool {
         let applied = self.apply(command, now);
         if applied && matches!(command, Control::Pause) {
@@ -67,6 +74,7 @@ impl Session {
         }
         applied
     }
+
     pub fn apply(&mut self, command: Control, now: f64) -> bool {
         if !command.valid()
             || (matches!(command, Control::Play) && !self.ready())
@@ -118,11 +126,13 @@ impl Session {
         self.guest_armed = false;
         true
     }
+
     fn pause_for_buffer(&mut self, now: f64) {
         self.apply(Control::Pause, now);
         self.state.waiting_buffer = true;
         self.buffer_ready_since = None;
     }
+
     pub fn prepared(&mut self, id: u64, guest: bool, now: f64) -> bool {
         let Some(t) = &self.state.transition else {
             return false;
@@ -137,6 +147,7 @@ impl Session {
         }
         self.schedule_if_ready(now)
     }
+
     fn schedule_if_ready(&mut self, now: f64) -> bool {
         let paused_seek_ready = self.state.transition.as_ref().is_some_and(|t| !t.resume)
             && self.matched()
@@ -164,6 +175,7 @@ impl Session {
         self.state.revision += 1;
         true
     }
+
     pub fn armed(&mut self, id: u64, now: f64) -> bool {
         if self
             .state
@@ -178,9 +190,11 @@ impl Session {
             false
         }
     }
+
     pub fn host_can_arm(&self) -> bool {
         self.guest_armed
     }
+
     pub fn fail(&mut self, id: u64, now: f64) {
         let current = self
             .state
@@ -191,6 +205,7 @@ impl Session {
             self.apply(Control::Pause, now);
         }
     }
+
     pub fn advance(&mut self, now: f64) -> bool {
         if let Some(t) = self.state.transition.clone() {
             if !self.matched() {
@@ -248,11 +263,13 @@ impl Session {
         }
         false
     }
+
     pub fn disconnect(&mut self, now: f64) {
         self.apply(Control::Pause, now);
         self.connected = false;
         self.state.guest = Presence::default();
     }
+
     pub fn snapshot(&self, now: f64) -> Snapshot {
         let mut state = self.state.clone();
         state.position = self.position(now);
@@ -265,6 +282,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::protocol::Media;
+
     fn session() -> Session {
         let p = Presence {
             media: Some(Media {
@@ -298,6 +316,7 @@ mod tests {
         assert!(!s.matched());
         assert!(!s.apply(Control::Play, 2.0));
     }
+
     fn start(s: &mut Session) {
         s.apply(Control::Play, 0.0);
         let id = s.state.transition.as_ref().unwrap().id;
@@ -307,6 +326,7 @@ mod tests {
         s.advance(370.0);
         assert!(!s.state.paused);
     }
+
     #[test]
     fn waits_for_both_players_then_starts_at_common_time() {
         let mut s = session();
@@ -328,6 +348,7 @@ mod tests {
         assert!(!s.state.paused);
         assert!((s.position(at + 20.0) - 0.02).abs() < 1e-9);
     }
+
     #[test]
     fn records_who_paused_until_playback_resumes_or_pauses_by_itself() {
         let mut s = session();
@@ -346,6 +367,7 @@ mod tests {
         assert!(s.state.paused);
         assert_eq!(s.state.paused_by, None);
     }
+
     #[test]
     fn superseded_acks_and_pause_cannot_start_old_operation() {
         let mut s = session();
@@ -362,6 +384,7 @@ mod tests {
         assert!(s.state.transition.is_none());
         assert_eq!(s.position(1000.0), 30.0);
     }
+
     #[test]
     fn timeout_missing_arm_stall_and_disconnect_cancel_start() {
         let mut s = session();
@@ -384,6 +407,7 @@ mod tests {
         assert!(s.state.transition.is_none());
         assert!(s.state.paused);
     }
+
     #[test]
     fn seeking_to_the_end_can_complete_paused() {
         let mut s = session();
@@ -400,6 +424,7 @@ mod tests {
         assert!(!s.apply(Control::Play, 3.0));
         assert!(s.apply(Control::Seek(0.0), 4.0));
     }
+
     #[test]
     fn paused_seek_stays_paused_and_eof_can_seek_back() {
         let mut s = session();

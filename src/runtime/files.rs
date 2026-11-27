@@ -117,13 +117,18 @@ impl Worker {
                 });
             }
         });
-        self.control(Control::Pause);
-        self.reset_operation();
-        self.presence.ready = false;
-        self.presence.media = None;
-        self.presence.file_name = None;
-        self.presence.loading = true;
-        self.presence.verification = None;
+        if self.view.role == super::Role::Host {
+            self.host.begin_loading(self.generation, self.now());
+            self.flush_host();
+        } else {
+            self.control(Control::Pause);
+            self.reset_operation();
+            self.presence.ready = false;
+            self.presence.media = None;
+            self.presence.file_name = None;
+            self.presence.loading = true;
+            self.presence.verification = None;
+        }
     }
 
     pub(super) fn file_event(&mut self, file: FileResult) {
@@ -148,16 +153,17 @@ impl Worker {
                         self.clear_embedded_subtitles();
                         self.local_media = Some((path.clone(), Arc::new(index)));
                         if self.view.role == super::Role::Host {
-                            self.session.apply(Control::Pause, self.now());
-                            self.session.state.position = 0.0;
-                            self.session.state.host_ms = self.now();
+                            self.sync_host_inputs();
+                            self.host.set_media_loaded(media, self.now());
+                            self.flush_host();
+                        } else {
+                            self.reset_operation();
+                            self.presence.media = Some(media);
+                            self.presence.ready = false;
+                            self.presence.streaming = false;
                         }
-                        self.reset_operation();
                         *self.player.frames.lock().unwrap() = None;
                         self.view.file = self.view.pending_file.take();
-                        self.presence.media = Some(media);
-                        self.presence.ready = false;
-                        self.presence.streaming = false;
                         self.view.player = player::Status::default();
                         self.player(player::Command::Load(path, self.generation));
                     }

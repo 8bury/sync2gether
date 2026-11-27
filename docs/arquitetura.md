@@ -125,10 +125,13 @@ vídeo, GPU ou sincronização entre PCs.
   WebSocket para navegadores (`tokio-tungstenite`), só com `Join`.
 - `core/` (crate `sync2gether-core`) reúne o que roda igual no app, no relay e
   no navegador, sem Tokio nem I/O: mensagens (`protocol.rs`), relógio e
-  correção (`sync.rs`), código da sala, tipos de controle do relay,
+  correção (`sync.rs`), estado da sessão (`session.rs`), papel de anfitrião
+  sem I/O (`host.rs`, com aprovação, preparação, início agendado, respostas de
+  relógio, presença/snapshots, filtro de mensagens para convidado web e
+  correção de reprodução), código da sala, tipos de controle do relay,
   enquadramento, handshake SPAKE2/Noise em passos (`secure.rs`), hashes de
-  blocos e o formato do canal de dados WebRTC. O app reexporta `protocol` e
-  `sync`; o relay usa o core sem a feature `crypto`.
+  blocos e o formato do canal de dados WebRTC. O app reexporta `host`,
+  `protocol`, `session` e `sync`; o relay usa o core sem a feature `crypto`.
 - `web/` (crate `sync2gether-web`) compila para WebAssembly o convidado do
   navegador: `link.rs` (Join, SPAKE2, Noise, retomada e regras de nova
   tentativa), `guest.rs` (presença, relógio, preparação, início agendado e
@@ -154,8 +157,6 @@ vídeo, GPU ou sincronização entre PCs.
   anfitrião, cai de volta para o envio direto.
 - `network.rs` implementa TCP com mensagens enquadradas, limite de tamanho,
   autenticação da sala, timeout de heartbeat e reconexão.
-- `protocol.rs` define as mensagens Serde e a versão do protocolo.
-- `session.rs` ordena comandos no anfitrião e controla prontidão e pausa.
 - `stream.rs` e `stream/` implementam o streaming P2P direto cifrado:
   `stream/tls.rs` (TLS 1.3 mútuo sobre QUIC com certificados efêmeros fixados por
   impressão digital BLAKE3 trocada no canal Noise), `stream/nat.rs` (coleta de
@@ -169,12 +170,12 @@ vídeo, GPU ou sincronização entre PCs.
   do túnel QUIC ou do canal de controle, o convidado mantém o cache em disco e o
   proxy HTTP local ativos enquanto reconecta o túnel automaticamente, evitando
   interromper a reprodução do que já está em cache.
-- `sync.rs` estima a diferença entre relógios por ping e calcula correções.
 - `runtime.rs` define a interface pública (`Runtime`, `Command`, `View`) e o
   loop principal do worker, dividido entre `runtime/rooms.rs` (salas, descoberta
   e eventos de rede), `runtime/files.rs` (seleção e verificação de arquivos),
   `runtime/stream.rs` (negociação e telemetria do streaming P2P),
-  `runtime/sync.rs` (controle de reprodução, snapshots e correção de desvio) e
+  `runtime/sync.rs` (adaptador do anfitrião de `core/src/host.rs`, controle de
+  reprodução do convidado, snapshots e correção de desvio) e
   `runtime/view.rs` (projeção do estado para a UI). A UI só apresenta os dados e
   devolve ações.
 

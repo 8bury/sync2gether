@@ -1,5 +1,5 @@
-use super::{JoinRequest, Role, Worker, parse_address};
-use crate::{discovery, network, protocol::Message, session::Session, sync::Clock};
+use super::{JoinRequest, Role, Worker, parse_address, sync::to_host_player_status};
+use crate::{discovery, host::Host, network, protocol::Message, sync::Clock};
 use std::future::Future;
 use tokio::sync::mpsc;
 
@@ -84,7 +84,7 @@ impl Worker {
         self.clear_shared_subtitle(false);
         self.clear_embedded_subtitles();
         self.disconnected();
-        self.session = Session::default();
+        self.host = Host::default();
         self.view.role = Role::Local;
         self.view.room_key.clear();
         self.view.internet = false;
@@ -121,30 +121,38 @@ impl Worker {
             });
         } else {
             self.disconnected();
-            self.view.peer_left = true;
+            self.host.on_peer_left(self.now());
+            self.flush_host();
         }
     }
 
     pub(super) fn approve(&mut self, id: u64, accept: bool) {
-        if self
-            .approval
-            .as_ref()
-            .is_some_and(|(pending, _)| *pending == id)
+        if let Some(decision) = self.host.approve(id, accept)
+            && self
+                .approval
+                .as_ref()
+                .is_some_and(|(pending, _)| *pending == decision.id)
             && let Some((_, reply)) = self.approval.take()
         {
-            if accept {
-                self.view.peer_name = self.view.join_request.as_ref().map(|r| r.name.clone());
+            if decision.accepted {
+                self.view.peer_name = Some(decision.name);
                 self.view.watching = false;
             }
-            let _ = reply.send(accept);
+            let _ = reply.send(decision.accepted);
         }
     }
 
     fn begin_host(&mut self) {
+        let now = self.now();
         self.view.role = Role::Host;
         self.clock = Clock::host();
-        self.session.state.position = self.view.player.position;
-        self.session.state.host_ms = self.now();
+        self.host = Host::new(self.view.player.position, now);
+        self.sync_host_inputs();
+        if self.view.player.loaded {
+            self.host
+                .player_status(to_host_player_status(&self.view.player), now);
+            self.flush_host();
+        }
     }
 
     fn spawn_network<F>(&mut self, task: impl FnOnce(mpsc::Sender<network::Event>) -> F)
@@ -299,10 +307,12 @@ impl Worker {
                 address,
                 reply,
             } => {
+                self.host.request_approval(id, name.clone());
                 self.view.join_request = Some(JoinRequest { id, name, address });
                 self.approval = Some((id, reply));
             }
             network::Event::ApprovalFinished { id } => {
+                self.host.approval_finished(id);
                 if self.view.join_request.as_ref().is_some_and(|r| r.id == id) {
                     self.view.join_request = None;
                     self.approval = None;
@@ -324,6 +334,18 @@ impl Worker {
             }
             network::Event::Connected(tx) => {
                 self.view.waiting_approval = false;
+                if self.view.role == Role::Host {
+                    self.on_control_disconnected();
+                    self.subtitle_outbox.clear();
+                    self.outgoing = Some(tx);
+                    self.view.connected = true;
+                    self.view.error = None;
+                    self.clock = Clock::host();
+                    self.sync_host_inputs();
+                    self.host.on_connected(self.now());
+                    self.flush_host();
+                    return;
+                }
                 if self.view.watching {
                     self.view.notice = Some(crate::i18n::text().errors.reconnected.into());
                 }
@@ -332,16 +354,9 @@ impl Worker {
                 self.view.connected = true;
                 self.view.peer_left = false;
                 self.view.error = None;
-                self.session.connected = true;
-                self.recover = self.view.role == Role::Host;
                 self.on_control_reconnected();
-                if self.view.role == Role::Host {
-                    self.clock = Clock::host();
-                    self.publish();
-                } else {
-                    self.refresh_presence();
-                    self.send(Message::Presence(Box::new(self.presence.clone())));
-                }
+                self.refresh_presence();
+                self.send(Message::Presence(Box::new(self.presence.clone())));
             }
             network::Event::Disconnected => self.disconnected(),
             network::Event::PeerLeft => self.peer_left(),
@@ -352,53 +367,17 @@ impl Worker {
             }
             network::Event::Message(message, received_at) => {
                 let received_ms = received_at.duration_since(self.origin).as_secs_f64() * 1000.0;
+                if self.view.role == Role::Host {
+                    self.sync_host_inputs();
+                    self.host.receive_message(*message, received_ms, self.now());
+                    self.flush_host();
+                    return;
+                }
                 match (self.view.role, *message) {
-                    (Role::Host, Message::Presence(p)) if p.valid() => {
-                        let became_web_guest = !self.session.state.guest.web_guest && p.web_guest;
-                        self.session.state.guest = *p;
-                        if became_web_guest {
-                            self.queue_shared_subtitle();
-                            self.drain_subtitle_outbox();
-                        }
-                        self.progress();
-                    }
-                    (Role::Host, Message::Request(c)) => {
-                        self.control_by(c, crate::protocol::Side::Guest)
-                    }
-                    (Role::Host, Message::Prepared { id }) => {
-                        self.refresh_presence();
-                        self.session.prepared(id, true, self.now());
-                        self.publish();
-                    }
-                    (Role::Host, Message::Armed { id }) => {
-                        self.session.armed(id, self.now());
-                        self.publish();
-                    }
-                    (Role::Host, Message::Failed { id }) => {
-                        self.session.fail(id, self.now());
-                        self.publish();
-                    }
-                    (Role::Host, Message::Ping { sent_ms }) if sent_ms.is_finite() => {
-                        self.send(Message::Pong {
-                            sent_ms,
-                            received_ms,
-                            sent_host_ms: self.now(),
-                        })
-                    }
-                    (Role::Host, Message::StreamRequest) => self.handle_stream_request(),
-                    (Role::Host, Message::WebStreamOffer(offer)) => {
-                        self.handle_web_stream_offer(*offer)
-                    }
                     (Role::Guest, Message::WebStreamAnswer(_)) => {}
                     (Role::Guest, Message::SubtitleChunk(_)) => {}
                     (Role::Guest, Message::SubtitleClear) => {}
-                    (Role::Host, Message::SubtitleRequest { track }) => {
-                        self.request_embedded_subtitle(track);
-                    }
                     (Role::Guest, Message::SubtitleFailed { .. }) => {}
-                    (Role::Host, Message::StreamAnswer(answer)) if answer.valid() => {
-                        self.handle_stream_answer(*answer);
-                    }
                     (Role::Guest, Message::StreamOffer(offer)) if offer.valid() => {
                         self.handle_stream_offer(*offer);
                     }

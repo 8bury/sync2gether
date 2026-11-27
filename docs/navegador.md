@@ -2,9 +2,9 @@
 
 É possível usar o sync2gether pelo navegador sem instalar o app: tanto para
 **entrar como convidado** (com link ou código) quanto para **criar uma sala
-como anfitrião** usando a própria cópia do filme. Como convidado de um anfitrião
-no app de desktop, a pessoa pode assistir com a **própria cópia** ou receber o
-arquivo por **streaming P2P direto** do computador do anfitrião.
+como anfitrião**. Nos dois casos, o convidado no navegador pode assistir com a
+**própria cópia** ou receber o arquivo por **streaming P2P direto (WebRTC)**
+sem passar vídeo pelo servidor relay.
 
 ## Como usar
 
@@ -19,8 +19,9 @@ arquivo por **streaming P2P direto** do computador do anfitrião.
      identidade BLAKE3 do app e só libera a reprodução se as cópias forem
      iguais;
    - **Assistir por streaming**: disponível quando o anfitrião está no app de
-     desktop; o navegador conecta direto por WebRTC e recebe o arquivo em blocos
-     verificados.
+     desktop ou no navegador com arquivo compatível; o navegador conecta direto
+     por WebRTC e recebe o arquivo em blocos verificados (ou segmentos fMP4 via
+     MSE no caso de MKV).
 4. Play, pause e mudanças de posição seguem o anfitrião, como no app.
 
 Também é possível abrir a página sem link e colar o código.
@@ -31,20 +32,31 @@ Também é possível abrir a página sem link e colar o código.
    controle por WebSocket com o relay, gera o código da sala (com as duas
    palavras sorteadas localmente) e exibe os botões **Copiar código** e
    **Copiar link**.
-2. Escolha a sua cópia local do filme. O convidado pode entrar tanto pelo app de
-   desktop quanto pelo navegador, desde que tenha a mesma cópia do arquivo.
-3. Assim que as duas cópias forem conferidas e os relógios estiverem prontos,
-   clique em **Começar a assistir** para preparar os dois players e agendar o
-   início em conjunto.
+2. Escolha a sua cópia local do filme. O convidado pode entrar pelo app de
+   desktop (com a própria cópia) ou pelo navegador (com a própria cópia ou por
+   **streaming P2P direto via WebRTC**).
+3. Assim que as duas cópias forem conferidas (ou o streaming estiver conectado)
+   e os relógios estiverem prontos, clique em **Começar a assistir** para
+   preparar os dois players e agendar o início em conjunto.
 4. **Limites do anfitrião no navegador**:
-   - A aba do anfitrião precisa permanecer aberta enquanto a sala estiver ativa
-     (um Worker mantém o relógio e os heartbeats rodando em segundo plano tanto
-     quanto o navegador permitir).
-   - O anfitrião no navegador suporta apenas cópia própria em ambos os lados
-     (sem streaming P2P a partir do navegador; se um convidado no app de desktop
-     clicar em streaming P2P, a tentativa expira após o tempo limite de
-     negociação de 15 s, pois o protocolo atual não tem mensagem de recusa para
-     `StreamRequest`).
+   - A aba do anfitrião precisa permanecer aberta e visível enquanto a sala e o
+     streaming estiverem ativos. Navegadores reduzem a atividade de abas em
+     segundo plano; o envio é guiado pelos eventos do canal de dados WebRTC
+     (`onmessage` e `bufferedamountlow`) e por um Worker (`ticker.js`), mas a
+     página avisa se a aba for ocultada durante o streaming.
+   - **Formatos no streaming a partir do navegador**: arquivos que o navegador
+     toca diretamente (MP4 com H.264/VP9/AV1 e AAC/Opus/MP3, WebM) são enviados
+     em blocos verificados pela mesma tabela BLAKE3 do app. Para **MKV** com
+     vídeo H.264/HEVC e áudio AAC, Opus ou MP3, um Worker em WebAssembly
+     reempacota os trechos sob demanda para fMP4 (MSE) sem recodificar vídeo e
+     com escolha de faixa de áudio. Áudio **AC-3, E-AC-3 e DTS** exige
+     decodificador e não é suportado quando o anfitrião está no navegador (a
+     página avisa claramente para usar o app de desktop como anfitrião ou um
+     arquivo compatível).
+   - **Convidado no app de desktop**: o streaming P2P do app de desktop usa
+     QUIC, não WebRTC, então um convidado no app de desktop assiste com a
+     própria cópia quando o anfitrião está no navegador (se tentar streaming P2P
+     QUIC, a negociação expira após o limite de 15 s).
    - O servidor relay publicado precisa estar atualizado com suporte a `Host`,
      `Accept` e `Alive` por WebSocket.
 
@@ -192,8 +204,10 @@ firefox --headless --screenshot="$PWD/.cache/web-paused.png" --window-size=1440,
 Os cenários disponíveis em `web/preview/` são `entry`, `connecting`, `ended`,
 `prepare`, `mkv-prepare`, `mkv-prepare-fallback`, `mkv-streaming`, `audio-menu`,
 `player`, `paused`, `reconnecting`, `buffering`, `subtitles`,
-`subtitles-menu`, `host-waiting`, `host-matched`, `host-mismatch` e
-`host-playing`, com `&theme=light` ou `&theme=dark` opcionais. O build padrão
+`subtitles-menu`, `host-waiting`, `host-matched`, `host-mismatch`,
+`host-playing`, `host-streaming`, `host-streaming-playing`, `host-mkv-remux`,
+`host-mkv-unsupported` e `guest-browser-host-stream`, com `&theme=light` ou
+`&theme=dark` opcionais. O build padrão
 (`bash scripts/build-web.sh`) e o `web/Dockerfile` nunca incluem `web/preview/`
 e ignoram `?preview=`.
 
@@ -204,14 +218,18 @@ O código fica em:
   legendas (`subtitle.rs`) e tokens de tema (`theme.rs`), compilados para o app,
   o relay e o WebAssembly;
 - `web/src/`: o convidado sem I/O (`guest.rs`, `link.rs`), o anfitrião sem I/O
-  (`host.rs`, `host_link.rs`, usando `sync2gether_core::host::Host`) e o cliente
+  (`host.rs`, `host_link.rs`, usando `sync2gether_core::host::Host`), o
+  servidor do canal de dados do anfitrião (`host_stream.rs`), o remuxer
+  MKV para fMP4 em WebAssembly (`remux.rs` e `remux/parse.rs`) e o cliente
   de blocos do streaming (`stream.rs`), exportados para JavaScript em
   `bindings.rs`;
 - `web/static/`: a página, os tokens CSS gerados a partir de `core/src/theme.rs`
   (`tokens.css`, verificados por teste em `tests/web.rs`), o controlador do
-  anfitrião (`host.js`), os controles e avisos sobre o vídeo no mesmo visual do
-  app (`ui.js`, `subtitles.js`, `style.css`), o adaptador do `<video>`, o Worker
-  de hash e o Service Worker que responde aos pedidos de trecho do vídeo;
+  anfitrião (`host.js`), o streaming WebRTC e MSE local do anfitrião
+  (`host-stream.js`), o Worker de remux MKV (`remux-worker.js`), os controles e
+  avisos sobre o vídeo no mesmo visual do app (`ui.js`, `subtitles.js`,
+  `style.css`), o adaptador do `<video>`, o Worker de hash e o Service Worker
+  que responde aos pedidos de trecho do vídeo;
 - `web/preview/`: fixtures e ponto de entrada usados apenas com
   `scripts/build-web.sh --preview` para revisão visual e capturas em `.cache/`;
 - `src/stream/webrtc.rs`, `src/stream/ffmpeg.rs`, `src/stream/remux.rs` e

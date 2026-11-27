@@ -55,7 +55,7 @@
             <span>Criar sala</span>
             <svg class="glyph" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </button>
-          <p class="help muted">Gere um código para outra pessoa assistir com a própria cópia.</p>
+          <p class="help muted">Gere um código para outra pessoa assistir com a própria cópia ou por streaming.</p>
         </div>
         <div class="entry-divider" aria-hidden="true"><span>ou entre com um código</span></div>
         <form id="entry-form" autocomplete="off">
@@ -121,6 +121,7 @@
                 <p class="muted small-text" id="hashing-text">Conferindo seu arquivo…</p>
                 <div class="bar"><div id="hashing-bar"></div></div>
               </div>
+              <p class="warning small-text" id="self-format-warning" hidden></p>
             </div>
           </div>
 
@@ -147,6 +148,15 @@
               <p class="warning small-text" id="format-warning" hidden></p>
             </div>
           </div>
+        </div>
+
+        <div class="host-stream-strip" id="host-stream-strip" hidden>
+          <div class="host-stream-head">
+            <span class="host-stream-title" id="host-stream-title">Enviando por streaming P2P</span>
+            <span class="host-stream-metrics mono muted" id="host-stream-metrics"></span>
+          </div>
+          <div class="bar" id="host-stream-bar-wrap"><div id="host-stream-bar"></div></div>
+          <p class="small-text muted" id="host-stream-tab-note">Mantenha esta aba aberta e visível enquanto o streaming estiver ativo.</p>
         </div>
 
         <p class="prepare-note muted" id="copy-status" hidden></p>
@@ -199,6 +209,11 @@
               <button class="secondary small" id="popover-copy-link" type="button">Copiar link</button>
             </div>
             <p class="popover-meta" id="popover-metrics"></p>
+            <div class="popover-stream" id="popover-stream" hidden>
+              <p class="popover-stream-label">Streaming P2P direto</p>
+              <div class="bar"><div id="popover-stream-bar"></div></div>
+              <p class="popover-meta" id="popover-stream-metrics"></p>
+            </div>
             <p class="popover-meta" id="popover-tab-note" hidden>Mantenha esta aba aberta enquanto a sala estiver ativa.</p>
           </div>
           <div class="popover-actions">

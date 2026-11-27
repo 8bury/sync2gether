@@ -86,10 +86,13 @@ export function copyWithFeedback(value, button) {
 }
 
 export class HostController {
-  constructor({ player, relayUrl, onView }) {
+  constructor({ player, relayUrl, onView, onStreamOffer, onStreamStop, onTick }) {
     this.player = player;
     this.relayUrl = relayUrl;
     this.onView = onView;
+    this.onStreamOffer = onStreamOffer;
+    this.onStreamStop = onStreamStop;
+    this.onTick = onTick;
     this.host = null;
     this.controlSocket = null;
     this.controlConnectAt = null;
@@ -133,6 +136,7 @@ export class HostController {
     }
     this.host.player_status(JSON.stringify(this.player.status()), now());
     this.host.tick(now());
+    this.onTick?.();
     this.pump();
   }
 
@@ -163,6 +167,10 @@ export class HostController {
           if (tail.length) socket.send(tail);
         }
         this.closeAccept(command.id);
+      } else if (command.kind === "web_stream_offer") {
+        this.onStreamOffer?.(command.id, command.sdp);
+      } else if (command.kind === "stream_stop") {
+        this.onStreamStop?.(command.id);
       } else {
         this.player.run(command);
       }
@@ -270,7 +278,63 @@ export class HostController {
   }
 }
 
-export function renderHostPrepare(view, appNotice) {
+export function formatBps(bps) {
+  if (!Number.isFinite(bps) || bps <= 0) return "0.0 Mbit/s";
+  if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbit/s`;
+  return `${Math.round(bps / 1e3)} kbit/s`;
+}
+
+export function buildHostStreamInfo(view, hostStream) {
+  const m = hostStream ? hostStream.metrics() : null;
+  const gp = view.guest_stream_progress || null;
+  const active = Boolean(m?.phase === "connecting" || m?.phase === "streaming" || view.streaming || view.guest_streaming);
+  const failed = Boolean(m?.phase === "failed" && m?.error);
+  if (!active && !failed) return null;
+
+  const phase = failed
+    ? "failed"
+    : m?.phase === "connecting" && !view.guest_streaming
+    ? "connecting"
+    : "streaming";
+  const bps = gp?.transfer_bps || m?.bps || 0;
+  let percent = 0;
+  if (gp && gp.total_bytes > 0) {
+    percent = Math.min(100, Math.round((gp.cached_bytes / gp.total_bytes) * 100));
+  } else if (m && m.totalChunks > 0) {
+    percent = Math.min(100, Math.round((m.uniqueChunks / m.totalChunks) * 100));
+  }
+  const remux = Boolean(m?.remux || view.host_web_remux);
+  const title = phase === "failed"
+    ? "Streaming P2P interrompido"
+    : phase === "connecting"
+    ? "Conectando streaming P2P…"
+    : remux
+    ? "Enviando streaming adaptado (MKV)"
+    : "Enviando por streaming P2P";
+  const metricsParts = [];
+  if (phase === "streaming") {
+    metricsParts.push(gp && gp.total_bytes > 0 ? `${percent}% em cache` : `${percent}% enviado`);
+    metricsParts.push(formatBps(bps));
+  } else if (phase === "failed" && m?.error) {
+    metricsParts.push(m.error);
+  }
+  const metricsText = metricsParts.join(" · ");
+  const hudText = phase === "connecting"
+    ? "Conectando P2P…"
+    : `${remux ? "Streaming adaptado" : "Enviando P2P"} (${formatBps(bps)})`;
+  return {
+    active,
+    phase,
+    title,
+    percent,
+    metricsText,
+    hudText,
+    error: failed ? m.error : null,
+    hiddenWarning: Boolean(m?.hiddenWarning),
+  };
+}
+
+export function renderHostPrepare(view, appNotice, streamInfo, remuxNotice) {
   const inviteEl = $("host-invite");
   inviteEl.hidden = view.connected;
   const code = view.code || "";
@@ -305,8 +369,9 @@ export function renderHostPrepare(view, appNotice) {
   } else if (!$("hashing").hidden || view.host_loading) {
     selfBadge.textContent = "Conferindo…";
   } else if (view.host_media) {
-    selfBadge.textContent = view.host_ready ? "Conferido" : "Preparando…";
+    selfBadge.textContent = view.host_ready ? "Conferido" : (remuxNotice?.kind === "unsupported" ? "Incompatível" : "Preparando…");
     if (view.host_ready) selfBadge.classList.add("is-ok");
+    if (remuxNotice?.kind === "unsupported") selfBadge.classList.add("is-warning");
   } else {
     selfBadge.textContent = "Falta escolher";
   }
@@ -315,6 +380,14 @@ export function renderHostPrepare(view, appNotice) {
   if (!view.connected) {
     $("host-file").textContent = "Esperando alguém entrar na sala…";
     peerBadge.textContent = "Aguardando";
+  } else if (streamInfo && streamInfo.active) {
+    $("host-file").textContent = view.guest_file_name || hostFile || "Recebendo por streaming…";
+    if (streamInfo.phase === "connecting") {
+      peerBadge.textContent = "Conectando P2P…";
+    } else {
+      peerBadge.textContent = "Via streaming P2P";
+      peerBadge.classList.add("is-ok");
+    }
   } else {
     $("host-file").textContent = view.guest_file_name
       || (view.guest_loading ? "Conferindo o arquivo…" : "Esperando escolher o filme…");
@@ -331,26 +404,55 @@ export function renderHostPrepare(view, appNotice) {
     }
   }
 
-  const risky = Boolean(hostFile && RISKY_FORMATS.test(hostFile));
-  const formatWarning = $("format-warning");
-  formatWarning.hidden = !risky;
-  formatWarning.className = "warning small-text";
-  formatWarning.textContent = risky
-    ? "Este formato costuma não tocar no navegador (MKV e áudio AC-3/DTS, por exemplo). Se não funcionar, use o app."
-    : "";
+  $("format-warning").hidden = true;
+  const selfFormatWarning = $("self-format-warning");
+  if (remuxNotice && remuxNotice.text) {
+    selfFormatWarning.hidden = false;
+    selfFormatWarning.className = remuxNotice.kind === "ready" ? "muted small-text" : "warning small-text";
+    selfFormatWarning.textContent = remuxNotice.text;
+  } else {
+    const risky = Boolean(hostFile && RISKY_FORMATS.test(hostFile));
+    selfFormatWarning.hidden = !risky;
+    selfFormatWarning.className = "warning small-text";
+    selfFormatWarning.textContent = risky
+      ? "Este formato costuma não tocar no navegador (MKV e áudio AC-3/DTS, por exemplo). Se não funcionar, use o app."
+      : "";
+  }
+
+  const strip = $("host-stream-strip");
+  if (streamInfo) {
+    strip.hidden = false;
+    strip.classList.toggle("is-warning", streamInfo.phase === "failed" || streamInfo.hiddenWarning);
+    $("host-stream-title").textContent = streamInfo.title;
+    $("host-stream-metrics").textContent = streamInfo.metricsText;
+    $("host-stream-bar-wrap").hidden = streamInfo.phase === "failed";
+    $("host-stream-bar").style.width = `${streamInfo.percent}%`;
+    const tabNote = $("host-stream-tab-note");
+    tabNote.className = streamInfo.hiddenWarning ? "small-text warning" : "small-text muted";
+    tabNote.textContent = streamInfo.hiddenWarning
+      ? "Esta aba ficou em segundo plano durante o streaming. Navegadores reduzem a atividade de abas ocultas; mantenha a aba visível para evitar travamentos."
+      : "Mantenha esta aba aberta e visível enquanto o streaming estiver ativo.";
+  } else {
+    strip.hidden = true;
+  }
 
   const prepareEmblem = $("prepare-emblem");
   if (!view.connected) {
     $("prepare-heading").textContent = "Aguardando convidado";
     setEmblem(prepareEmblem, "waiting", 18);
   } else if (view.matched) {
-    $("prepare-heading").textContent = "Vocês têm o mesmo filme";
+    $("prepare-heading").textContent = view.guest_streaming || streamInfo?.active
+      ? "Streaming pronto para começar"
+      : "Vocês têm o mesmo filme";
     setEmblem(prepareEmblem, "together", 18);
   } else if (view.mismatch) {
     $("prepare-heading").textContent = "As cópias são diferentes";
     setEmblem(prepareEmblem, "apart", 18);
   } else if (!view.host_media) {
     $("prepare-heading").textContent = "Escolha o filme";
+    setEmblem(prepareEmblem, "waiting", 18);
+  } else if (streamInfo?.active) {
+    $("prepare-heading").textContent = `Enviando o filme para ${view.peer || "quem entrou"}`;
     setEmblem(prepareEmblem, "waiting", 18);
   } else {
     $("prepare-heading").textContent = `Esperando o filme de ${view.peer || "quem entrou"}`;
@@ -360,7 +462,9 @@ export function renderHostPrepare(view, appNotice) {
   const copyStatus = $("copy-status");
   let copyText = "";
   if (view.matched) {
-    copyText = "Os dois arquivos conferem.";
+    copyText = view.guest_streaming || streamInfo?.active
+      ? `${view.peer || "O convidado"} está recebendo o filme por streaming P2P.`
+      : "Os dois arquivos conferem.";
   } else if (view.mismatch) {
     copyText = "Os arquivos têm conteúdo diferente. Escolham a mesma cópia.";
   }

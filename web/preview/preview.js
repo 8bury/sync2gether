@@ -1,6 +1,8 @@
 import {
   bindEvents,
   setAudioTracks,
+  setHostRemuxNotice,
+  setPopoverOpen,
   setSubtitleMenuOpen,
   show,
   showEnded,
@@ -209,7 +211,7 @@ function previewFixture(scenario) {
         ...base,
         role: "host",
         peer: "Lucas",
-        host_web_stream: false,
+        host_web_stream: true,
         host_web_remux: false,
         guest_ready: true,
         guest_loading: false,
@@ -224,6 +226,140 @@ function previewFixture(scenario) {
         watching: true,
         ready: true,
         drift_ms: 12,
+      };
+    case "host-streaming":
+      return {
+        ...base,
+        role: "host",
+        peer: "Lucas",
+        host_web_stream: true,
+        host_web_remux: false,
+        guest_ready: true,
+        guest_loading: false,
+        guest_buffering: false,
+        guest_blocked: false,
+        guest_clock_ready: true,
+        guest_position: 0,
+        streaming: true,
+        guest_streaming: true,
+        guest_stream_progress: {
+          cached_bytes: 261_000_000,
+          total_bytes: 1_450_000_000,
+          transfer_bps: 14_200_000,
+          link_bps: null,
+          buffered_ahead_bytes: 48_000_000,
+          reconnecting: false,
+          complete: false,
+          cached_ranges: [[0, 180]],
+        },
+        matched: true,
+        mismatch: false,
+        paused: true,
+        playing: false,
+        position: 0,
+        watching: false,
+        ready: true,
+        drift_ms: 0,
+      };
+    case "host-streaming-playing":
+      return {
+        ...base,
+        role: "host",
+        peer: "Lucas",
+        host_web_stream: true,
+        host_web_remux: false,
+        guest_ready: true,
+        guest_loading: false,
+        guest_buffering: false,
+        guest_blocked: false,
+        guest_clock_ready: true,
+        guest_position: 754,
+        streaming: true,
+        guest_streaming: true,
+        guest_stream_progress: {
+          cached_bytes: 522_000_000,
+          total_bytes: 1_450_000_000,
+          transfer_bps: 11_800_000,
+          link_bps: null,
+          buffered_ahead_bytes: 64_000_000,
+          reconnecting: false,
+          complete: false,
+          cached_ranges: [[0, 360]],
+        },
+        matched: true,
+        mismatch: false,
+        paused: false,
+        playing: true,
+        watching: true,
+        ready: true,
+        drift_ms: 11,
+      };
+    case "host-mkv-remux":
+      return {
+        ...base,
+        role: "host",
+        peer: "Lucas",
+        host_file_name: "Filme.de.demonstracao.1080p.AAC.mkv",
+        host_web_stream: true,
+        host_web_remux: true,
+        guest_media: null,
+        guest_file_name: null,
+        guest_ready: false,
+        guest_loading: false,
+        guest_buffering: false,
+        guest_blocked: false,
+        guest_clock_ready: true,
+        guest_position: null,
+        matched: false,
+        mismatch: false,
+        paused: true,
+        playing: false,
+        position: 0,
+        watching: false,
+        ready: false,
+        drift_ms: null,
+      };
+    case "host-mkv-unsupported":
+      return {
+        ...base,
+        role: "host",
+        peer: "Lucas",
+        host_file_name: "Filme.de.demonstracao.1080p.AC3.mkv",
+        host_ready: false,
+        host_web_stream: false,
+        host_web_remux: false,
+        guest_media: null,
+        guest_file_name: null,
+        guest_ready: false,
+        guest_loading: false,
+        guest_buffering: false,
+        guest_blocked: false,
+        guest_clock_ready: true,
+        guest_position: null,
+        matched: false,
+        mismatch: false,
+        paused: true,
+        playing: false,
+        position: 0,
+        watching: false,
+        ready: false,
+        drift_ms: null,
+      };
+    case "guest-browser-host-stream":
+      return {
+        ...base,
+        peer: "Navegador (Firefox)",
+        host_web_stream: true,
+        host_web_remux: false,
+        guest_media: null,
+        guest_file_name: null,
+        matched: false,
+        playing: false,
+        paused: true,
+        loaded: false,
+        watching: false,
+        ready: false,
+        drift_ms: null,
       };
     case "player":
     default:
@@ -250,7 +386,19 @@ function runPreview(scenario) {
   }
   document.getElementById("stage").classList.add("preview-backdrop");
   showRoom(previewFixture(scenario));
-  if (scenario === "mkv-streaming" || scenario === "audio-menu") {
+  if (scenario === "host-streaming-playing") {
+    setPopoverOpen(true);
+  } else if (scenario === "host-mkv-remux") {
+    setHostRemuxNotice({
+      kind: "ready",
+      text: "MKV compatível: o navegador adapta este arquivo para reprodução e streaming sem recodificar o vídeo.",
+    });
+  } else if (scenario === "host-mkv-unsupported") {
+    setHostRemuxNotice({
+      kind: "unsupported",
+      text: "Este MKV usa áudio AC-3 que o navegador não decodifica. Use o app de desktop como anfitrião ou escolha um arquivo compatível (MP4 com H.264/AAC ou MKV com AAC/Opus/MP3).",
+    });
+  } else if (scenario === "mkv-streaming" || scenario === "audio-menu") {
     const sampleVtt = "WEBVTT\n\n00:00:00.000 --> 02:00:00.000\nO mesmo filme, no mesmo segundo.\n";
     subtitles.setEmbeddedTracks([
       { index: 0, language: "por", title: "Português (SRT)", codec: "subrip", default: true },

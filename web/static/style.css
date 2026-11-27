@@ -536,6 +536,50 @@ body.in-player .ghost:hover:not(:disabled) {
   display: flex;
   justify-content: center;
 }
+.host-stream-strip {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-window);
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.host-stream-strip.is-warning {
+  border-color: var(--warning);
+}
+.host-stream-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.host-stream-title {
+  font-size: var(--text-body);
+  font-weight: 500;
+  color: var(--text);
+}
+.host-stream-metrics {
+  font-size: var(--text-small);
+}
+.popover-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.popover-stream-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
 .popover-copy-row {
   display: flex;
   flex-wrap: wrap;

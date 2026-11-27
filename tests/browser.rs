@@ -484,6 +484,12 @@ fn mkv_fixture() -> PathBuf {
     fixture
 }
 
+fn mkv_aac_fixture() -> PathBuf {
+    let fixture = root().join(".cache/browser-fixture-aac.mkv");
+    assert!(fixture.is_file(), "execute scripts/test-browser.sh");
+    fixture
+}
+
 async fn setup() -> Setup {
     setup_with_fixture(fixture()).await
 }
@@ -1055,15 +1061,10 @@ async fn browser_host_and_browser_guest(mut host: Browser, mut guest: Browser) {
     guest.navigate(&format!("{origin}/#{code}")).await;
     guest
         .until(
-            "convidado entrar na sala",
-            "!document.getElementById('room').hidden",
+            "convidado entrar na sala e ver botão de streaming",
+            "!document.getElementById('room').hidden && !document.getElementById('stream').hidden",
         )
         .await;
-    assert_eq!(
-        guest.eval("document.getElementById('stream').hidden").await,
-        json!(true),
-        "convidado não deve ver botão de streaming com anfitrião no navegador"
-    );
     guest.choose_file("pick", &fixture).await;
 
     host.until(
@@ -1122,6 +1123,180 @@ async fn browser_host_and_browser_guest(mut host: Browser, mut guest: Browser) {
             "document.getElementById('video').paused",
         )
         .await;
+}
+
+async fn browser_host_streams_to_browser_guest(
+    mut host: Browser,
+    mut guest: Browser,
+    fixture: PathBuf,
+    expect_mse_audio_tracks: bool,
+) {
+    let (origin, _relay_address) = setup_web_only().await;
+    host.navigate(&origin).await;
+    host.until(
+        "botão criar sala",
+        "!document.getElementById('entry').hidden",
+    )
+    .await;
+    host.eval("document.getElementById('create-room').click(); true")
+        .await;
+    host.until(
+        "código gerado",
+        "!document.getElementById('room').hidden && /^\\d{4,8}-[a-z]+-[a-z]+$/.test(document.getElementById('host-invite-code').textContent.trim())",
+    )
+    .await;
+    let code = host.text("host-invite-code").await.trim().to_owned();
+    host.choose_file("pick", &fixture).await;
+
+    guest.navigate(&format!("{origin}/#{code}")).await;
+    guest
+        .until(
+            "convidado ver botão de streaming do anfitrião navegador",
+            "!document.getElementById('room').hidden && !document.getElementById('stream').hidden",
+        )
+        .await;
+    guest
+        .eval("document.getElementById('stream').click(); true")
+        .await;
+
+    host.until(
+        "anfitrião exibir estado de streaming e ficar pronto",
+        "!document.getElementById('host-stream-strip').hidden && !document.getElementById('start-watching').disabled",
+    )
+    .await;
+    if expect_mse_audio_tracks {
+        guest
+            .until(
+                "convidado listar faixas de áudio do MKV",
+                "document.querySelectorAll('#audio-list button').length === 2",
+            )
+            .await;
+    }
+
+    guest
+        .eval("document.getElementById('video').muted = true; true")
+        .await;
+    host.eval("document.getElementById('video').muted = true; document.getElementById('start-watching').click(); true")
+        .await;
+
+    host.until(
+        "anfitrião tocando",
+        "(() => { const v = document.getElementById('video'); return !v.paused && v.currentTime > 1; })()",
+    )
+    .await;
+    guest
+        .until(
+            "convidado tocando por streaming",
+            "(() => { const v = document.getElementById('video'); return !v.paused && v.currentTime > 1; })()",
+        )
+        .await;
+
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let host_t = host
+        .eval("document.getElementById('video').currentTime")
+        .await
+        .as_f64()
+        .unwrap();
+    let guest_t = guest
+        .eval("document.getElementById('video').currentTime")
+        .await
+        .as_f64()
+        .unwrap();
+    let diff = (host_t - guest_t).abs();
+    let host_status = host.text("status").await;
+    let guest_status = guest.text("status").await;
+    let kind = if expect_mse_audio_tracks {
+        "MKV"
+    } else {
+        "MP4"
+    };
+    println!(
+        "streaming navegador->navegador ({kind}): diff={diff:.3}s host={host_status:?} guest={guest_status:?}"
+    );
+    assert!(
+        diff < 0.25,
+        "streaming navegador->navegador ({kind}) fora de sincronia: {diff:.3}s"
+    );
+
+    host.eval("document.getElementById('forward').click(); true")
+        .await;
+    host.until(
+        "anfitrião após seek",
+        "(() => { const v = document.getElementById('video'); return !v.paused && v.currentTime >= 11.0; })()",
+    )
+    .await;
+    guest
+        .until(
+            "convidado após seek por streaming",
+            "(() => { const v = document.getElementById('video'); return !v.paused && v.currentTime >= 11.0; })()",
+        )
+        .await;
+
+    if expect_mse_audio_tracks {
+        guest
+            .eval("document.getElementById('subtitles-btn').click(); document.querySelector('#audio-list button[data-audio-index=\"1\"]').click(); true")
+            .await;
+        guest
+            .until(
+                "segunda faixa de áudio selecionada no MKV",
+                "document.querySelector('#audio-list button[data-audio-index=\"1\"]').getAttribute('aria-checked') === 'true'",
+            )
+            .await;
+    }
+
+    host.eval("document.getElementById('toggle').click(); true")
+        .await;
+    host.until(
+        "anfitrião pausou",
+        "document.getElementById('video').paused",
+    )
+    .await;
+    guest
+        .until(
+            "convidado pausou",
+            "document.getElementById('video').paused",
+        )
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Firefox e scripts/test-browser.sh"]
+async fn firefox_host_streams_mp4_to_firefox_guest() {
+    let host = Browser::firefox("stream-web-host-mp4").await;
+    let guest = Browser::firefox("stream-web-guest-mp4").await;
+    browser_host_streams_to_browser_guest(host, guest, fixture(), false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Chrome ou Chromium e scripts/test-browser.sh"]
+async fn chrome_host_streams_mp4_to_chrome_guest() {
+    let Some(binary) = chrome_binary() else {
+        eprintln!("Chrome/Chromium não encontrado; defina SYNC2GETHER_TEST_CHROME");
+        return;
+    };
+    let host = Browser::chrome(&binary, "stream-web-host-mp4").await;
+    let guest = Browser::chrome(&binary, "stream-web-guest-mp4").await;
+    browser_host_streams_to_browser_guest(host, guest, fixture(), false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Firefox e scripts/test-browser.sh"]
+async fn firefox_host_streams_mkv_aac_to_firefox_guest() {
+    let host = Browser::firefox("stream-web-host-mkv").await;
+    let guest = Browser::firefox("stream-web-guest-mkv").await;
+    browser_host_streams_to_browser_guest(host, guest, mkv_aac_fixture(), true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Chrome ou Chromium e scripts/test-browser.sh"]
+async fn chrome_host_streams_mkv_aac_to_chrome_guest() {
+    let Some(binary) = chrome_binary() else {
+        eprintln!("Chrome/Chromium não encontrado; defina SYNC2GETHER_TEST_CHROME");
+        return;
+    };
+    let host = Browser::chrome(&binary, "stream-web-host-mkv").await;
+    let guest = Browser::chrome(&binary, "stream-web-guest-mkv").await;
+    browser_host_streams_to_browser_guest(host, guest, mkv_aac_fixture(), true).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -41,9 +41,11 @@ Quem não tem o app pode entrar como convidado **pelo navegador**, com um link
 que o anfitrião copia na sala: com a própria cópia do filme ou por streaming
 P2P direto (WebRTC). Também é possível **criar uma sala pelo navegador** para
 assistir com a própria cópia em ambos os lados (com convidado no app ou no
-navegador). No streaming a partir do app, o anfitrião também adapta MKV e áudio
-AC-3/E-AC-3/DTS sob demanda para MSE (sem recodificar vídeo) com escolha de
-faixa de áudio; veja [Navegador](docs/navegador.md).
+navegador) ou **enviar o filme por streaming P2P (WebRTC)** direto da aba do
+navegador anfitrião para um convidado no navegador (incluindo MP4/WebM e MKV
+com vídeo H.264/HEVC e áudio AAC/Opus/MP3 reempacotado em WebAssembly). Para
+MKV com áudio AC-3/E-AC-3/DTS ou streaming para o app de desktop, use o app de
+desktop como anfitrião; veja [Navegador](docs/navegador.md).
 
 A interface está disponível em português (Brasil) e inglês. Na primeira
 abertura, o app segue o idioma do sistema (inglês quando ele não é português);

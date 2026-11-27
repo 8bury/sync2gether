@@ -569,7 +569,8 @@ async fn browser_host_and_browser_guest_sync_resume_and_reclaim_room() {
             break;
         }
     }
-    assert!(!guest.guest.view().host_web_stream);
+    assert!(guest.guest.view().host_web_stream);
+    assert!(!guest.guest.view().host_web_remux);
 
     host.host.control(Control::Play, host.now());
     let deadline = Instant::now() + Duration::from_secs(15);

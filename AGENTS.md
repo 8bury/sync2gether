@@ -36,12 +36,13 @@ funcionalidades reais.
 - `core/`: mensagens, relógio, código da sala, sessão e máquina de estados do
   anfitrião (`session.rs` e `host.rs`), handshake e formato do canal de dados
   sem I/O, compartilhados pelo app, pelo relay e pelo WebAssembly.
-- `web/`: página no navegador (convidado e anfitrião com cópia própria).
-  `web/src/` compila para WebAssembly (sem I/O: `guest.rs`, `link.rs`,
-  `host.rs`, `host_link.rs`, `stream.rs` e `bindings.rs`) e `web/static/` tem a
-  página em JavaScript simples (`app.js`, `host.js`, `ui.js`, `player.js`,
-  `subtitles.js`); `scripts/build-web.sh` gera `target/web` e `web/Dockerfile`
-  publica a página.
+- `web/`: página no navegador (convidado e anfitrião com cópia própria ou
+  streaming WebRTC). `web/src/` compila para WebAssembly (sem I/O: `guest.rs`,
+  `link.rs`, `host.rs`, `host_link.rs`, `host_stream.rs`, `remux.rs`,
+  `remux/parse.rs`, `stream.rs` e `bindings.rs`) e `web/static/` tem a página
+  em JavaScript simples (`app.js`, `host.js`, `host-stream.js`,
+  `remux-worker.js`, `ui.js`, `player.js`, `subtitles.js`);
+  `scripts/build-web.sh` gera `target/web` e `web/Dockerfile` publica a página.
 - `src/stream/webrtc.rs` e `src/runtime/web_stream.rs`: streaming WebRTC do
   anfitrião para o navegador.
 - `src/discovery.rs`: anúncios UDP na rede e confirmação TCP de salas em segundo plano.

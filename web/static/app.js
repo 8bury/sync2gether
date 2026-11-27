@@ -4,6 +4,7 @@ import { RELAY_URL } from "./config.js";
 import { Subtitles, formatDelay } from "./subtitles.js";
 import {
   HostController,
+  buildHostStreamInfo,
   clearSavedHost,
   copyWithFeedback,
   hostStatusText,
@@ -11,6 +12,7 @@ import {
   renderHostPrepare,
   roomLink,
 } from "./host.js";
+import { HostLocalMse, HostStreamController, RemuxBridge } from "./host-stream.js";
 import {
   ICON_ALERT,
   ICON_CANCEL,
@@ -50,6 +52,9 @@ const app = {
   dragging: false,
   lastRender: 0,
   stream: null,
+  hostRemux: null,
+  hostLocalMse: null,
+  hostRemuxNotice: null,
   lastActivity: 0,
   controlsVisible: true,
   popoverOpen: false,
@@ -75,10 +80,37 @@ const player = new Player($("video"), {
   notice: (message) => { app.notice = message; render(true); },
 });
 
+const hostStream = new HostStreamController({
+  now,
+  getDuration: () => player.status().duration || 0,
+  onAnswer: (answer) => {
+    let ok = false;
+    hostCtrl.call((h) => {
+      ok = h.stream_answer(JSON.stringify(answer), now());
+    });
+    return ok;
+  },
+  onStop: (id) => {
+    hostCtrl.call((h) => h.stop_stream(id, now()));
+  },
+  onStateChange: () => {
+    if (hostCtrl.active()) {
+      hostCtrl.call((h) => h.set_stream_active(hostStream.active(), now()));
+    }
+    render(true);
+  },
+});
+
 const hostCtrl = new HostController({
   player,
   relayUrl,
   onView: (view) => renderHostView(view, false),
+  onStreamOffer: (id, sdp) => hostStream.handleOffer(id, sdp),
+  onStreamStop: (id) => hostStream.handleRemoteStop(id),
+  onTick: () => {
+    hostStream.pump();
+    app.hostLocalMse?.pump();
+  },
 });
 
 export const subtitles = new Subtitles($("video"), {
@@ -112,6 +144,17 @@ export function setAudioTracks(tracks, activeIndex) {
   app.audioTracks = Array.isArray(tracks) ? tracks : [];
   app.activeAudioTrack = activeIndex ?? null;
   renderSubtitles();
+}
+
+export function setHostRemuxNotice(notice) {
+  app.hostRemuxNotice = notice || null;
+  if (app.view) renderRoom(app.view);
+}
+
+export function setPopoverOpen(open) {
+  app.popoverOpen = Boolean(open);
+  $("room-popover").hidden = !app.popoverOpen;
+  $("presence-btn").setAttribute("aria-expanded", String(app.popoverOpen));
 }
 
 function renderSubtitles() {
@@ -152,6 +195,11 @@ function renderSubtitles() {
       noteActivity();
       if (app.stream) {
         if (app.stream.selectAudioTrack(track.index)) {
+          app.activeAudioTrack = track.index;
+          renderSubtitles();
+        }
+      } else if (app.hostLocalMse) {
+        if (app.hostLocalMse.selectAudioTrack(track.index)) {
           app.activeAudioTrack = track.index;
           renderSubtitles();
         }
@@ -430,8 +478,31 @@ function join(code) {
   pump();
 }
 
+function closeHostMedia() {
+  hostStream.setFile({});
+  app.hostLocalMse?.close();
+  app.hostLocalMse = null;
+  app.hostRemux?.close();
+  app.hostRemux = null;
+  app.hostRemuxNotice = null;
+}
+
+function formatMkvError(error) {
+  if (error && typeof error === "object") {
+    if (error.kind === "unsupported_audio") {
+      const list = Array.isArray(error.codecs) && error.codecs.length ? error.codecs.join(", ") : "incompatível";
+      return `Este MKV usa áudio ${list} que o navegador não decodifica. Use o app de desktop como anfitrião ou escolha um arquivo compatível (MP4 com H.264/AAC ou MKV com AAC/Opus/MP3).`;
+    }
+    if (error.kind === "unsupported_video") {
+      return `Este MKV usa um codec de vídeo incompatível com o navegador (${error.codec || "desconhecido"}). Use o app de desktop como anfitrião ou escolha um MP4 (H.264 e AAC).`;
+    }
+  }
+  return "Não foi possível preparar este MKV no navegador. Use o app de desktop como anfitrião ou escolha um MP4 (H.264 e AAC).";
+}
+
 function leave() {
   if (app.role === "host") {
+    closeHostMedia();
     hostCtrl.leave();
     app.role = "guest";
     setAudioTracks([], null);
@@ -455,6 +526,7 @@ function chooseFile(file) {
   if (!file || (!app.guest && !hostCtrl.active())) return;
   app.stream?.stop();
   app.stream = null;
+  if (app.role === "host") closeHostMedia();
   setAudioTracks([], null);
   subtitles.clearEmbedded();
   app.forcePrepare = false;
@@ -465,9 +537,10 @@ function chooseFile(file) {
     app.guest.set_loading(file.name, 0, file.size);
   }
   $("hashing").hidden = false;
+  $("hashing-text").textContent = "Conferindo seu arquivo…";
   $("hashing-bar").style.width = "0%";
   const worker = new Worker(new URL("./hash-worker.js", import.meta.url), { type: "module" });
-  worker.onmessage = (event) => {
+  worker.onmessage = async (event) => {
     const data = event.data;
     if (data.id !== id || id !== app.hashJob) {
       worker.terminate();
@@ -483,8 +556,8 @@ function chooseFile(file) {
       return;
     }
     worker.terminate();
-    $("hashing").hidden = true;
     if (data.error) {
+      $("hashing").hidden = true;
       app.notice = "Não foi possível ler o arquivo.";
       if (app.role === "host") {
         hostCtrl.call((h) => h.set_media(undefined, 0, undefined, now()));
@@ -497,19 +570,100 @@ function chooseFile(file) {
     app.objectUrl = URL.createObjectURL(file);
     app.notice = null;
     if (app.role === "host") {
+      const isMkv = /\.(mkv|mka|mks)$/i.test(file.name);
+      if (isMkv) {
+        $("hashing-text").textContent = "Analisando faixas do arquivo…";
+        const remux = new RemuxBridge();
+        const probe = await remux.open(file);
+        if (id !== app.hashJob) {
+          remux.close();
+          return;
+        }
+        $("hashing").hidden = true;
+        if (!probe.ok) {
+          remux.close();
+          app.hostRemuxNotice = { kind: "unsupported", text: formatMkvError(probe.error) };
+          hostCtrl.call((h) => {
+            h.set_media(data.media.hash, data.media.bytes, file.name, now());
+            h.set_stream_capability(false, false, now());
+          });
+          player.unload(hostCtrl.host ? hostCtrl.host.generation() : 0);
+          hostCtrl.pump();
+          return;
+        }
+        if (typeof MediaSource === "undefined" || !MediaSource.isTypeSupported(probe.mse.mime)) {
+          remux.close();
+          app.hostRemuxNotice = {
+            kind: "unsupported",
+            text: "Este navegador não decodifica o vídeo deste MKV. Use o app de desktop como anfitrião ou escolha um MP4 (H.264 e AAC).",
+          };
+          hostCtrl.call((h) => {
+            h.set_media(data.media.hash, data.media.bytes, file.name, now());
+            h.set_stream_capability(false, false, now());
+          });
+          player.unload(hostCtrl.host ? hostCtrl.host.generation() : 0);
+          hostCtrl.pump();
+          return;
+        }
+        app.hostRemux = remux;
+        const skipped = probe.skippedAudio || [];
+        app.hostRemuxNotice = {
+          kind: "ready",
+          text: skipped.length
+            ? `MKV compatível (faixas ${skipped.join(", ")} ignoradas no navegador). Para todas as faixas de áudio, use o app de desktop.`
+            : "MKV compatível: o navegador adapta este arquivo para reprodução e streaming sem recodificar o vídeo.",
+        };
+        hostStream.setFile({
+          file,
+          media: data.media,
+          chunkSize: data.chunkSize,
+          digest: data.digest,
+          hashTable: data.hashTable,
+          remux,
+        });
+        let generation = 0;
+        hostCtrl.call((h) => {
+          generation = h.set_media(data.media.hash, data.media.bytes, file.name, now());
+          h.set_stream_capability(true, true, now());
+        });
+        app.hostLocalMse = new HostLocalMse({
+          remux,
+          media: data.media,
+          fileName: file.name,
+          video: $("video"),
+          player,
+          generation,
+          onTracksChange: (tracks, active) => setAudioTracks(tracks, active),
+          onError: (msg) => player.fail(msg),
+          ask: () => hostCtrl.pump(),
+        });
+        hostCtrl.pump();
+        return;
+      }
+      $("hashing").hidden = true;
+      hostStream.setFile({
+        file,
+        media: data.media,
+        chunkSize: data.chunkSize,
+        digest: data.digest,
+        hashTable: data.hashTable,
+        remux: null,
+      });
       let generation = 0;
       hostCtrl.call((h) => {
         generation = h.set_media(data.media.hash, data.media.bytes, file.name, now());
+        h.set_stream_capability(true, false, now());
       });
       player.load(app.objectUrl, generation);
       hostCtrl.pump();
     } else {
+      $("hashing").hidden = true;
       const generation = app.guest.set_media(data.media.hash, data.media.bytes, file.name);
       player.load(app.objectUrl, generation);
       pump();
     }
   };
-  worker.postMessage({ id, file });
+  worker.postMessage({ id, file, includeTable: app.role === "host" });
 }
 
 export function startStreaming(createStream) {
@@ -697,13 +851,27 @@ function renderRoom(view) {
   $("stage-title").hidden = !inPlayer;
   $("stage-title").textContent = mediaTitle(view.host_file_name);
   $("presence-btn").hidden = !inPlayer;
+  const hostStreamInfo = isHost ? buildHostStreamInfo(view, hostStream) : null;
   $("popover-copy-row").hidden = !isHost || !view.code;
   $("popover-tab-note").hidden = !isHost;
+  $("popover-tab-note").textContent = hostStreamInfo && hostStreamInfo.active
+    ? "Mantenha esta aba aberta e visível enquanto o streaming estiver ativo."
+    : "Mantenha esta aba aberta enquanto a sala estiver ativa.";
+  const popStream = $("popover-stream");
+  if (isHost && hostStreamInfo) {
+    popStream.hidden = false;
+    $("popover-stream-bar").style.width = `${hostStreamInfo.percent}%`;
+    $("popover-stream-metrics").textContent = hostStreamInfo.metricsText || hostStreamInfo.title;
+  } else {
+    popStream.hidden = true;
+  }
 
   if (isHost) {
-    renderHostPrepare(view, app.notice);
+    renderHostPrepare(view, app.notice, hostStreamInfo, app.hostRemuxNotice);
   } else {
     $("host-invite").hidden = true;
+    $("host-stream-strip").hidden = true;
+    $("self-format-warning").hidden = true;
     $("host-start-wrap").hidden = true;
     $("pick-label").classList.add("primary");
     $("pick-label").classList.remove("secondary");
@@ -867,7 +1035,11 @@ function renderRoom(view) {
   }
 
   const streamHud = $("stream-hud");
-  if (app.stream && app.stream.phase !== "failed") {
+  if (isHost && hostStreamInfo && hostStreamInfo.active) {
+    streamHud.hidden = false;
+    streamHud.textContent = hostStreamInfo.hudText;
+    streamHud.classList.toggle("is-warning", hostStreamInfo.phase !== "streaming" || hostStreamInfo.hiddenWarning);
+  } else if (app.stream && app.stream.phase !== "failed") {
     streamHud.hidden = false;
     streamHud.textContent = app.stream.describe();
     streamHud.classList.toggle("is-warning", app.stream.phase !== "streaming");
@@ -1205,8 +1377,19 @@ export function bindEvents() {
     }
   });
 
+  document.addEventListener("visibilitychange", () => {
+    if (app.role === "host" && hostStream.active()) {
+      if (document.hidden) {
+        hostStream.noteHidden();
+        app.notice = "Esta aba ficou em segundo plano durante o streaming. Mantenha-a visível para evitar travamentos.";
+      }
+      render(true);
+    }
+  });
+
   window.addEventListener("pagehide", () => {
     if (app.role === "host") {
+      closeHostMedia();
       hostCtrl.pagehide();
       return;
     }

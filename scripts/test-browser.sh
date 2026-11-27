@@ -46,5 +46,14 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:s:0 subrip -metadata:s:s:0 language=por -metadata:s:s:0 title="Portugues SRT" -disposition:s:0 default \
   -c:s:1 ass -metadata:s:s:1 language=eng -metadata:s:s:1 title="English ASS" -disposition:s:1 0 \
   .cache/browser-fixture.mkv
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i 'testsrc2=size=640x360:rate=24' \
+  -f lavfi -i 'sine=frequency=440:sample_rate=48000' \
+  -f lavfi -i 'sine=frequency=880:sample_rate=48000' \
+  -map 0:v:0 -map 1:a:0 -map 2:a:0 \
+  -t 20 -c:v libx264 -profile:v baseline -pix_fmt yuv420p -g 24 \
+  -c:a:0 aac -b:a:0 96k -metadata:s:a:0 language=por -metadata:s:a:0 title=Portugues -disposition:a:0 default \
+  -c:a:1 aac -b:a:1 96k -metadata:s:a:1 language=eng -metadata:s:a:1 title=English -disposition:a:1 0 \
+  .cache/browser-fixture-aac.mkv
 bash scripts/build-web.sh
 cargo test --release --locked --test browser -- --ignored --nocapture --test-threads=1 "$@"

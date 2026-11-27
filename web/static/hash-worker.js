@@ -4,7 +4,7 @@ const SLICE = 8 * 1024 * 1024;
 const ready = init();
 
 self.onmessage = async (event) => {
-  const { id, file } = event.data;
+  const { id, file, includeTable } = event.data;
   try {
     await ready;
     const hasher = new FileHasher();
@@ -22,8 +22,19 @@ self.onmessage = async (event) => {
       }
     }
     const media = JSON.parse(hasher.finish());
-    hasher.free();
-    self.postMessage({ id, media });
+    if (includeTable) {
+      const chunkSize = FileHasher.chunk_size();
+      const digest = hasher.digest();
+      const hashTable = hasher.take_hash_table();
+      hasher.free();
+      self.postMessage(
+        { id, media, chunkSize, digest, hashTable },
+        [hashTable.buffer],
+      );
+    } else {
+      hasher.free();
+      self.postMessage({ id, media });
+    }
   } catch (error) {
     self.postMessage({ id, error: String(error && error.message || error) });
   }

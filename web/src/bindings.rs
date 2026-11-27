@@ -1,11 +1,15 @@
 use crate::{
     guest::{Guest, PlayerStatus},
     host::BrowserHost,
+    host_stream::StreamServer,
+    remux::MkvRemuxer,
     stream::StreamClient,
 };
+use js_sys::{Function, Uint8Array};
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use sync2gether_core::{
-    chunks::{CHUNK_SIZE, Identifier},
-    protocol::{Control, Media, StreamProgress, Verification},
+    chunks::{CHUNK_SIZE, Identifier, table_digest},
+    protocol::{Control, Media, StreamProgress, Verification, WebStreamAnswer},
     subtitle::{SubtitleError, from_bytes, shift_webvtt},
 };
 use wasm_bindgen::prelude::*;
@@ -269,30 +273,62 @@ impl WebHost {
     pub fn resume_key(&self) -> Option<Vec<u8>> {
         self.0.resume_key().map(|key| key.to_vec())
     }
+    pub fn set_stream_capability(&mut self, web_stream: bool, web_remux: bool, now: f64) {
+        self.0.set_stream_capability(web_stream, web_remux, now);
+    }
+    pub fn stream_answer(&mut self, answer: &str, now: f64) -> bool {
+        serde_json::from_str::<WebStreamAnswer>(answer)
+            .is_ok_and(|answer| self.0.stream_answer(answer, now))
+    }
+    pub fn set_stream_active(&mut self, active: bool, now: f64) {
+        self.0.set_stream_active(active, now);
+    }
+    pub fn stop_stream(&mut self, id: u32, now: f64) {
+        self.0.stop_stream(id.into(), now);
+    }
 }
 
 #[wasm_bindgen]
-pub struct FileHasher(Option<Identifier>);
+pub struct FileHasher {
+    inner: Option<Identifier>,
+    digest: String,
+    table: Vec<u8>,
+}
 
 #[wasm_bindgen]
 impl FileHasher {
     #[wasm_bindgen(constructor)]
     pub fn new() -> FileHasher {
-        FileHasher(Some(Identifier::new(CHUNK_SIZE)))
+        FileHasher {
+            inner: Some(Identifier::new(CHUNK_SIZE)),
+            digest: String::new(),
+            table: Vec::new(),
+        }
     }
     pub fn chunk_size() -> u32 {
         CHUNK_SIZE
     }
     pub fn update(&mut self, data: &[u8]) {
-        if let Some(id) = &mut self.0 {
+        if let Some(id) = &mut self.inner {
             id.update(data);
         }
     }
     pub fn finish(&mut self) -> String {
-        match self.0.take() {
-            Some(id) => json(&id.finish().0),
+        match self.inner.take() {
+            Some(id) => {
+                let (media, hashes) = id.finish();
+                self.digest = table_digest(&hashes);
+                self.table = hashes.concat();
+                json(&media)
+            }
             None => "null".into(),
         }
+    }
+    pub fn digest(&self) -> String {
+        self.digest.clone()
+    }
+    pub fn take_hash_table(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.table)
     }
 }
 
@@ -360,4 +396,160 @@ pub fn parse_subtitle(bytes: &[u8]) -> Result<String, JsError> {
 #[wasm_bindgen]
 pub fn shift_subtitle(vtt: &str, delay_ms: i32) -> String {
     shift_webvtt(vtt, i64::from(delay_ms))
+}
+
+#[wasm_bindgen]
+pub struct WebStreamServer(StreamServer);
+
+#[wasm_bindgen]
+impl WebStreamServer {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        file_size: f64,
+        chunk_size: u32,
+        hash_table: Vec<u8>,
+        remux_enabled: bool,
+    ) -> WebStreamServer {
+        WebStreamServer(StreamServer::new(
+            file_size.max(0.0) as u64,
+            chunk_size,
+            hash_table,
+            remux_enabled,
+        ))
+    }
+    pub fn on_request(&mut self, bytes: &[u8]) -> Result<(), JsError> {
+        self.0
+            .on_request(bytes)
+            .map_err(|error| JsError::new(&error))
+    }
+    pub fn next_action(&mut self) -> String {
+        json(&self.0.next_action())
+    }
+    pub fn provide_chunk(&mut self, index: u32, data: &[u8]) {
+        self.0.provide_chunk(index, data);
+    }
+    pub fn fail_chunk(&mut self, index: u32) {
+        self.0.fail_chunk(index);
+    }
+    pub fn provide_mse_index(&mut self, data: &[u8]) {
+        self.0.provide_mse_index(data);
+    }
+    pub fn fail_mse_index(&mut self) {
+        self.0.fail_mse_index();
+    }
+    pub fn provide_mse_init(&mut self, track: u8, data: &[u8]) {
+        self.0.provide_mse_init(track, data);
+    }
+    pub fn fail_mse_init(&mut self, track: u8) {
+        self.0.fail_mse_init(track);
+    }
+    pub fn provide_mse_segment(&mut self, track: u8, segment: u32, data: &[u8]) {
+        self.0.provide_mse_segment(track, segment, data);
+    }
+    pub fn fail_mse_segment(&mut self, track: u8, segment: u32) {
+        self.0.fail_mse_segment(track, segment);
+    }
+    pub fn take_fragment(&mut self) -> Option<Vec<u8>> {
+        self.0.take_fragment()
+    }
+    pub fn has_outgoing(&self) -> bool {
+        self.0.has_outgoing()
+    }
+    pub fn sent_bytes(&self) -> f64 {
+        self.0.sent_bytes() as f64
+    }
+    pub fn unique_chunks(&self) -> u32 {
+        self.0.unique_chunks()
+    }
+    pub fn total_chunks(&self) -> u32 {
+        self.0.total_chunks()
+    }
+}
+
+struct JsFileReader {
+    read_at: Function,
+    size: u64,
+    pos: u64,
+}
+
+impl Read for JsFileReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.pos >= self.size || buf.is_empty() {
+            return Ok(0);
+        }
+        let want = (self.size - self.pos).min(buf.len() as u64) as u32;
+        let value = self
+            .read_at
+            .call2(
+                &JsValue::NULL,
+                &JsValue::from_f64(self.pos as f64),
+                &JsValue::from(want),
+            )
+            .map_err(|_| io::Error::other("Falha ao ler arquivo no navegador."))?;
+        let array = Uint8Array::new(&value);
+        let len = (array.length() as usize).min(buf.len());
+        if len == 0 {
+            return Ok(0);
+        }
+        array.slice(0, len as u32).copy_to(&mut buf[..len]);
+        self.pos += len as u64;
+        Ok(len)
+    }
+}
+
+impl Seek for JsFileReader {
+    fn seek(&mut self, style: SeekFrom) -> io::Result<u64> {
+        let next = match style {
+            SeekFrom::Start(offset) => i128::from(offset),
+            SeekFrom::End(delta) => i128::from(self.size) + i128::from(delta),
+            SeekFrom::Current(delta) => i128::from(self.pos) + i128::from(delta),
+        };
+        if next < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Posição negativa",
+            ));
+        }
+        self.pos = (next as u64).min(self.size);
+        Ok(self.pos)
+    }
+}
+
+#[wasm_bindgen]
+pub struct WasmMkvRemuxer(MkvRemuxer<BufReader<JsFileReader>>);
+
+#[wasm_bindgen]
+impl WasmMkvRemuxer {
+    pub fn open(file_size: f64, read_at: Function) -> Result<WasmMkvRemuxer, JsError> {
+        let reader = BufReader::with_capacity(
+            64 * 1024,
+            JsFileReader {
+                read_at,
+                size: file_size.max(0.0) as u64,
+                pos: 0,
+            },
+        );
+        MkvRemuxer::open(reader)
+            .map(WasmMkvRemuxer)
+            .map_err(|error| JsError::new(&json(&error)))
+    }
+    pub fn mse_info(&self) -> String {
+        json(&self.0.web_stream_mse())
+    }
+    pub fn skipped_audio_codecs(&self) -> String {
+        json(&self.0.skipped_audio_codecs())
+    }
+    pub fn encoded_index(&self) -> Vec<u8> {
+        self.0.encoded_index()
+    }
+    pub fn init_segment(&self, track: u8) -> Result<Vec<u8>, JsError> {
+        self.0
+            .init_segment(track)
+            .map_err(|error| JsError::new(&error))
+    }
+    pub fn media_segment(&mut self, track: u8, segment: u32) -> Result<Vec<u8>, JsError> {
+        self.0
+            .media_segment(track, segment)
+            .map_err(|error| JsError::new(&error))
+    }
 }

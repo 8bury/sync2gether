@@ -139,10 +139,14 @@ vídeo, GPU ou sincronização entre PCs.
   correção, como o convidado do runtime), `host_link.rs` (conexão de controle
   `Host`/`Alive`, conexões de dados `Accept`, SPAKE2/Noise responder, limite de
   código errado e vaga única), `host.rs` (adaptador sem I/O sobre
-  `sync2gether_core::host::Host`) e `stream.rs` (cache de blocos verificados em
-  memória). `web/static/` tem a página em JavaScript simples (`app.js`,
-  `host.js`, `ui.js`), o adaptador do `<video>` e o Service Worker. Veja
-  [Navegador](navegador.md).
+  `sync2gether_core::host::Host`), `host_stream.rs` (servidor do protocolo do
+  canal de dados WebRTC sem I/O para tabela de hashes, blocos e segmentos MSE),
+  `remux.rs` e `remux/parse.rs` (reempacotamento incremental de MKV com
+  H.264/HEVC e AAC/Opus/MP3 para fMP4 usando `matroska-demuxer` e
+  `shiguredo_mp4`) e `stream.rs` (cache de blocos verificados em memória).
+  `web/static/` tem a página em JavaScript simples (`app.js`, `host.js`,
+  `host-stream.js`, `remux-worker.js`, `ui.js`), o adaptador do `<video>` e o
+  Service Worker. Veja [Navegador](navegador.md).
 - `stream/webrtc.rs`, `stream/ffmpeg.rs`, `stream/remux.rs` e
   `runtime/web_stream.rs` servem o streaming para o navegador com `str0m` (sem
   OpenSSL): uma porta UDP por interface IPv4, candidatos STUN, oferta e resposta

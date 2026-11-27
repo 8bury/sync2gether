@@ -5,7 +5,7 @@ use crate::{
 use serde::Serialize;
 use sync2gether_core::{
     host::{Host, HostNotice, HostOutput, PlayerCommand, PlayerStatus as CorePlayerStatus},
-    protocol::{Control, Media, Message, Side, Verification},
+    protocol::{Control, Media, Message, Side, StreamProgress, Verification, WebStreamAnswer},
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -20,6 +20,8 @@ pub enum Command {
     Pause { paused: bool },
     Seek { position: f64 },
     Speed { speed: f64 },
+    WebStreamOffer { id: u64, sdp: String },
+    StreamStop { id: u64 },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -51,6 +53,9 @@ pub struct View {
     pub guest_blocked: bool,
     pub guest_clock_ready: bool,
     pub guest_position: Option<f64>,
+    pub streaming: bool,
+    pub guest_streaming: bool,
+    pub guest_stream_progress: Option<StreamProgress>,
     pub matched: bool,
     pub mismatch: bool,
     pub paused: bool,
@@ -99,6 +104,10 @@ pub struct BrowserHost {
     error: Option<String>,
     notice: Option<String>,
     relay_offline: bool,
+    web_stream: bool,
+    web_remux: bool,
+    streaming_active: bool,
+    active_stream_id: Option<u64>,
     last_heartbeat: f64,
     last_correct: f64,
     now: f64,
@@ -132,6 +141,10 @@ impl BrowserHost {
             error: None,
             notice: None,
             relay_offline: false,
+            web_stream: false,
+            web_remux: false,
+            streaming_active: false,
+            active_stream_id: None,
             last_heartbeat: f64::NEG_INFINITY,
             last_correct: f64::NEG_INFINITY,
             now: 0.0,
@@ -253,6 +266,7 @@ impl BrowserHost {
 
     pub fn leave(&mut self, now: f64) {
         self.now = now;
+        self.clear_active_stream();
         self.link.leave();
         self.host.on_disconnected(now);
         self.flush_host();
@@ -275,6 +289,9 @@ impl BrowserHost {
         now: f64,
     ) {
         self.now = now;
+        self.clear_active_stream();
+        self.web_stream = false;
+        self.web_remux = false;
         if !self.host.presence().loading {
             self.generation += 1;
             self.host.begin_loading(self.generation, now);
@@ -294,6 +311,7 @@ impl BrowserHost {
 
     pub fn set_media(&mut self, media: Option<Media>, file_name: Option<String>, now: f64) -> u64 {
         self.now = now;
+        self.clear_active_stream();
         self.generation += 1;
         self.player = PlayerStatus::default();
         self.error = None;
@@ -303,6 +321,8 @@ impl BrowserHost {
         if let Some(media) = media.filter(Media::valid) {
             self.host.set_media_loaded(media, now);
             self.host.presence_mut().file_name = valid_name;
+            self.web_stream = true;
+            self.web_remux = false;
         } else {
             let presence = self.host.presence_mut();
             presence.media = None;
@@ -310,6 +330,8 @@ impl BrowserHost {
             presence.loading = false;
             presence.verification = None;
             presence.ready = false;
+            self.web_stream = false;
+            self.web_remux = false;
         }
         self.sync_inputs();
         if self.host.is_connected() {
@@ -318,6 +340,76 @@ impl BrowserHost {
         self.flush_host();
         self.drain_link_commands();
         self.generation
+    }
+
+    pub fn set_stream_capability(&mut self, web_stream: bool, web_remux: bool, now: f64) {
+        self.now = now;
+        self.web_stream = web_stream && self.host.presence().media.is_some();
+        self.web_remux = self.web_stream && web_remux;
+        self.sync_inputs();
+        if self.host.is_connected() {
+            self.host.publish(now);
+        }
+        self.flush_host();
+        self.drain_link_commands();
+    }
+
+    pub fn stream_answer(&mut self, answer: WebStreamAnswer, now: f64) -> bool {
+        self.now = now;
+        if !answer.valid() || self.active_stream_id != Some(answer.id) {
+            return false;
+        }
+        let message = Message::WebStreamAnswer(Box::new(answer));
+        if !self.host.can_send(&message) || self.link.send(&message).is_err() {
+            return false;
+        }
+        self.streaming_active = true;
+        self.sync_inputs();
+        if self.host.is_connected() {
+            self.host.publish(now);
+        }
+        self.flush_host();
+        self.drain_link_commands();
+        true
+    }
+
+    pub fn set_stream_active(&mut self, active: bool, now: f64) {
+        self.now = now;
+        self.streaming_active = active;
+        if !active {
+            self.active_stream_id = None;
+        }
+        self.sync_inputs();
+        if self.host.is_connected() {
+            self.host.publish(now);
+        }
+        self.flush_host();
+        self.drain_link_commands();
+    }
+
+    pub fn stop_stream(&mut self, id: u64, now: f64) {
+        self.now = now;
+        let stop_id = if id != 0 {
+            Some(id)
+        } else {
+            self.active_stream_id
+        };
+        if self.active_stream_id == stop_id {
+            self.active_stream_id = None;
+        }
+        self.streaming_active = false;
+        if let Some(id) = stop_id {
+            let reply = Message::StreamStop { id };
+            if self.host.can_send(&reply) {
+                let _ = self.link.send(&reply);
+            }
+        }
+        self.sync_inputs();
+        if self.host.is_connected() {
+            self.host.publish(now);
+        }
+        self.flush_host();
+        self.drain_link_commands();
     }
 
     pub fn player_status(&mut self, status: PlayerStatus, now: f64) {
@@ -414,8 +506,8 @@ impl BrowserHost {
             host_loading: presence.loading,
             host_buffering: presence.buffering,
             host_blocked: presence.blocked,
-            host_web_stream: false,
-            host_web_remux: false,
+            host_web_stream: presence.web_stream,
+            host_web_remux: presence.web_remux,
             guest_media: connected.then(|| guest.media.clone()).flatten(),
             guest_file_name: connected.then(|| guest.file_name.clone()).flatten(),
             guest_ready: connected && guest.ready,
@@ -424,6 +516,9 @@ impl BrowserHost {
             guest_blocked: connected && guest.blocked,
             guest_clock_ready: connected && guest.clock_ready,
             guest_position: connected.then_some(guest_position).flatten(),
+            streaming: self.streaming_active,
+            guest_streaming: connected && guest.streaming,
+            guest_stream_progress: connected.then(|| guest.stream_progress.clone()).flatten(),
             matched,
             mismatch,
             paused: state.paused,
@@ -459,12 +554,19 @@ impl BrowserHost {
         }
     }
 
+    fn clear_active_stream(&mut self) {
+        if let Some(id) = self.active_stream_id.take() {
+            self.commands.push(Command::StreamStop { id });
+        }
+        self.streaming_active = false;
+    }
+
     fn sync_inputs(&mut self) {
         self.host.set_generation(self.generation);
         let presence = self.host.presence_mut();
-        presence.streaming = false;
-        presence.web_stream = false;
-        presence.web_remux = false;
+        presence.streaming = self.streaming_active;
+        presence.web_stream = self.web_stream && presence.media.is_some();
+        presence.web_remux = presence.web_stream && self.web_remux;
     }
 
     fn link_event(&mut self, event: LinkEvent) {
@@ -491,14 +593,17 @@ impl BrowserHost {
                 self.flush_host();
             }
             LinkEvent::Disconnected => {
+                self.clear_active_stream();
                 self.host.on_disconnected(self.now);
                 self.flush_host();
             }
             LinkEvent::PeerLeft => {
+                self.clear_active_stream();
                 self.host.on_peer_left(self.now);
                 self.flush_host();
             }
             LinkEvent::Fatal(error) => {
+                self.clear_active_stream();
                 self.error = Some(error);
                 self.host.on_disconnected(self.now);
                 self.flush_host();
@@ -549,9 +654,27 @@ impl BrowserHost {
                     self.host.on_disconnected(self.now);
                 }
                 HostOutput::WebStreamOffer(offer) => {
-                    let reply = Message::StreamStop { id: offer.id };
-                    if self.host.can_send(&reply) {
-                        let _ = self.link.send(&reply);
+                    if self.web_stream && self.host.presence().media.is_some() {
+                        if let Some(old_id) = self.active_stream_id.replace(offer.id) {
+                            self.commands.push(Command::StreamStop { id: old_id });
+                        }
+                        self.streaming_active = true;
+                        self.commands.push(Command::WebStreamOffer {
+                            id: offer.id,
+                            sdp: offer.sdp,
+                        });
+                    } else {
+                        let reply = Message::StreamStop { id: offer.id };
+                        if self.host.can_send(&reply) {
+                            let _ = self.link.send(&reply);
+                        }
+                    }
+                }
+                HostOutput::StreamStop { id } => {
+                    if self.active_stream_id == Some(id) {
+                        self.active_stream_id = None;
+                        self.streaming_active = false;
+                        self.commands.push(Command::StreamStop { id });
                     }
                 }
                 HostOutput::SubtitleRequest { track } => {
@@ -562,8 +685,7 @@ impl BrowserHost {
                 }
                 HostOutput::WebGuestJoined
                 | HostOutput::StreamRequest
-                | HostOutput::StreamAnswer(_)
-                | HostOutput::StreamStop { .. } => {}
+                | HostOutput::StreamAnswer(_) => {}
             }
         }
     }

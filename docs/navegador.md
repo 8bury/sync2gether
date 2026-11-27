@@ -1,25 +1,52 @@
-# Convidado no navegador
+# Navegador (anfitrião e convidado)
 
-O convidado pode entrar numa sala pela internet sem instalar o app: basta abrir
-um link no navegador. O anfitrião continua usando o app de desktop. No
-navegador, a pessoa assiste com a **própria cópia** do filme ou recebe o
+É possível usar o sync2gether pelo navegador sem instalar o app: tanto para
+**entrar como convidado** (com link ou código) quanto para **criar uma sala
+como anfitrião** usando a própria cópia do filme. Como convidado de um anfitrião
+no app de desktop, a pessoa pode assistir com a **própria cópia** ou receber o
 arquivo por **streaming P2P direto** do computador do anfitrião.
 
 ## Como usar
 
-1. O anfitrião cria uma sala pela internet. A tela de espera e os detalhes da
-   conexão mostram **Copiar link para navegador**.
+### Entrar como convidado
+
+1. O anfitrião cria uma sala pela internet (no app ou no navegador) e copia o
+   código ou o link.
 2. O link tem o formato `https://sync2gether.pedrosales.dev/#4821-gato-lua`. O
    código fica depois do `#`: o navegador nunca o envia a um servidor.
 3. O convidado abre o link e escolhe:
    - **Usar minha cópia**: o navegador lê o arquivo local, calcula a mesma
      identidade BLAKE3 do app e só libera a reprodução se as cópias forem
      iguais;
-   - **Assistir por streaming**: o navegador conecta direto ao app do
-     anfitrião por WebRTC e recebe o arquivo em blocos verificados.
+   - **Assistir por streaming**: disponível quando o anfitrião está no app de
+     desktop; o navegador conecta direto por WebRTC e recebe o arquivo em blocos
+     verificados.
 4. Play, pause e mudanças de posição seguem o anfitrião, como no app.
 
 Também é possível abrir a página sem link e colar o código.
+
+### Criar sala pelo navegador (anfitrião)
+
+1. Abra a página e clique em **Criar sala**. O navegador abre uma conexão de
+   controle por WebSocket com o relay, gera o código da sala (com as duas
+   palavras sorteadas localmente) e exibe os botões **Copiar código** e
+   **Copiar link**.
+2. Escolha a sua cópia local do filme. O convidado pode entrar tanto pelo app de
+   desktop quanto pelo navegador, desde que tenha a mesma cópia do arquivo.
+3. Assim que as duas cópias forem conferidas e os relógios estiverem prontos,
+   clique em **Começar a assistir** para preparar os dois players e agendar o
+   início em conjunto.
+4. **Limites do anfitrião no navegador**:
+   - A aba do anfitrião precisa permanecer aberta enquanto a sala estiver ativa
+     (um Worker mantém o relógio e os heartbeats rodando em segundo plano tanto
+     quanto o navegador permitir).
+   - O anfitrião no navegador suporta apenas cópia própria em ambos os lados
+     (sem streaming P2P a partir do navegador; se um convidado no app de desktop
+     clicar em streaming P2P, a tentativa expira após o tempo limite de
+     negociação de 15 s, pois o protocolo atual não tem mensagem de recusa para
+     `StreamRequest`).
+   - O servidor relay publicado precisa estar atualizado com suporte a `Host`,
+     `Accept` e `Alive` por WebSocket.
 
 ## O que funciona no navegador
 
@@ -82,11 +109,14 @@ iniciar**.
 ## Segurança e privacidade
 
 - A página entra no relay por WebSocket e envia exatamente os mesmos bytes que o
-  app: `Join`, SPAKE2 com o código e o canal Noise. O relay continua sem ver o
-  código nem o conteúdo da sala.
-- O código é lido do fragmento do link e removido da barra de endereço logo em
-  seguida. Para sobreviver a um recarregamento, ele e a chave de reconexão
-  ficam no `sessionStorage` da aba, apagado ao sair da sala.
+  app: `Join` (convidado) ou `Host`/`Accept`/`Alive` (anfitrião), SPAKE2 com o
+  código e o canal Noise. O relay continua sem ver o código nem o conteúdo da
+  sala.
+- No convidado, o código é lido do fragmento do link e removido da barra de
+  endereço logo em seguida. Para sobreviver a um recarregamento, o estado da
+  sala (código/chave no convidado; número da sala, segredo, palavras e chave de
+  retomada no anfitrião) fica apenas no `sessionStorage` da aba, apagado ao sair
+  ou encerrar a sala, nunca em logs ou URLs.
 - No streaming, a oferta e a resposta WebRTC (incluindo as impressões digitais
   DTLS) passam pelo canal cifrado da sala, então outro computador não consegue
   se passar pelo anfitrião. No envio direto do arquivo original, cada bloco é
@@ -161,8 +191,9 @@ firefox --headless --screenshot="$PWD/.cache/web-paused.png" --window-size=1440,
 
 Os cenários disponíveis em `web/preview/` são `entry`, `connecting`, `ended`,
 `prepare`, `mkv-prepare`, `mkv-prepare-fallback`, `mkv-streaming`, `audio-menu`,
-`player`, `paused`, `reconnecting`, `buffering`, `subtitles` e
-`subtitles-menu`, com `&theme=light` ou `&theme=dark` opcionais. O build padrão
+`player`, `paused`, `reconnecting`, `buffering`, `subtitles`,
+`subtitles-menu`, `host-waiting`, `host-matched`, `host-mismatch` e
+`host-playing`, com `&theme=light` ou `&theme=dark` opcionais. O build padrão
 (`bash scripts/build-web.sh`) e o `web/Dockerfile` nunca incluem `web/preview/`
 e ignoram `?preview=`.
 
@@ -172,13 +203,15 @@ O código fica em:
   hashes dos blocos, formato do canal de dados, conversão/deslocamento de
   legendas (`subtitle.rs`) e tokens de tema (`theme.rs`), compilados para o app,
   o relay e o WebAssembly;
-- `web/src/`: o convidado sem I/O (`guest.rs`, `link.rs`) e o cliente de blocos
-  do streaming (`stream.rs`), exportados para JavaScript em `bindings.rs`;
+- `web/src/`: o convidado sem I/O (`guest.rs`, `link.rs`), o anfitrião sem I/O
+  (`host.rs`, `host_link.rs`, usando `sync2gether_core::host::Host`) e o cliente
+  de blocos do streaming (`stream.rs`), exportados para JavaScript em
+  `bindings.rs`;
 - `web/static/`: a página, os tokens CSS gerados a partir de `core/src/theme.rs`
-  (`tokens.css`, verificados por teste em `tests/web.rs`), os controles e avisos
-  sobre o vídeo no mesmo visual do app (`ui.js`, `subtitles.js`, `style.css`),
-  o adaptador do `<video>`, o Worker de hash e o Service Worker que responde
-  aos pedidos de trecho do vídeo;
+  (`tokens.css`, verificados por teste em `tests/web.rs`), o controlador do
+  anfitrião (`host.js`), os controles e avisos sobre o vídeo no mesmo visual do
+  app (`ui.js`, `subtitles.js`, `style.css`), o adaptador do `<video>`, o Worker
+  de hash e o Service Worker que responde aos pedidos de trecho do vídeo;
 - `web/preview/`: fixtures e ponto de entrada usados apenas com
   `scripts/build-web.sh --preview` para revisão visual e capturas em `.cache/`;
 - `src/stream/webrtc.rs`, `src/stream/ffmpeg.rs`, `src/stream/remux.rs` e
@@ -190,6 +223,11 @@ Testes:
 - `tests/web.rs`: relay real com WebSocket, anfitrião real e o convidado do
   navegador compilado nativamente (código errado, origem recusada, relógio,
   preparação, início agendado, reconexão, compatibilidade de protocolo e saída);
+- `tests/web_host.rs`: relay real com WebSocket (`Host`/`Accept`/`Alive` e
+  limites), anfitrião do navegador compilado nativamente contra convidado de
+  desktop e contra convidado do navegador (criação de sala, código errado,
+  início em sincronia, pausa, seek, retomada com `INTRO_RESUME` e reconexão do
+  controle do relay);
 - `tests/web_stream.rs`: WebRTC do anfitrião contra um cliente `str0m` em
   localhost, com tabela de hashes, blocos verificados, recusa e cancelamento;
 - `tests/remux.rs`: reempacotamento incremental de MKV sintético com H.264 e

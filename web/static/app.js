@@ -3,6 +3,15 @@ import { Player, now } from "./player.js";
 import { RELAY_URL } from "./config.js";
 import { Subtitles, formatDelay } from "./subtitles.js";
 import {
+  HostController,
+  clearSavedHost,
+  copyWithFeedback,
+  hostStatusText,
+  loadSavedHost,
+  renderHostPrepare,
+  roomLink,
+} from "./host.js";
+import {
   ICON_ALERT,
   ICON_CANCEL,
   ICON_INFO,
@@ -26,6 +35,7 @@ const CONTROLS_HIDE_MS = 3000;
 const TOAST_MS = 4000;
 
 const app = {
+  role: "guest",
   guest: null,
   code: null,
   socket: null,
@@ -56,13 +66,19 @@ const app = {
 };
 
 const player = new Player($("video"), {
-  prepared: (token) => call((g) => g.player_prepared(token, now())),
-  started: (token, at) => call((g) => g.player_started(token, at, now())),
-  missed: (token) => call((g) => g.player_missed(token, now())),
-  error: (message) => call((g) => g.player_error(message, now())),
+  prepared: (token) => dispatch((s) => s.player_prepared(token, now())),
+  started: (token, at) => dispatch((s) => s.player_started(token, at, now())),
+  missed: (token) => dispatch((s) => s.player_missed(token, now())),
+  error: (message) => dispatch((s) => s.player_error(message, now())),
   unlock: () => { $("unlock").hidden = false; },
   muted: () => { $("unmute").hidden = false; },
   notice: (message) => { app.notice = message; render(true); },
+});
+
+const hostCtrl = new HostController({
+  player,
+  relayUrl,
+  onView: (view) => renderHostView(view, false),
 });
 
 export const subtitles = new Subtitles($("video"), {
@@ -228,6 +244,14 @@ function call(action) {
   pump();
 }
 
+function dispatch(action) {
+  if (app.role === "host") {
+    hostCtrl.call(action);
+  } else {
+    call(action);
+  }
+}
+
 function relayUrl() {
   if (RELAY_URL) return RELAY_URL;
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -343,6 +367,10 @@ function closeSocket() {
 }
 
 function tick() {
+  if (app.role === "host" && hostCtrl.active()) {
+    hostCtrl.tick();
+    return;
+  }
   const guest = app.guest;
   if (!guest) return;
   if (app.connectAt !== null && !app.socket && now() >= app.connectAt) {
@@ -354,7 +382,30 @@ function tick() {
   pump();
 }
 
+function createRoom(saved) {
+  forget();
+  closeSocket();
+  app.guest = null;
+  app.role = "host";
+  app.code = null;
+  app.everConnected = true;
+  app.forcePrepare = false;
+  app.popoverOpen = false;
+  app.notice = null;
+  app.toast = null;
+  app.prevPeer = null;
+  app.prevConnected = false;
+  app.prevPaused = null;
+  app.prevPausedBy = null;
+  app.prevSync = false;
+  hostCtrl.start(browserName(), saved || null);
+}
+
 function join(code) {
+  clearSavedHost();
+  hostCtrl.closeAll();
+  hostCtrl.host = null;
+  app.role = "guest";
   let guest;
   try {
     guest = new WebGuest(code, browserName());
@@ -380,6 +431,16 @@ function join(code) {
 }
 
 function leave() {
+  if (app.role === "host") {
+    hostCtrl.leave();
+    app.role = "guest";
+    setAudioTracks([], null);
+    subtitles.clearAll();
+    player.unload(0);
+    setPlayerMode(false);
+    showEnded("Sala encerrada", "Você encerrou a sala.");
+    return;
+  }
   call((g) => g.leave(now()));
   forget();
   app.stream?.stop();
@@ -391,14 +452,18 @@ function leave() {
 }
 
 function chooseFile(file) {
-  if (!file || !app.guest) return;
+  if (!file || (!app.guest && !hostCtrl.active())) return;
   app.stream?.stop();
   app.stream = null;
   setAudioTracks([], null);
   subtitles.clearEmbedded();
   app.forcePrepare = false;
   const id = ++app.hashJob;
-  app.guest.set_loading(file.name, 0, file.size);
+  if (app.role === "host") {
+    hostCtrl.call((h) => h.set_loading(file.name, 0, file.size, now()));
+  } else {
+    app.guest.set_loading(file.name, 0, file.size);
+  }
   $("hashing").hidden = false;
   $("hashing-bar").style.width = "0%";
   const worker = new Worker(new URL("./hash-worker.js", import.meta.url), { type: "module" });
@@ -410,22 +475,39 @@ function chooseFile(file) {
     }
     if (data.progress !== undefined) {
       $("hashing-bar").style.width = `${(100 * data.progress / Math.max(1, data.total)).toFixed(1)}%`;
-      call((g) => g.set_loading(file.name, data.progress, data.total));
+      if (app.role === "host") {
+        hostCtrl.call((h) => h.set_loading(file.name, data.progress, data.total, now()));
+      } else {
+        call((g) => g.set_loading(file.name, data.progress, data.total));
+      }
       return;
     }
     worker.terminate();
     $("hashing").hidden = true;
     if (data.error) {
       app.notice = "Não foi possível ler o arquivo.";
-      call((g) => g.set_media(undefined, 0, undefined));
+      if (app.role === "host") {
+        hostCtrl.call((h) => h.set_media(undefined, 0, undefined, now()));
+      } else {
+        call((g) => g.set_media(undefined, 0, undefined));
+      }
       return;
     }
     if (app.objectUrl) URL.revokeObjectURL(app.objectUrl);
     app.objectUrl = URL.createObjectURL(file);
     app.notice = null;
-    const generation = app.guest.set_media(data.media.hash, data.media.bytes, file.name);
-    player.load(app.objectUrl, generation);
-    pump();
+    if (app.role === "host") {
+      let generation = 0;
+      hostCtrl.call((h) => {
+        generation = h.set_media(data.media.hash, data.media.bytes, file.name, now());
+      });
+      player.load(app.objectUrl, generation);
+      hostCtrl.pump();
+    } else {
+      const generation = app.guest.set_media(data.media.hash, data.media.bytes, file.name);
+      player.load(app.objectUrl, generation);
+      pump();
+    }
   };
   worker.postMessage({ id, file });
 }
@@ -503,6 +585,7 @@ function updateControlsVisibility(view) {
     || !view.connected
     || view.buffering
     || view.host_buffering
+    || view.guest_buffering
     || view.waiting_buffer
     || view.preparing
     || view.scheduled
@@ -513,12 +596,13 @@ function updateControlsVisibility(view) {
 }
 
 function trackRoomEvents(view) {
-  const peer = view.peer || "O anfitrião";
+  const isHost = view.role === "host";
+  const peer = view.peer || (isHost ? "O convidado" : "O anfitrião");
   if (view.connected && !app.prevConnected) {
     if (app.prevPeer !== null) {
-      setToast(`Reconectado à sala de ${peer}.`);
+      setToast(isHost ? `${peer} reconectou.` : `Reconectado à sala de ${peer}.`);
     } else if (view.peer) {
-      setToast(`Você entrou na sala de ${view.peer}.`);
+      setToast(isHost ? `${view.peer} entrou na sala.` : `Você entrou na sala de ${view.peer}.`);
     }
   } else if (!view.connected && app.prevConnected && !view.peer_left) {
     setToast(`Conexão com ${peer} perdida. Reconectando…`);
@@ -534,7 +618,29 @@ function trackRoomEvents(view) {
   app.prevSync = inSync;
 }
 
+function renderHostView(view, force) {
+  const time = now();
+  if (!force && !view.ended && time - app.lastRender < 120) return;
+  app.lastRender = time;
+  app.view = view;
+  if (view.ended) {
+    clearSavedHost();
+    hostCtrl.closeAll();
+    if (!$("ended").hidden) return;
+    showEnded("Sala encerrada", view.error || view.notice || "");
+    subtitles.clearAll();
+    player.unload(0);
+    return;
+  }
+  trackRoomEvents(view);
+  renderRoom(view);
+}
+
 function render(force) {
+  if (app.role === "host") {
+    if (app.view) renderHostView(app.view, force);
+    return;
+  }
   const guest = app.guest;
   if (!guest) return;
   const time = now();
@@ -574,7 +680,13 @@ function renderRoom(view) {
     app.toast = null;
   }
 
-  const inPlayer = (view.matched || Boolean(app.stream?.started))
+  const isHost = view.role === "host";
+  const leaveLabel = $("leave").querySelector(".back-label");
+  if (leaveLabel) leaveLabel.textContent = isHost ? "Encerrar sala" : "Sair da sala";
+
+  const inPlayer = (isHost
+    ? (view.watching && Boolean(view.host_media))
+    : (view.matched || Boolean(app.stream?.started)))
     && !app.forcePrepare;
   setPlayerMode(inPlayer);
 
@@ -585,86 +697,98 @@ function renderRoom(view) {
   $("stage-title").hidden = !inPlayer;
   $("stage-title").textContent = mediaTitle(view.host_file_name);
   $("presence-btn").hidden = !inPlayer;
+  $("popover-copy-row").hidden = !isHost || !view.code;
+  $("popover-tab-note").hidden = !isHost;
 
-  const hostFile = view.host_file_name;
-  $("host-card-name").textContent = view.peer || "Anfitrião";
-  $("host-file").textContent = hostFile || (view.host_loading ? "O anfitrião está abrindo o filme…" : "Esperando o anfitrião escolher o filme…");
-  const risky = hostFile && RISKY_FORMATS.test(hostFile);
-  const formatWarning = $("format-warning");
-  formatWarning.hidden = !risky;
-  formatWarning.className = risky && view.host_web_remux ? "muted small-text" : "warning small-text";
-  formatWarning.textContent = risky
-    ? (view.host_web_remux
-      ? "Este formato pode não tocar pela sua cópia local, mas funciona por streaming (o anfitrião adapta vídeo e áudio para o navegador)."
-      : "Este formato costuma não tocar no navegador (MKV e áudio AC-3/DTS, por exemplo). Se não funcionar, use o app.")
-    : "";
-  $("stream").hidden = !(view.host_web_stream && view.host_media);
-
-  const guestFile = view.guest_file_name || (app.stream ? hostFile : null);
-  $("guest-file").textContent = guestFile || "Nenhum arquivo ainda";
-  $("pick-text").textContent = guestFile ? "Trocar arquivo" : "Usar minha cópia";
-
-  const guestBadge = $("guest-copy-badge");
-  const hostBadge = $("host-copy-badge");
-  guestBadge.className = "copy-badge muted";
-  hostBadge.className = "copy-badge muted";
-  if (app.stream) {
-    guestBadge.textContent = "Via streaming P2P";
-    guestBadge.classList.add("is-ok");
-  } else if (view.guest_media && view.matched) {
-    guestBadge.textContent = "Conferido";
-    guestBadge.classList.add("is-ok");
-  } else if (view.mismatch) {
-    guestBadge.textContent = "Conteúdo diferente";
-    guestBadge.classList.add("is-warning");
-  } else if (!$("hashing").hidden) {
-    guestBadge.textContent = "Conferindo…";
+  if (isHost) {
+    renderHostPrepare(view, app.notice);
   } else {
-    guestBadge.textContent = "Falta escolher";
-  }
+    $("host-invite").hidden = true;
+    $("host-start-wrap").hidden = true;
+    $("pick-label").classList.add("primary");
+    $("pick-label").classList.remove("secondary");
+    const hostFile = view.host_file_name;
+    $("host-card-name").textContent = view.peer || "Anfitrião";
+    $("host-file").textContent = hostFile || (view.host_loading ? "O anfitrião está abrindo o filme…" : "Esperando o anfitrião escolher o filme…");
+    const risky = hostFile && RISKY_FORMATS.test(hostFile);
+    const formatWarning = $("format-warning");
+    formatWarning.hidden = !risky;
+    formatWarning.className = risky && view.host_web_remux ? "muted small-text" : "warning small-text";
+    formatWarning.textContent = risky
+      ? (view.host_web_remux
+        ? "Este formato pode não tocar pela sua cópia local, mas funciona por streaming (o anfitrião adapta vídeo e áudio para o navegador)."
+        : "Este formato costuma não tocar no navegador (MKV e áudio AC-3/DTS, por exemplo). Se não funcionar, use o app.")
+      : "";
+    $("stream").hidden = !(view.host_web_stream && view.host_media);
 
-  if (view.host_media) {
-    hostBadge.textContent = view.host_ready ? "Conferido" : "Preparando…";
-    if (view.host_ready) hostBadge.classList.add("is-ok");
-  } else if (view.host_loading) {
-    hostBadge.textContent = "Conferindo…";
-  } else {
-    hostBadge.textContent = "Aguardando";
-  }
+    const guestFile = view.guest_file_name || (app.stream ? hostFile : null);
+    $("guest-file").textContent = guestFile || "Nenhum arquivo ainda";
+    $("pick-text").textContent = guestFile ? "Trocar arquivo" : "Usar minha cópia";
 
-  const prepareEmblem = $("prepare-emblem");
-  if (view.matched) {
-    $("prepare-heading").textContent = "Vocês têm o mesmo filme";
-    setEmblem(prepareEmblem, "together", 18);
-  } else if (view.mismatch) {
-    $("prepare-heading").textContent = "As cópias são diferentes";
-    setEmblem(prepareEmblem, "apart", 18);
-  } else if (!view.host_media) {
-    $("prepare-heading").textContent = "Esperando o filme do anfitrião";
-    setEmblem(prepareEmblem, "waiting", 18);
-  } else {
-    $("prepare-heading").textContent = "Escolha o filme";
-    setEmblem(prepareEmblem, "waiting", 18);
-  }
+    const guestBadge = $("guest-copy-badge");
+    const hostBadge = $("host-copy-badge");
+    guestBadge.className = "copy-badge muted";
+    hostBadge.className = "copy-badge muted";
+    if (app.stream) {
+      guestBadge.textContent = "Via streaming P2P";
+      guestBadge.classList.add("is-ok");
+    } else if (view.guest_media && view.matched) {
+      guestBadge.textContent = "Conferido";
+      guestBadge.classList.add("is-ok");
+    } else if (view.mismatch) {
+      guestBadge.textContent = "Conteúdo diferente";
+      guestBadge.classList.add("is-warning");
+    } else if (!$("hashing").hidden) {
+      guestBadge.textContent = "Conferindo…";
+    } else {
+      guestBadge.textContent = "Falta escolher";
+    }
 
-  const copyStatus = $("copy-status");
-  let copyText = "";
-  if (app.stream) {
-    copyText = app.stream.describe();
-  } else if (view.guest_media && view.matched) {
-    copyText = "Sua cópia confere com a do anfitrião.";
-  } else if (view.mismatch) {
-    copyText = "Sua cópia é diferente da do anfitrião. Escolha o mesmo arquivo.";
-  }
-  copyStatus.hidden = !copyText;
-  copyStatus.textContent = copyText;
+    if (view.host_media) {
+      hostBadge.textContent = view.host_ready ? "Conferido" : "Preparando…";
+      if (view.host_ready) hostBadge.classList.add("is-ok");
+    } else if (view.host_loading) {
+      hostBadge.textContent = "Conferindo…";
+    } else {
+      hostBadge.textContent = "Aguardando";
+    }
 
-  const prepNotice = app.notice || view.notice;
-  $("prepare-notice").hidden = !prepNotice;
-  $("prepare-notice").textContent = prepNotice || "";
+    const prepareEmblem = $("prepare-emblem");
+    if (view.matched) {
+      $("prepare-heading").textContent = "Vocês têm o mesmo filme";
+      setEmblem(prepareEmblem, "together", 18);
+    } else if (view.mismatch) {
+      $("prepare-heading").textContent = "As cópias são diferentes";
+      setEmblem(prepareEmblem, "apart", 18);
+    } else if (!view.host_media) {
+      $("prepare-heading").textContent = "Esperando o filme do anfitrião";
+      setEmblem(prepareEmblem, "waiting", 18);
+    } else {
+      $("prepare-heading").textContent = "Escolha o filme";
+      setEmblem(prepareEmblem, "waiting", 18);
+    }
+
+    const copyStatus = $("copy-status");
+    let copyText = "";
+    if (app.stream) {
+      copyText = app.stream.describe();
+    } else if (view.guest_media && view.matched) {
+      copyText = "Sua cópia confere com a do anfitrião.";
+    } else if (view.mismatch) {
+      copyText = "Sua cópia é diferente da do anfitrião. Escolha o mesmo arquivo.";
+    }
+    copyStatus.hidden = !copyText;
+    copyStatus.textContent = copyText;
+
+    const prepNotice = app.notice || view.notice;
+    $("prepare-notice").hidden = !prepNotice;
+    $("prepare-notice").textContent = prepNotice || "";
+  }
 
   let status = "";
-  if (!view.connected) {
+  if (isHost) {
+    status = hostStatusText(view);
+  } else if (!view.connected) {
     status = "Reconectando…";
   } else if (!view.host_media) {
     status = "Esperando o anfitrião.";
@@ -755,14 +879,16 @@ function renderRoom(view) {
   const toggle = $("toggle");
   const toggleIcon = $("toggle-icon");
   const canControl = view.connected && view.matched;
-  const canPlay = canControl
-    && view.ready
-    && view.host_ready
-    && view.clock_ready
-    && !view.blocked
-    && !view.host_blocked
-    && !view.buffering
-    && !view.host_buffering;
+  const canPlay = isHost
+    ? (canControl && view.ready)
+    : (canControl
+      && view.ready
+      && view.host_ready
+      && view.clock_ready
+      && !view.blocked
+      && !view.host_blocked
+      && !view.buffering
+      && !view.host_buffering);
   toggle.disabled = !(view.playing || cancelling || canPlay);
   $("back").disabled = !canControl;
   $("forward").disabled = !canControl;
@@ -797,9 +923,10 @@ function renderRoom(view) {
   const bufFrac = duration > 0 ? Math.max(0, Math.min(1, (view.buffered_until || 0) / duration)) : 0;
   $("seek-buffered").style.width = `${(bufFrac * 100).toFixed(3)}%`;
 
+  const peerPos = isHost ? view.guest_position : view.host_position;
   const peerDot = $("seek-peer");
-  if (view.connected && view.host_position !== null && view.host_position !== undefined && duration > 0) {
-    const peerFrac = Math.max(0, Math.min(1, view.host_position / duration));
+  if (view.connected && peerPos !== null && peerPos !== undefined && duration > 0) {
+    const peerFrac = Math.max(0, Math.min(1, peerPos / duration));
     peerDot.hidden = false;
     peerDot.style.left = `${(peerFrac * 100).toFixed(3)}%`;
   } else {
@@ -838,7 +965,7 @@ function togglePlay() {
   noteActivity();
   player.unlock();
   const cancelling = app.view.preparing || app.view.scheduled || app.view.waiting_buffer;
-  call((g) => (app.view.playing || cancelling ? g.pause(now()) : g.play(now())));
+  dispatch((s) => (app.view.playing || cancelling ? s.pause(now()) : s.play(now())));
 }
 
 function seekBy(delta) {
@@ -847,7 +974,7 @@ function seekBy(delta) {
   if (duration <= 0) return;
   noteActivity();
   const target = Math.max(0, Math.min(duration, app.view.position + delta));
-  call((g) => g.seek(target, now()));
+  dispatch((s) => s.seek(target, now()));
 }
 
 function toggleFullscreen() {
@@ -860,6 +987,32 @@ function toggleFullscreen() {
 }
 
 export function bindEvents() {
+  $("create-room").addEventListener("click", () => {
+    player.unlock();
+    createRoom(null);
+  });
+  $("copy-code").addEventListener("click", () => {
+    if (app.view?.code) copyWithFeedback(app.view.code, $("copy-code"));
+  });
+  $("copy-link").addEventListener("click", () => {
+    if (app.view?.code) copyWithFeedback(roomLink(app.view.code), $("copy-link"));
+  });
+  $("popover-copy-code").addEventListener("click", () => {
+    noteActivity();
+    if (app.view?.code) copyWithFeedback(app.view.code, $("popover-copy-code"));
+  });
+  $("popover-copy-link").addEventListener("click", () => {
+    noteActivity();
+    if (app.view?.code) copyWithFeedback(roomLink(app.view.code), $("popover-copy-link"));
+  });
+  $("start-watching").addEventListener("click", () => {
+    if (!app.view || app.role !== "host") return;
+    player.unlock();
+    app.forcePrepare = false;
+    if ((app.view.preparing || app.view.scheduled) && !app.view.starting) return;
+    const cancelling = app.view.preparing || app.view.scheduled;
+    hostCtrl.call((h) => (cancelling ? h.pause(now()) : h.play(now())));
+  });
   $("entry-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const value = $("entry-code").value.trim();
@@ -870,6 +1023,7 @@ export function bindEvents() {
   });
   $("again").addEventListener("click", () => {
     app.guest = null;
+    app.role = "guest";
     app.everConnected = false;
     app.notice = null;
     app.toast = null;
@@ -911,7 +1065,7 @@ export function bindEvents() {
     app.dragging = false;
     seekWrap.classList.remove("is-dragging");
     const duration = app.view?.host_duration || player.status().duration || 0;
-    if (duration > 0) call((g) => g.seek(duration * seekbar.value / 1000, now()));
+    if (duration > 0) dispatch((s) => s.seek(duration * seekbar.value / 1000, now()));
   });
   seekWrap.addEventListener("pointermove", (event) => {
     const duration = app.view?.host_duration || player.status().duration || 0;
@@ -1052,6 +1206,10 @@ export function bindEvents() {
   });
 
   window.addEventListener("pagehide", () => {
+    if (app.role === "host") {
+      hostCtrl.pagehide();
+      return;
+    }
     if (app.guest && app.socket) {
       app.guest.leave(now());
       const output = app.guest.take_output();
@@ -1061,6 +1219,7 @@ export function bindEvents() {
 }
 
 export function showRoom(view) {
+  app.role = view.role === "host" ? "host" : "guest";
   app.everConnected = true;
   app.view = view;
   noteActivity();
@@ -1081,6 +1240,11 @@ function boot() {
     history.replaceState(null, "", location.pathname + location.search);
     show("connecting");
     join(fragment);
+    return;
+  }
+  const savedHost = loadSavedHost();
+  if (savedHost && savedHost.secret) {
+    createRoom(savedHost);
     return;
   }
   const saved = remembered();

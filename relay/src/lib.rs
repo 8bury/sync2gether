@@ -314,6 +314,24 @@ impl Server {
             None => RelayStream::Plain(tcp),
         };
         let request: Request = timeout(first_request, read_frame(&mut stream)).await??;
+        self.dispatch(stream, admission, request).await
+    }
+
+    pub(crate) async fn handle_web(
+        self: Arc<Self>,
+        mut stream: RelayStream,
+        admission: Admission,
+    ) -> io::Result<()> {
+        let request: Request = timeout(FIRST_REQUEST, read_frame(&mut stream)).await??;
+        self.dispatch(stream, admission, request).await
+    }
+
+    async fn dispatch(
+        self: Arc<Self>,
+        mut stream: RelayStream,
+        admission: Admission,
+        request: Request,
+    ) -> io::Result<()> {
         let version = match &request {
             Request::Host { version, .. }
             | Request::Accept { version, .. }
@@ -331,24 +349,13 @@ impl Server {
                 ticket,
                 ..
             } => self.accept(stream, admission, room, secret, ticket).await,
-            Request::Join { room, .. } => self.join(stream, room).await,
+            Request::Join { room, .. } => {
+                let result = self.join(stream, room).await;
+                drop(admission);
+                result
+            }
             Request::Alive => Ok(()),
         }
-    }
-
-    pub(crate) async fn handle_web(
-        self: Arc<Self>,
-        mut stream: RelayStream,
-        admission: Admission,
-    ) -> io::Result<()> {
-        let request: Request = timeout(FIRST_REQUEST, read_frame(&mut stream)).await??;
-        let result = match request {
-            Request::Join { version, room } if version == VERSION => self.join(stream, room).await,
-            Request::Join { .. } => reply(&mut stream, &Reply::Outdated { version: VERSION }).await,
-            _ => reply(&mut stream, &Reply::Unknown).await,
-        };
-        drop(admission);
-        result
     }
 
     fn new_room(&self, state: &State) -> Option<String> {

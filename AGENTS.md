@@ -36,9 +36,12 @@ funcionalidades reais.
 - `core/`: mensagens, relógio, código da sala, sessão e máquina de estados do
   anfitrião (`session.rs` e `host.rs`), handshake e formato do canal de dados
   sem I/O, compartilhados pelo app, pelo relay e pelo WebAssembly.
-- `web/`: convidado no navegador. `web/src/` compila para WebAssembly (sem I/O)
-  e `web/static/` tem a página em JavaScript simples; `scripts/build-web.sh`
-  gera `target/web` e `web/Dockerfile` publica a página.
+- `web/`: página no navegador (convidado e anfitrião com cópia própria).
+  `web/src/` compila para WebAssembly (sem I/O: `guest.rs`, `link.rs`,
+  `host.rs`, `host_link.rs`, `stream.rs` e `bindings.rs`) e `web/static/` tem a
+  página em JavaScript simples (`app.js`, `host.js`, `ui.js`, `player.js`,
+  `subtitles.js`); `scripts/build-web.sh` gera `target/web` e `web/Dockerfile`
+  publica a página.
 - `src/stream/webrtc.rs` e `src/runtime/web_stream.rs`: streaming WebRTC do
   anfitrião para o navegador.
 - `src/discovery.rs`: anúncios UDP na rede e confirmação TCP de salas em segundo plano.
@@ -51,8 +54,9 @@ funcionalidades reais.
 - `tests/layout.rs`: teste da interface sem janela ou conexão.
 - `tests/network.rs`: comunicação TCP real em localhost.
 - `tests/relay.rs`: salas pela internet com relay real em localhost.
-- `tests/web.rs` e `tests/web_stream.rs`: convidado do navegador (compilado
-  nativamente) pelo WebSocket do relay e WebRTC do anfitrião contra `str0m`.
+- `tests/web.rs`, `tests/web_host.rs` e `tests/web_stream.rs`: convidado e
+  anfitrião do navegador (compilados nativamente) pelo WebSocket do relay e
+  WebRTC do anfitrião contra `str0m`.
 - `tests/browser.rs`: Firefox headless real contra o runtime do anfitrião,
   executado por `bash scripts/test-browser.sh`.
 - `tests/mvp.rs`: dois players reais com fixture sintética, executado por

@@ -1,5 +1,6 @@
 use crate::{
     guest::{Guest, PlayerStatus},
+    host::BrowserHost,
     stream::StreamClient,
 };
 use sync2gether_core::{
@@ -134,6 +135,139 @@ impl WebGuest {
         if let Ok(key) = key.try_into() {
             self.0.resume_with(key);
         }
+    }
+}
+
+#[wasm_bindgen]
+pub struct WebHost(BrowserHost);
+
+#[wasm_bindgen]
+impl WebHost {
+    #[wasm_bindgen(constructor)]
+    pub fn new(name: &str) -> WebHost {
+        WebHost(BrowserHost::new(name))
+    }
+    pub fn restore(
+        name: &str,
+        secret: String,
+        word0: u8,
+        word1: u8,
+        room: Option<String>,
+        resume_key: Option<Vec<u8>>,
+    ) -> WebHost {
+        let key = resume_key.and_then(|bytes| bytes.try_into().ok());
+        WebHost(BrowserHost::restore(
+            name,
+            secret,
+            [word0, word1],
+            room,
+            key,
+        ))
+    }
+    pub fn start(&mut self, now: f64) {
+        self.0.start(now);
+    }
+    pub fn control_open(&mut self, now: f64) {
+        self.0.control_open(now);
+    }
+    pub fn control_data(&mut self, bytes: &[u8], now: f64) {
+        self.0.control_data(bytes, now);
+    }
+    pub fn control_closed(&mut self, now: f64) {
+        self.0.control_closed(now);
+    }
+    pub fn accept_open(&mut self, id: u32, now: f64) {
+        self.0.accept_open(id.into(), now);
+    }
+    pub fn accept_data(&mut self, id: u32, bytes: &[u8], now: f64) {
+        self.0.accept_data(id.into(), bytes, now);
+    }
+    pub fn accept_closed(&mut self, id: u32, now: f64) {
+        self.0.accept_closed(id.into(), now);
+    }
+    pub fn tick(&mut self, now: f64) {
+        self.0.tick(now);
+    }
+    pub fn leave(&mut self, now: f64) {
+        self.0.leave(now);
+    }
+    pub fn play(&mut self, now: f64) {
+        self.0.control(Control::Play, now);
+    }
+    pub fn pause(&mut self, now: f64) {
+        self.0.control(Control::Pause, now);
+    }
+    pub fn seek(&mut self, position: f64, now: f64) {
+        self.0.control(Control::Seek(position), now);
+    }
+    pub fn set_media(
+        &mut self,
+        hash: Option<String>,
+        bytes: f64,
+        file_name: Option<String>,
+        now: f64,
+    ) -> u32 {
+        let media = hash
+            .map(|hash| Media {
+                hash,
+                bytes: bytes.max(0.0) as u64,
+            })
+            .filter(Media::valid);
+        self.0.set_media(media, file_name, now) as u32
+    }
+    pub fn set_loading(&mut self, file_name: Option<String>, done: f64, total: f64, now: f64) {
+        self.0.set_loading(
+            file_name,
+            Some(Verification {
+                bytes: done.max(0.0) as u64,
+                total: total.max(0.0) as u64,
+            }),
+            now,
+        );
+    }
+    pub fn generation(&self) -> u32 {
+        self.0.generation() as u32
+    }
+    pub fn player_status(&mut self, status: &str, now: f64) {
+        if let Ok(status) = serde_json::from_str::<PlayerStatus>(status) {
+            self.0.player_status(status, now);
+        }
+    }
+    pub fn player_prepared(&mut self, token: u32, now: f64) {
+        self.0.player_prepared(token.into(), now);
+    }
+    pub fn player_started(&mut self, token: u32, at: f64, now: f64) {
+        self.0.player_started(token.into(), at, now);
+    }
+    pub fn player_missed(&mut self, token: u32, now: f64) {
+        self.0.player_missed(token.into(), now);
+    }
+    pub fn player_error(&mut self, error: String, now: f64) {
+        self.0.player_error(error, now);
+    }
+    pub fn take_control_output(&mut self) -> Vec<u8> {
+        self.0.take_control_output()
+    }
+    pub fn take_accept_output(&mut self, id: u32) -> Vec<u8> {
+        self.0.take_accept_output(id.into())
+    }
+    pub fn take_commands(&mut self) -> String {
+        json(&self.0.take_commands())
+    }
+    pub fn view(&self) -> String {
+        json(&self.0.view())
+    }
+    pub fn room(&self) -> Option<String> {
+        self.0.room().map(str::to_owned)
+    }
+    pub fn secret(&self) -> String {
+        self.0.secret().to_owned()
+    }
+    pub fn words(&self) -> Vec<u8> {
+        self.0.words().to_vec()
+    }
+    pub fn resume_key(&self) -> Option<Vec<u8>> {
+        self.0.resume_key().map(|key| key.to_vec())
     }
 }
 

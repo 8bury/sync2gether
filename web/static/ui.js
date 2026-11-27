@@ -52,14 +52,19 @@ export function setEmblem(el, state, diameter) {
 }
 
 export function peerPresence(view, stream) {
-  const name = view.peer || "Outra pessoa";
+  const isHost = view.role === "host";
+  const name = view.peer || (isHost ? "Convidado" : "Outra pessoa");
+  if (isHost && !view.connected && !view.peer_left && !view.peer) {
+    return { name: "Sala aberta", detail: "aguardando…", state: "waiting", warning: false };
+  }
   if (view.peer_left && !view.connected) {
     return { name, detail: "saiu da sala", state: "solo", warning: false };
   }
   if (!view.connected) {
     return { name, detail: "reconectando", state: "lost", warning: true };
   }
-  if (view.host_buffering) {
+  const peerBuffering = isHost ? view.guest_buffering : view.host_buffering;
+  if (peerBuffering) {
     return { name, detail: "aguardando vídeo…", state: "waiting", warning: true };
   }
   if (view.buffering || view.waiting_buffer) {
@@ -78,6 +83,7 @@ export function peerPresence(view, stream) {
 }
 
 export function centerLoadingState(view, stream) {
+  const isHost = view.role === "host";
   const peer = view.peer || "a outra pessoa";
   if (stream && stream.phase === "failed" && stream.error) {
     return { title: "Conexão P2P interrompida", detail: stream.error, spinner: false };
@@ -88,7 +94,8 @@ export function centerLoadingState(view, stream) {
   if (view.buffering) {
     return { title: "Carregando vídeo…", detail: stream ? stream.describe() : "", spinner: true };
   }
-  if (view.host_buffering) {
+  const peerBuffering = isHost ? view.guest_buffering : view.host_buffering;
+  if (peerBuffering) {
     return { title: `Aguardando ${peer} carregar o vídeo…`, detail: "", spinner: true };
   }
   if (view.waiting_buffer) {
@@ -101,29 +108,36 @@ export function centerNoticeState(view, loading) {
   if (!view.loaded || loading || view.error || view.preparing || view.scheduled || view.blocked) {
     return null;
   }
-  const peer = view.peer || "Outra pessoa";
+  const isHost = view.role === "host";
+  const peer = view.peer || (isHost ? "Convidado" : "Outra pessoa");
   if (view.peer_left) {
     return {
       dim: "lost",
       state: "solo",
       diameter: 28,
       title: `${peer} saiu da sala`,
-      detail: "A sala foi encerrada pelo anfitrião.",
+      detail: isHost
+        ? "A sala continua aberta. Aguardando outra pessoa entrar."
+        : "A sala foi encerrada pelo anfitrião.",
     };
   }
   if (!view.connected) {
     return {
       dim: "lost",
-      state: "lost",
+      state: isHost && !view.peer ? "waiting" : "lost",
       diameter: 28,
-      title: "Conexão perdida",
-      detail: `Reconectando com ${view.peer || "a outra pessoa"}…`,
+      title: isHost && !view.peer ? "Aguardando convidado" : "Conexão perdida",
+      detail: isHost
+        ? (view.peer ? `Aguardando ${view.peer} reconectar…` : "Envie o código para alguém entrar na sala.")
+        : `Reconectando com ${view.peer || "a outra pessoa"}…`,
     };
   }
   if (view.paused) {
-    const title = view.paused_by === "Guest"
+    const selfSide = isHost ? "Host" : "Guest";
+    const otherSide = isHost ? "Guest" : "Host";
+    const title = view.paused_by === selfSide
       ? "Você pausou"
-      : view.paused_by === "Host"
+      : view.paused_by === otherSide
       ? `${peer} pausou`
       : "Pausado";
     return {

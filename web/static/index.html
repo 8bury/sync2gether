@@ -49,10 +49,18 @@
         <p class="lead-sub muted">Assista pelo navegador, sem instalar o app.</p>
       </div>
       <div class="entry-panel">
-        <p class="section-label">Qual é o código da sala?</p>
+        <div class="entry-create">
+          <p class="section-label">Criar uma nova sala</p>
+          <button class="primary large spread" id="create-room" type="button">
+            <span>Criar sala</span>
+            <svg class="glyph" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+          <p class="help muted">Gere um código para outra pessoa assistir com a própria cópia.</p>
+        </div>
+        <div class="entry-divider" aria-hidden="true"><span>ou entre com um código</span></div>
         <form id="entry-form" autocomplete="off">
           <input id="entry-code" class="code-input mono" type="text" inputmode="text" spellcheck="false" placeholder="4821-gato-lua" aria-label="Código da sala" required>
-          <button class="primary large spread" type="submit">
+          <button class="secondary large spread" type="submit">
             <span>Entrar</span>
             <svg class="glyph" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
@@ -76,6 +84,17 @@
     <section id="room" hidden>
       <div class="prepare-screen" id="prepare">
         <h1 class="prepare-heading" id="prepare-heading">Escolha o filme</h1>
+        <div class="host-invite" id="host-invite" hidden>
+          <p class="section-label" id="host-invite-label">Envie este código para quem vai assistir com você</p>
+          <div class="invite-code-row">
+            <span class="invite-code mono" id="host-invite-code">Gerando código…</span>
+          </div>
+          <div class="invite-actions">
+            <button class="secondary medium" id="copy-code" type="button" disabled>Copiar código</button>
+            <button class="secondary medium" id="copy-link" type="button" disabled>Copiar link</button>
+          </div>
+          <p class="small-text muted host-tab-note" id="host-tab-note">Mantenha esta aba aberta enquanto a sala estiver ativa.</p>
+        </div>
         <div class="copies-grid">
           <div class="copy-col">
             <div class="copy-head">
@@ -131,6 +150,9 @@
         </div>
 
         <p class="prepare-note muted" id="copy-status" hidden></p>
+        <div class="host-start-wrap" id="host-start-wrap" hidden>
+          <button class="primary large" id="start-watching" type="button" disabled>Começar a assistir</button>
+        </div>
         <p class="prepare-note warning" id="prepare-notice" hidden></p>
       </div>
 
@@ -172,7 +194,12 @@
           <div class="popover-section">
             <p class="popover-status" id="status"></p>
             <p class="popover-meta mono" id="popover-code"></p>
+            <div class="popover-copy-row" id="popover-copy-row" hidden>
+              <button class="secondary small" id="popover-copy-code" type="button">Copiar código</button>
+              <button class="secondary small" id="popover-copy-link" type="button">Copiar link</button>
+            </div>
             <p class="popover-meta" id="popover-metrics"></p>
+            <p class="popover-meta" id="popover-tab-note" hidden>Mantenha esta aba aberta enquanto a sala estiver ativa.</p>
           </div>
           <div class="popover-actions">
             <button class="secondary small" id="change-file" type="button">Trocar arquivo</button>

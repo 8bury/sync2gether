@@ -107,12 +107,14 @@ agregados a cada hora, sem números de sala nem endereços.
 
 ## Navegadores por WebSocket
 
-O [convidado no navegador](navegador.md) não abre TCP puro, então o relay pode
+A página no [navegador](navegador.md) não abre TCP puro, então o relay pode
 escutar também um WebSocket em `/relay`, numa porta separada (`--ws-listen` ou
 `RELAY_WS_LISTEN`). Cada mensagem binária do WebSocket carrega um trecho do
-mesmo fluxo de bytes da conexão TCP: o navegador envia `Join`, SPAKE2 e Noise
-exatamente como o app, e o anfitrião não percebe diferença. Por WebSocket só é
-aceito `Join`; `Host` e `Accept` recebem `Unknown`.
+mesmo fluxo de bytes da conexão TCP: o navegador envia `Host`, `Accept`, `Alive`
+ou `Join`, SPAKE2 e Noise exatamente como o app, com as mesmas validações e
+limites por endereço e globais. O outro participante (no app ou no navegador)
+não percebe diferença de transporte. Para criar salas pelo navegador em
+produção, o relay publicado precisa estar atualizado com essa versão.
 
 O WebSocket não tem TLS próprio: publique-o atrás de um proxy HTTPS (Coolify,
 Traefik, Caddy ou Cloudflare). Opções:

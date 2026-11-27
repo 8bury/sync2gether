@@ -241,6 +241,25 @@ body.in-player .foot {
   flex-direction: column;
   gap: 12px;
 }
+.entry-create {
+  display: flex;
+  flex-direction: column;
+}
+.entry-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 14px;
+  color: var(--faint);
+  font-size: var(--text-small);
+}
+.entry-divider::before,
+.entry-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
 .code-input {
   width: 100%;
   height: var(--button-large-h);
@@ -475,6 +494,53 @@ body.in-player .ghost:hover:not(:disabled) {
   margin: 0;
   text-align: center;
   font-size: var(--text-body);
+}
+.host-invite {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-window);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+.host-invite .section-label {
+  margin: 0;
+}
+.invite-code-row {
+  max-width: 100%;
+}
+.invite-code {
+  display: inline-block;
+  font-size: clamp(24px, 3.6vw, 40px);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.host-tab-note {
+  margin-top: 2px;
+}
+.host-start-wrap {
+  display: flex;
+  justify-content: center;
+}
+.popover-copy-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0;
 }
 
 .stage {

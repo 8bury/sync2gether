@@ -903,6 +903,251 @@ async fn streaming_mkv_subtitles(mut browser: Browser) {
         .await;
 }
 
+async fn setup_web_only() -> (String, SocketAddr) {
+    let site = root().join("target/web");
+    assert!(site.join("pkg").is_dir(), "execute scripts/build-web.sh");
+    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let web = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let relay_address: SocketAddr = tcp.local_addr().unwrap();
+    let ws_address = web.local_addr().unwrap();
+    let origin = format!("http://127.0.0.1:{}", http.local_addr().unwrap().port());
+    let relay = Relay::new(Limits::default(), None);
+    let browsers = relay.clone();
+    tokio::spawn(async move { relay.serve(tcp).await });
+    let origins = vec![origin.clone()];
+    tokio::spawn(async move {
+        browsers
+            .serve_ws(
+                web,
+                ws::Config {
+                    origins,
+                    client_ip_header: None,
+                },
+            )
+            .await
+    });
+    let config = format!(
+        "export const RELAY_URL = \"ws://{ws_address}{}\";\n",
+        ws::PATH
+    );
+    tokio::spawn(serve_http(http, site, config));
+    (origin, relay_address)
+}
+
+async fn host_with_desktop_guest(mut browser: Browser) {
+    let fixture = fixture();
+    let (origin, relay_address) = setup_web_only().await;
+    browser.navigate(&origin).await;
+    browser
+        .until(
+            "botão criar sala",
+            "!document.getElementById('entry').hidden && !document.getElementById('create-room').hidden",
+        )
+        .await;
+    browser
+        .eval("document.getElementById('create-room').click(); true")
+        .await;
+    browser
+        .until(
+            "código gerado",
+            "!document.getElementById('room').hidden && /^\\d{4,8}-[a-z]+-[a-z]+$/.test(document.getElementById('host-invite-code').textContent.trim())",
+        )
+        .await;
+    let code = browser.text("host-invite-code").await.trim().to_owned();
+    browser.choose_file("pick", &fixture).await;
+
+    let guest = Runtime::start();
+    let mut view = View::default();
+    guest
+        .commands
+        .send(Command::OpenPath(fixture.clone()))
+        .await
+        .unwrap();
+    host_until(&guest, &mut view, "convidado abrir filme", |v| {
+        v.player.loaded && !v.loading
+    })
+    .await;
+    guest
+        .commands
+        .send(Command::JoinCode {
+            relay: relay_address.to_string(),
+            code,
+        })
+        .await
+        .unwrap();
+    host_until(
+        &guest,
+        &mut view,
+        "convidado desktop conectar e conferir",
+        |v| v.connected && v.role == Role::Guest && v.matched && v.ready,
+    )
+    .await;
+
+    browser
+        .until(
+            "anfitrião pronto para começar",
+            "!document.getElementById('start-watching').disabled",
+        )
+        .await;
+    browser
+        .eval("document.getElementById('video').muted = true; document.getElementById('start-watching').click(); true")
+        .await;
+    host_until(&guest, &mut view, "convidado desktop reproduzir", |v| {
+        !v.player.paused && v.player.position > 1.0
+    })
+    .await;
+    browser
+        .until(
+            "vídeo tocando no navegador anfitrião",
+            "(() => { const v = document.getElementById('video'); return !v.paused && v.currentTime > 1; })()",
+        )
+        .await;
+
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let mut drifts = Vec::new();
+    for _ in 0..10 {
+        latest(&guest, &mut view);
+        if let Some(drift) = view.peer_drift {
+            drifts.push(drift.abs());
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let status = browser.text("status").await;
+    println!(
+        "anfitrião navegador; diferenças vistas pelo convidado desktop: {drifts:?}; navegador: {status}"
+    );
+    assert!(!drifts.is_empty(), "convidado não mediu a diferença");
+    let worst = drifts.iter().copied().fold(0.0, f64::max);
+    assert!(worst < 0.25, "fora de sincronia: {worst:.3}s");
+
+    browser
+        .eval("document.getElementById('toggle').click(); true")
+        .await;
+    host_until(&guest, &mut view, "convidado pausar", |v| v.player.paused).await;
+    browser
+        .until(
+            "anfitrião pausar",
+            "document.getElementById('video').paused",
+        )
+        .await;
+}
+
+async fn browser_host_and_browser_guest(mut host: Browser, mut guest: Browser) {
+    let fixture = fixture();
+    let (origin, _relay_address) = setup_web_only().await;
+    host.navigate(&origin).await;
+    host.until(
+        "botão criar sala",
+        "!document.getElementById('entry').hidden",
+    )
+    .await;
+    host.eval("document.getElementById('create-room').click(); true")
+        .await;
+    host.until(
+        "código gerado",
+        "!document.getElementById('room').hidden && /^\\d{4,8}-[a-z]+-[a-z]+$/.test(document.getElementById('host-invite-code').textContent.trim())",
+    )
+    .await;
+    let code = host.text("host-invite-code").await.trim().to_owned();
+    host.choose_file("pick", &fixture).await;
+
+    guest.navigate(&format!("{origin}/#{code}")).await;
+    guest
+        .until(
+            "convidado entrar na sala",
+            "!document.getElementById('room').hidden",
+        )
+        .await;
+    assert_eq!(
+        guest.eval("document.getElementById('stream').hidden").await,
+        json!(true),
+        "convidado não deve ver botão de streaming com anfitrião no navegador"
+    );
+    guest.choose_file("pick", &fixture).await;
+
+    host.until(
+        "anfitrião pronto",
+        "!document.getElementById('start-watching').disabled",
+    )
+    .await;
+    guest
+        .eval("document.getElementById('video').muted = true; true")
+        .await;
+    host.eval("document.getElementById('video').muted = true; document.getElementById('start-watching').click(); true")
+        .await;
+
+    host.until(
+        "anfitrião tocando",
+        "(() => { const v = document.getElementById('video'); return !v.paused && v.currentTime > 1; })()",
+    )
+    .await;
+    guest
+        .until(
+            "convidado tocando",
+            "(() => { const v = document.getElementById('video'); return !v.paused && v.currentTime > 1; })()",
+        )
+        .await;
+
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let host_t = host
+        .eval("document.getElementById('video').currentTime")
+        .await
+        .as_f64()
+        .unwrap();
+    let guest_t = guest
+        .eval("document.getElementById('video').currentTime")
+        .await
+        .as_f64()
+        .unwrap();
+    let diff = (host_t - guest_t).abs();
+    let host_status = host.text("status").await;
+    let guest_status = guest.text("status").await;
+    println!("navegador+navegador: diff={diff:.3}s host={host_status:?} guest={guest_status:?}");
+    assert!(
+        diff < 0.25,
+        "navegador+navegador fora de sincronia: {diff:.3}s"
+    );
+
+    host.eval("document.getElementById('toggle').click(); true")
+        .await;
+    host.until(
+        "anfitrião pausou",
+        "document.getElementById('video').paused",
+    )
+    .await;
+    guest
+        .until(
+            "convidado pausou",
+            "document.getElementById('video').paused",
+        )
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Firefox, libmpv e scripts/test-browser.sh"]
+async fn firefox_host_with_own_copy_plays_in_sync_with_desktop_guest() {
+    host_with_desktop_guest(Browser::firefox("host-desktop-guest").await).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Chrome ou Chromium, libmpv e scripts/test-browser.sh"]
+async fn chrome_host_with_own_copy_plays_in_sync_with_desktop_guest() {
+    let Some(binary) = chrome_binary() else {
+        eprintln!("Chrome/Chromium não encontrado; defina SYNC2GETHER_TEST_CHROME");
+        return;
+    };
+    host_with_desktop_guest(Browser::chrome(&binary, "host-desktop-guest").await).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Firefox e scripts/test-browser.sh"]
+async fn firefox_host_and_firefox_guest_play_in_sync_with_own_copy() {
+    let host = Browser::firefox("host-web-host").await;
+    let guest = Browser::firefox("host-web-guest").await;
+    browser_host_and_browser_guest(host, guest).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requer Firefox, libmpv e scripts/test-browser.sh"]
 async fn firefox_guest_selects_and_switches_embedded_subtitles_in_mkv() {

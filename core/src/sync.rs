@@ -86,11 +86,13 @@ pub struct Controller {
     large_since: Option<f64>,
     last_seek: Option<f64>,
     quiet_until: f64,
+    post_start_until: Option<f64>,
 }
 impl Controller {
     pub fn reset(&mut self, now: f64) {
         *self = Self {
             quiet_until: now + 500.0,
+            post_start_until: Some(now + 2500.0),
             ..Default::default()
         };
     }
@@ -103,18 +105,31 @@ impl Controller {
             .filtered
             .map_or(error, |old| old + (error - old) * 0.25);
         self.filtered = Some(filtered);
+        let post_start = self.post_start_until.is_some_and(|until| now <= until);
+        if !post_start {
+            self.post_start_until = None;
+        }
         let large = if paused {
             error.abs() > 0.1
+        } else if post_start {
+            filtered.abs() > 0.15
         } else {
             filtered.abs() > 0.6
         };
         if large {
             let since = *self.large_since.get_or_insert(now);
-            let persistence = if paused { 200.0 } else { 500.0 };
+            let persistence = if paused {
+                200.0
+            } else if post_start {
+                300.0
+            } else {
+                500.0
+            };
             if now - since >= persistence && self.last_seek.is_none_or(|last| now - last >= 2000.0)
             {
                 self.last_seek = Some(now);
                 self.quiet_until = now + 500.0;
+                self.post_start_until = None;
                 self.filtered = None;
                 self.active = false;
                 self.large_since = None;
@@ -199,5 +214,21 @@ mod tests {
         }
         c.reset(1000.0);
         assert_eq!(c.update(0.0, 10.0, true, 1100.0), Correction::None);
+    }
+    #[test]
+    fn post_start_offset_seeks_once_then_returns_to_normal_thresholds() {
+        let mut c = Controller::default();
+        c.reset(1000.0);
+        assert_eq!(c.update(0.1, 0.5, false, 1400.0), Correction::None);
+        assert!(matches!(
+            c.update(0.1, 0.5, false, 1500.0),
+            Correction::Speed(_)
+        ));
+        assert_eq!(c.update(0.4, 0.8, false, 1800.0), Correction::Seek(0.8));
+        assert_eq!(c.update(0.8, 1.2, false, 2000.0), Correction::None);
+        for step in 0..20 {
+            let t = 4000.0 + step as f64 * 50.0;
+            assert!(!matches!(c.update(1.0, 1.3, false, t), Correction::Seek(_)));
+        }
     }
 }

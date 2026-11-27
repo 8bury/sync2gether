@@ -18,7 +18,7 @@ use str0m::{
 };
 use sync2gether_core::{
     datachannel::{self, Item, Request},
-    protocol::WebStreamMse,
+    protocol::{SubtitleTrackInfo, WebStreamMse},
 };
 use tokio::{net::UdpSocket, sync::mpsc, task::JoinHandle};
 
@@ -34,6 +34,7 @@ pub struct WebHost {
     index: Arc<ChunkIndex>,
     duration: f64,
     remux: Option<Arc<remux::RemuxSession>>,
+    subtitles: Arc<remux::EmbeddedSubtitles>,
 }
 
 fn local_addresses(allow_loopback: bool) -> Vec<IpAddr> {
@@ -87,12 +88,12 @@ pub async fn prepare(
         return Err(crate::i18n::text().stream_errors.no_udp_port.into());
     }
     let probe_path = path.clone();
-    let remux = tokio::task::spawn_blocking(move || remux::RemuxSession::open(&probe_path))
-        .await
-        .ok()
-        .and_then(|res| res.ok())
-        .flatten()
-        .map(Arc::new);
+    let (remux, subtitles) =
+        tokio::task::spawn_blocking(move || remux::RemuxSession::open_for_web(&probe_path))
+            .await
+            .unwrap_or_else(|_| (None, remux::EmbeddedSubtitles::empty()));
+    let remux = remux.map(Arc::new);
+    let subtitles = Arc::new(subtitles);
     let mut host = WebHost {
         rtc: Rtc::builder().build(Instant::now()),
         sockets: HashMap::new(),
@@ -100,6 +101,7 @@ pub async fn prepare(
         index,
         duration,
         remux,
+        subtitles,
     };
     for (socket, local, reflexive) in bound {
         let socket = UdpSocket::from_std(socket).map_err(|e| e.to_string())?;
@@ -144,6 +146,12 @@ impl WebHost {
     }
     pub fn mse_info(&self) -> Option<WebStreamMse> {
         self.remux.as_ref().map(|r| r.probe().web_stream_mse())
+    }
+    pub fn subtitle_tracks(&self) -> Vec<SubtitleTrackInfo> {
+        self.subtitles.tracks()
+    }
+    pub fn embedded_subtitles(&self) -> Arc<remux::EmbeddedSubtitles> {
+        self.subtitles.clone()
     }
 
     fn drain(&mut self, happenings: &mut Vec<Happening>) -> Result<Instant, String> {

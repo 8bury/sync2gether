@@ -82,12 +82,13 @@ function gathered(pc) {
 }
 
 class Stream {
-  constructor({ guest, player, pump, now, onTracksChange }) {
+  constructor({ guest, player, pump, now, onTracksChange, onSubtitleTracks }) {
     this.guest = guest;
     this.player = player;
     this.ask = pump;
     this.now = now;
     this.onTracksChange = onTracksChange;
+    this.onSubtitleTracks = onSubtitleTracks;
     this.id = (crypto.getRandomValues(new Uint32Array(1))[0] >>> 1) + 1;
     this.phase = "preparing";
     this.error = null;
@@ -173,6 +174,7 @@ class Stream {
     if (this.phase !== "negotiating") return;
     clearTimeout(this.timer);
     this.answer = answer;
+    this.onSubtitleTracks?.(Array.isArray(answer.subtitle_tracks) ? answer.subtitle_tracks : []);
     if (answer.mse) {
       if (typeof MediaSource === "undefined" || !MediaSource.isTypeSupported(answer.mse.mime)) {
         this.fail("Este navegador não suporta o codec de vídeo deste arquivo. Use o app de desktop.", true);
@@ -301,6 +303,7 @@ class Stream {
     clearTimeout(this.timer);
     this.mse?.close();
     this.mse = null;
+    this.onSubtitleTracks?.([]);
     for (const { port } of this.pending) port.postMessage({ missing: true });
     this.pending = [];
     if (this.dc) {

@@ -82,6 +82,7 @@ impl Worker {
         self.net_rx = None;
         self.stop_stream(false);
         self.clear_shared_subtitle(false);
+        self.clear_embedded_subtitles();
         self.disconnected();
         self.session = Session::default();
         self.view.role = Role::Local;
@@ -391,6 +392,10 @@ impl Worker {
                     (Role::Guest, Message::WebStreamAnswer(_)) => {}
                     (Role::Guest, Message::SubtitleChunk(_)) => {}
                     (Role::Guest, Message::SubtitleClear) => {}
+                    (Role::Host, Message::SubtitleRequest { track }) => {
+                        self.request_embedded_subtitle(track);
+                    }
+                    (Role::Guest, Message::SubtitleFailed { .. }) => {}
                     (Role::Host, Message::StreamAnswer(answer)) if answer.valid() => {
                         self.handle_stream_answer(*answer);
                     }

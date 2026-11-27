@@ -14,7 +14,7 @@ use str0m::{
 use sync2gether::stream::{
     CHUNK_SIZE, ChunkIndex,
     ffmpeg::{self, Ffmpeg},
-    remux::RemuxSession,
+    remux::{RemuxSession, TextSubtitleCodec},
     webrtc,
 };
 use sync2gether_core::datachannel::{self, Assembly, Item, Request, decode_mse_index};
@@ -436,4 +436,137 @@ async fn webrtc_host_serves_mse_index_init_and_remuxed_segments() {
     assert!(contains_box(&init1, b"moov"));
 
     task.abort();
+}
+
+fn generate_mkv_with_subtitles(path: &Path, dir: &Path) {
+    let srt = dir.join("embedded-pt.srt");
+    let ass = dir.join("embedded-en.ass");
+    fs::write(
+        &srt,
+        "1\r\n00:00:01,000 --> 00:00:04,000\r\n<i>Primeira fala SRT</i>\r\n\r\n2\r\n00:00:06,000 --> 00:00:09,500\r\nSegunda fala SRT\r\n",
+    )
+    .unwrap();
+    fs::write(
+        &ass,
+        "[Script Info]\nScriptType: v4.00+\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,{\\an8\\i1}First ASS\\NSecond line\nDialogue: 0,0:00:05.00,0:00:06.00,Default,,0,0,0,,{\\p1}m 0 0 l 100 0 100 100\nDialogue: 0,0:00:06.50,0:00:09.50,Default,,0,0,0,,{\\b1}Third ASS cue\n",
+    )
+    .unwrap();
+    let status = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x180:rate=24",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000",
+            "-i",
+        ])
+        .arg(&srt)
+        .arg("-i")
+        .arg(&ass)
+        .args([
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-map",
+            "2:s:0",
+            "-map",
+            "3:s:0",
+            "-t",
+            "10",
+            "-c:v",
+            "libx264",
+            "-profile:v",
+            "baseline",
+            "-pix_fmt",
+            "yuv420p",
+            "-g",
+            "48",
+            "-c:a",
+            "ac3",
+            "-b:a",
+            "192k",
+            "-c:s:0",
+            "subrip",
+            "-metadata:s:s:0",
+            "language=por",
+            "-metadata:s:s:0",
+            "title=Portugues SRT",
+            "-disposition:s:0",
+            "default",
+            "-c:s:1",
+            "ass",
+            "-metadata:s:s:1",
+            "language=eng",
+            "-metadata:s:s:1",
+            "title=English ASS",
+            "-disposition:s:1",
+            "0",
+        ])
+        .arg(path)
+        .status()
+        .expect("falha ao executar ffmpeg");
+    assert!(
+        status.success(),
+        "ffmpeg falhou ao gerar MKV com legendas embutidas"
+    );
+}
+
+#[test]
+fn bitmap_subtitle_codecs_are_skipped_and_text_codecs_accepted() {
+    for bitmap in ["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"] {
+        assert_eq!(TextSubtitleCodec::from_codec_name(bitmap), None);
+    }
+    for text in ["subrip", "srt", "ass", "ssa", "webvtt", "text", "mov_text"] {
+        assert!(TextSubtitleCodec::from_codec_name(text).is_some());
+    }
+}
+
+#[test]
+fn mkv_extracts_embedded_srt_and_ass_subtitles_to_webvtt() {
+    if !has_ffmpeg_cli() || !ffmpeg::is_available() {
+        return;
+    }
+    let dir = cache_dir();
+    let mkv = dir.join("sample-subtitles.mkv");
+    generate_mkv_with_subtitles(&mkv, &dir);
+
+    let (remux, subtitles) = RemuxSession::open_for_web(&mkv);
+    assert!(remux.is_some());
+    let tracks = subtitles.tracks();
+    assert_eq!(tracks.len(), 2);
+    assert_eq!(tracks[0].index, 0);
+    assert_eq!(tracks[0].language.as_deref(), Some("por"));
+    assert_eq!(tracks[0].title.as_deref(), Some("Portugues SRT"));
+    assert_eq!(tracks[0].codec, "subrip");
+    assert!(tracks[0].default);
+
+    assert_eq!(tracks[1].index, 1);
+    assert_eq!(tracks[1].language.as_deref(), Some("eng"));
+    assert_eq!(tracks[1].title.as_deref(), Some("English ASS"));
+    assert_eq!(tracks[1].codec, "ass");
+    assert!(!tracks[1].default);
+
+    let (name0, vtt0) = subtitles.extract(0).unwrap();
+    assert!(name0.contains("Portugues SRT"));
+    assert!(vtt0.starts_with("WEBVTT\n\n"));
+    assert!(vtt0.contains("<i>Primeira fala SRT</i>"));
+    assert!(vtt0.contains("Segunda fala SRT"));
+
+    let (name1, vtt1) = subtitles.extract(1).unwrap();
+    assert!(name1.contains("English ASS"));
+    assert!(vtt1.starts_with("WEBVTT\n\n"));
+    assert!(vtt1.contains("First ASS\nSecond line"));
+    assert!(vtt1.contains("Third ASS cue"));
+    assert!(!vtt1.contains("{\\"));
+    assert!(!vtt1.contains("m 0 0 l 100"));
+
+    assert!(subtitles.extract(9).is_err());
 }

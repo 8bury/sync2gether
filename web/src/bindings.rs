@@ -124,6 +124,9 @@ impl WebGuest {
     pub fn stop_stream(&mut self, now: f64) {
         self.0.stop_stream(now);
     }
+    pub fn request_subtitle(&mut self, track: u8, now: f64) {
+        self.0.request_subtitle(track, now);
+    }
     pub fn resume_key(&self) -> Option<Vec<u8>> {
         self.0.resume_key().map(|key| key.to_vec())
     }

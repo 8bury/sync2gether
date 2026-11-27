@@ -50,10 +50,21 @@ A reprodução usa o `<video>` do navegador, sem decodificação própria:
   a página avisa para usar o app de desktop, já que recodificar vídeo fica fora
   do escopo.
 
-A página também suporta legendas externas (`.srt` e `.vtt`) via `<track>` e
-WebVTT: o convidado pode abrir um arquivo local (`.srt` é convertido para WebVTT
-na página) ou receber a legenda que o anfitrião compartilhar pelo canal cifrado
-da sala, com controle para ativar, desativar e ajustar o atraso.
+A página também suporta legendas via `<track>` e WebVTT:
+- **Legendas embutidas no streaming**: quando o anfitrião tem as bibliotecas do
+  FFmpeg disponíveis, faixas de texto embutidas no arquivo (SRT/SubRip, ASS/SSA,
+  WebVTT, `text` e `mov_text`) aparecem no menu de faixas do player. Ao escolher
+  uma faixa, o anfitrião extrai as falas sob demanda, converte para WebVTT (no
+  caso de ASS/SSA, remove tags de estilo e comandos de desenho, mantendo o texto
+  puro) e envia pelo canal cifrado da sala usando o mesmo transporte em pedaços
+  das legendas externas. Legendas baseadas em imagem (PGS, VobSub, DVB) não têm
+  texto e são ignoradas na listagem.
+- **Legendas externas (`.srt` e `.vtt`)**: o convidado pode abrir um arquivo
+  local (`.srt` é convertido para WebVTT na página) ou receber a legenda que o
+  anfitrião compartilhar pelo canal cifrado da sala. Quando existem faixas
+  embutidas e arquivo compartilhado ou local ao mesmo tempo, todos aparecem
+  juntos no menu de faixas, com controle para ativar, desativar e ajustar o
+  atraso.
 
 O streaming guarda até 256 MiB de blocos na memória (128 MiB em celulares e
 aparelhos com pouca memória). Não há cache em disco: depois de uma

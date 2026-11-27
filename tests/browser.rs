@@ -592,7 +592,12 @@ async fn play_in_sync(firefox: &mut Browser, host: &Runtime, view: &mut View) {
     assert!(!drifts.is_empty(), "anfitrião não mediu a diferença");
     let worst = drifts.iter().copied().fold(0.0, f64::max);
     assert!(worst < 0.25, "navegador fora de sincronia: {worst:.3}s");
-    assert!(status.starts_with("Sincronizado"), "{status}");
+    if !status.starts_with("Sincronizado") {
+        let diag = firefox
+            .eval("(() => { const v = document.getElementById('video'); const b = []; for (let i = 0; i < v.buffered.length; i++) b.push([v.buffered.start(i), v.buffered.end(i)]); return JSON.stringify({ t: v.currentTime, paused: v.paused, rs: v.readyState, buffered: b }); })()")
+            .await;
+        panic!("{status} diag={diag}");
+    }
 
     host.commands
         .send(Command::Control(Control::Pause))
@@ -801,6 +806,117 @@ async fn streaming_mkv(mut browser: Browser) {
             "document.getElementById('video').paused",
         )
         .await;
+}
+
+async fn streaming_mkv_subtitles(mut browser: Browser) {
+    let Setup {
+        host,
+        mut view,
+        url,
+        ..
+    } = setup_with_fixture(mkv_fixture()).await;
+    browser.navigate(&url).await;
+    browser
+        .until(
+            "botão de streaming MKV com legendas",
+            "!document.getElementById('room').hidden && !document.getElementById('stream').hidden",
+        )
+        .await;
+    host_until(&host, &mut view, "convidado do navegador MKV", |v| {
+        v.connected && v.peer_name.is_some()
+    })
+    .await;
+    browser
+        .eval("document.getElementById('stream').click(); true")
+        .await;
+    host_until(&host, &mut view, "cópia MKV pronta", |v| {
+        v.matched && v.peer_ready
+    })
+    .await;
+    browser
+        .until(
+            "legendas embutidas listadas no menu",
+            "document.querySelectorAll('#embedded-subtitle-list button').length === 2",
+        )
+        .await;
+
+    host.commands
+        .send(Command::Control(Control::Seek(2.0)))
+        .await
+        .unwrap();
+    browser
+        .until(
+            "posição inicial da legenda embutida",
+            "(() => { const v = document.getElementById('video'); return v.currentTime >= 1.5 && v.currentTime <= 4.0 && v.readyState >= 3; })()",
+        )
+        .await;
+
+    browser
+        .eval("document.getElementById('subtitles-btn').click(); document.querySelector('#embedded-subtitle-list button[data-embedded-index=\"0\"]').click(); true")
+        .await;
+    browser
+        .until(
+            "cue da legenda SRT embutida visível",
+            "(() => { const v = document.getElementById('video'); const t = v.textTracks && v.textTracks[0]; return Boolean(t && t.mode === 'showing' && t.activeCues && t.activeCues.length > 0 && t.activeCues[0].text.includes('Legenda embutida SRT inicio')); })()",
+        )
+        .await;
+
+    browser
+        .eval("document.querySelector('#embedded-subtitle-list button[data-embedded-index=\"1\"]').click(); true")
+        .await;
+    browser
+        .until(
+            "cue da legenda ASS embutida visível sem tags",
+            "(() => { const v = document.getElementById('video'); const t = v.textTracks && v.textTracks[0]; return Boolean(t && t.mode === 'showing' && t.activeCues && t.activeCues.length > 0 && t.activeCues[0].text.includes('Embedded ASS start') && !t.activeCues[0].text.includes('{\\\\')); })()",
+        )
+        .await;
+
+    host.commands
+        .send(Command::Control(Control::Seek(12.0)))
+        .await
+        .unwrap();
+    browser
+        .until(
+            "segundo cue ASS no tempo certo",
+            "(() => { const v = document.getElementById('video'); const t = v.textTracks && v.textTracks[0]; return Boolean(v.currentTime >= 11.5 && t && t.activeCues && t.activeCues.length > 0 && t.activeCues[0].text.includes('Embedded ASS middle')); })()",
+        )
+        .await;
+
+    browser
+        .eval("document.querySelector('#embedded-subtitle-list button[data-embedded-index=\"0\"]').click(); true")
+        .await;
+    browser
+        .until(
+            "volta para legenda SRT em cache no segundo trecho",
+            "(() => { const v = document.getElementById('video'); const t = v.textTracks && v.textTracks[0]; return Boolean(t && t.activeCues && t.activeCues.length > 0 && t.activeCues[0].text.includes('Legenda embutida SRT meio')); })()",
+        )
+        .await;
+
+    browser
+        .eval("document.getElementById('sub-opt-off').click(); true")
+        .await;
+    browser
+        .until(
+            "legenda embutida desativada",
+            "document.getElementById('video').textTracks.length === 0",
+        )
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Firefox, libmpv e scripts/test-browser.sh"]
+async fn firefox_guest_selects_and_switches_embedded_subtitles_in_mkv() {
+    streaming_mkv_subtitles(Browser::firefox("stream-mkv-subs").await).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requer Chrome ou Chromium, libmpv e scripts/test-browser.sh"]
+async fn chrome_guest_selects_and_switches_embedded_subtitles_in_mkv() {
+    let Some(binary) = chrome_binary() else {
+        eprintln!("Chrome/Chromium não encontrado; defina SYNC2GETHER_TEST_CHROME");
+        return;
+    };
+    streaming_mkv_subtitles(Browser::chrome(&binary, "stream-mkv-subs").await).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

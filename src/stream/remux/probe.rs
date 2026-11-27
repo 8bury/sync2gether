@@ -5,13 +5,17 @@ use super::super::ffmpeg::{
     AVMEDIA_TYPE_AUDIO, AVMEDIA_TYPE_SUBTITLE, AVMEDIA_TYPE_VIDEO, AVRational, Ffmpeg, read_at,
     write_at,
 };
+use super::subtitles::{SubtitleStreamMeta, TextSubtitleCodec};
 use std::{
     ffi::{CStr, c_int, c_uint, c_void},
     path::Path,
 };
 use sync2gether_core::{
     datachannel::{MseSegmentInfo, encode_mse_index},
-    protocol::{AudioTrackInfo, MAX_AUDIO_TRACKS, MAX_MSE_SEGMENTS, WebStreamMse},
+    protocol::{
+        AudioTrackInfo, MAX_AUDIO_TRACKS, MAX_MSE_SEGMENTS, MAX_SUBTITLE_TRACKS, SubtitleTrackInfo,
+        WebStreamMse,
+    },
 };
 
 const TARGET_SEGMENT_MS: u64 = 4_000;
@@ -45,7 +49,7 @@ pub struct MediaProbe {
     pub duration_secs: f64,
     pub audio_streams: Vec<AudioStreamMeta>,
     pub default_audio: Option<u8>,
-    pub subtitle_streams: Vec<c_int>,
+    pub subtitle_streams: Vec<SubtitleStreamMeta>,
     pub segments: Vec<SegmentSpec>,
     pub needs_remux: bool,
 }
@@ -434,6 +438,17 @@ fn should_remux(
     !(video_ok && audio_ok)
 }
 
+fn truncate_utf8(text: &mut String, max_bytes: usize) {
+    if text.len() <= max_bytes {
+        return;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+}
+
 pub fn probe_file_with(ff: &Ffmpeg, path: &Path) -> Result<MediaProbe, String> {
     let input = InputGuard::open(ff, path)?;
     let format_name = input.format_name();
@@ -465,16 +480,16 @@ pub fn probe_file_with(ff: &Ffmpeg, path: &Path) -> Result<MediaProbe, String> {
                     unsafe { (read_at(stream, 64), read_at(stream, 80)) };
                 // SAFETY: metadata is a valid AVDictionary pointer from AVStream.
                 let language = unsafe { ff.dict_string(metadata, c"language") }.map(|mut s| {
-                    s.truncate(32);
+                    truncate_utf8(&mut s, 32);
                     s
                 });
                 // SAFETY: metadata is a valid AVDictionary pointer from AVStream.
                 let title = unsafe { ff.dict_string(metadata, c"title") }.map(|mut s| {
-                    s.truncate(128);
+                    truncate_utf8(&mut s, 128);
                     s
                 });
                 let mut codec = ff.codec_name(codec_id);
-                codec.truncate(32);
+                truncate_utf8(&mut codec, 32);
                 let idx = audio_streams.len() as u8;
                 audio_streams.push(AudioStreamMeta {
                     info: AudioTrackInfo {
@@ -491,7 +506,38 @@ pub fn probe_file_with(ff: &Ffmpeg, path: &Path) -> Result<MediaProbe, String> {
                     copy_aac: codec_id == AV_CODEC_ID_AAC && channels <= 2,
                 });
             }
-            AVMEDIA_TYPE_SUBTITLE => subtitle_streams.push(i as c_int),
+            AVMEDIA_TYPE_SUBTITLE if subtitle_streams.len() < MAX_SUBTITLE_TRACKS => {
+                let mut codec_name = ff.codec_name(codec_id);
+                truncate_utf8(&mut codec_name, 32);
+                if let Some(text_codec) = TextSubtitleCodec::from_codec_name(&codec_name) {
+                    // SAFETY: AVStream.disposition (64) and metadata (80) in lavf 60..=63.
+                    let (disposition, metadata): (c_int, *const c_void) =
+                        unsafe { (read_at(stream, 64), read_at(stream, 80)) };
+                    // SAFETY: metadata is a valid AVDictionary pointer from AVStream.
+                    let language = unsafe { ff.dict_string(metadata, c"language") }.map(|mut s| {
+                        truncate_utf8(&mut s, 32);
+                        s
+                    });
+                    // SAFETY: metadata is a valid AVDictionary pointer from AVStream.
+                    let title = unsafe { ff.dict_string(metadata, c"title") }.map(|mut s| {
+                        truncate_utf8(&mut s, 128);
+                        s
+                    });
+                    let idx = subtitle_streams.len() as u8;
+                    subtitle_streams.push(SubtitleStreamMeta {
+                        info: SubtitleTrackInfo {
+                            index: idx,
+                            language,
+                            title,
+                            codec: codec_name,
+                            default: (disposition & AV_DISPOSITION_DEFAULT) != 0,
+                        },
+                        stream_index: i as c_int,
+                        codec: text_codec,
+                        time_base: stream_time_base(stream),
+                    });
+                }
+            }
             _ => {}
         }
     }

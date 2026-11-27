@@ -332,7 +332,165 @@ pub fn shift_webvtt(vtt: &str, delay_ms: i64) -> String {
     out
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubtitleCue {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssembledSubtitle {
+    pub name: String,
+    pub vtt: String,
+    pub track: Option<u8>,
+}
+
+pub fn build_webvtt(cues: &[SubtitleCue]) -> Result<String, SubtitleError> {
+    if cues.is_empty() {
+        return Err(SubtitleError::Empty);
+    }
+    let mut ordered: Vec<&SubtitleCue> = cues
+        .iter()
+        .filter(|c| c.end_ms > c.start_ms && !c.text.trim().is_empty())
+        .collect();
+    if ordered.is_empty() {
+        return Err(SubtitleError::Empty);
+    }
+    ordered.sort_by_key(|c| (c.start_ms, c.end_ms));
+    let mut out = String::from("WEBVTT\n\n");
+    for (idx, cue) in ordered.iter().enumerate() {
+        if idx > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format_vtt_time(cue.start_ms));
+        out.push_str(" --> ");
+        out.push_str(&format_vtt_time(cue.end_ms));
+        out.push('\n');
+        out.push_str(cue.text.trim());
+        out.push('\n');
+        if out.len() > MAX_SUBTITLE_BYTES {
+            return Err(SubtitleError::TooLarge);
+        }
+    }
+    Ok(out)
+}
+
+pub fn sanitize_srt_text(raw: &str) -> String {
+    let normalized = normalize_newlines(raw);
+    let mut lines = Vec::new();
+    for line in normalized.lines() {
+        lines.push(sanitize_srt_line(line));
+    }
+    lines.join("\n").trim().to_owned()
+}
+
+pub fn sanitize_ass_packet(raw: &str) -> String {
+    let normalized = normalize_newlines(raw);
+    let trimmed = normalized.trim();
+    let body = if let Some(rest) = trimmed.strip_prefix("Dialogue:") {
+        skip_commas(rest, 9).unwrap_or(rest)
+    } else {
+        skip_commas(trimmed, 8).unwrap_or(trimmed)
+    };
+    clean_ass_text(body)
+}
+
+fn skip_commas(input: &str, count: usize) -> Option<&str> {
+    let mut rest = input;
+    for _ in 0..count {
+        let pos = rest.find(',')?;
+        rest = &rest[pos + 1..];
+    }
+    Some(rest)
+}
+
+fn clean_ass_text(input: &str) -> String {
+    let mut plain = String::with_capacity(input.len());
+    let mut rest = input;
+    let mut drawing = false;
+    while !rest.is_empty() {
+        if rest.starts_with('{')
+            && let Some(end) = rest.find('}')
+        {
+            let tag_block = &rest[1..end];
+            if let Some(mode) = ass_drawing_mode(tag_block) {
+                drawing = mode;
+            }
+            rest = &rest[end + 1..];
+            continue;
+        }
+        if let Some(next_brace) = rest.find('{') {
+            if !drawing {
+                push_ass_fragment(&mut plain, &rest[..next_brace]);
+            }
+            rest = &rest[next_brace..];
+        } else {
+            if !drawing {
+                push_ass_fragment(&mut plain, rest);
+            }
+            break;
+        }
+    }
+    let mut out = String::with_capacity(plain.len());
+    for ch in plain.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(ch),
+        }
+    }
+    out.trim().to_owned()
+}
+
+fn ass_drawing_mode(block: &str) -> Option<bool> {
+    let mut mode = None;
+    let bytes = block.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 2 < bytes.len() && bytes[i + 1] == b'p' {
+            let next = bytes[i + 2];
+            if next.is_ascii_digit() {
+                mode = Some(next != b'0');
+            }
+        }
+        i += 1;
+    }
+    mode
+}
+
+fn push_ass_fragment(out: &mut String, text: &str) {
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some('N' | 'n') => {
+                    chars.next();
+                    out.push('\n');
+                }
+                Some('h') => {
+                    chars.next();
+                    out.push(' ');
+                }
+                _ => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+}
+
 pub fn split_chunks(id: u64, name: &str, vtt: &str) -> Result<Vec<SubtitleChunk>, SubtitleError> {
+    split_chunks_for_track(id, name, vtt, None)
+}
+
+pub fn split_chunks_for_track(
+    id: u64,
+    name: &str,
+    vtt: &str,
+    track: Option<u8>,
+) -> Result<Vec<SubtitleChunk>, SubtitleError> {
     if id == 0 || !valid_file_name(name) {
         return Err(SubtitleError::InvalidName);
     }
@@ -350,7 +508,7 @@ pub fn split_chunks(id: u64, name: &str, vtt: &str) -> Result<Vec<SubtitleChunk>
             end -= 1;
         }
         let mut piece = &vtt[start..end];
-        while serialized_too_large(id, name, piece) && end > start {
+        while serialized_too_large(id, name, piece, track) && end > start {
             end = start + (end - start) / 2;
             while end > start && !vtt.is_char_boundary(end) {
                 end -= 1;
@@ -376,17 +534,19 @@ pub fn split_chunks(id: u64, name: &str, vtt: &str) -> Result<Vec<SubtitleChunk>
             index: index as u32,
             total,
             data,
+            track,
         })
         .collect())
 }
 
-fn serialized_too_large(id: u64, name: &str, data: &str) -> bool {
+fn serialized_too_large(id: u64, name: &str, data: &str, track: Option<u8>) -> bool {
     let sample = crate::protocol::Message::SubtitleChunk(Box::new(SubtitleChunk {
         id,
         name: name.to_owned(),
         index: MAX_SUBTITLE_CHUNKS,
         total: MAX_SUBTITLE_CHUNKS,
         data: data.to_owned(),
+        track,
     }));
     serde_json::to_vec(&sample).is_ok_and(|bytes| bytes.len() > MAX_MESSAGE)
 }
@@ -395,6 +555,7 @@ fn serialized_too_large(id: u64, name: &str, data: &str) -> bool {
 pub struct SubtitleAssembler {
     id: u64,
     name: String,
+    track: Option<u8>,
     total: u32,
     received: u32,
     total_bytes: usize,
@@ -405,24 +566,26 @@ impl SubtitleAssembler {
     pub fn clear(&mut self) {
         self.id = 0;
         self.name.clear();
+        self.track = None;
         self.total = 0;
         self.received = 0;
         self.total_bytes = 0;
         self.parts.clear();
     }
 
-    pub fn push(&mut self, chunk: SubtitleChunk) -> Option<(String, String)> {
+    pub fn push(&mut self, chunk: SubtitleChunk) -> Option<AssembledSubtitle> {
         if !chunk.valid() {
             return None;
         }
         if self.id != chunk.id {
             self.id = chunk.id;
             self.name = chunk.name;
+            self.track = chunk.track;
             self.total = chunk.total;
             self.received = 0;
             self.total_bytes = 0;
             self.parts = vec![None; chunk.total as usize];
-        } else if self.total != chunk.total {
+        } else if self.total != chunk.total || self.track != chunk.track {
             self.clear();
             return None;
         }
@@ -439,12 +602,17 @@ impl SubtitleAssembler {
         }
         if self.received == self.total {
             let name = std::mem::take(&mut self.name);
+            let track = self.track;
             let mut full = String::with_capacity(self.total_bytes);
             for part in self.parts.drain(..) {
                 full.push_str(&part?);
             }
             self.clear();
-            Some((name, full))
+            Some(AssembledSubtitle {
+                name,
+                vtt: full,
+                track,
+            })
         } else {
             None
         }
@@ -545,8 +713,60 @@ mod tests {
         for chunk in chunks.into_iter().rev() {
             assembled = assembler.push(chunk);
         }
-        let (name, text) = assembled.expect("legenda completa");
-        assert_eq!(name, "filme.pt-BR.srt");
-        assert_eq!(text, vtt);
+        let assembled = assembled.expect("legenda completa");
+        assert_eq!(assembled.name, "filme.pt-BR.srt");
+        assert_eq!(assembled.vtt, vtt);
+        assert_eq!(assembled.track, None);
+
+        let embedded = split_chunks_for_track(9, "Português", &vtt, Some(2)).unwrap();
+        let mut emb_asm = SubtitleAssembler::default();
+        let mut emb_done = None;
+        for chunk in embedded {
+            assert_eq!(chunk.track, Some(2));
+            emb_done = emb_asm.push(chunk);
+        }
+        let emb = emb_done.expect("legenda embutida completa");
+        assert_eq!(emb.track, Some(2));
+        assert_eq!(emb.name, "Português");
+        assert_eq!(emb.vtt, vtt);
+    }
+
+    #[test]
+    fn sanitizes_ass_packets_and_builds_webvtt() {
+        let mkv_ass =
+            "0,0,Default,,0,0,0,,{\\an8\\i1}Primeira\\N{\\c&H00FF00&}Segunda\\hlinha & <teste>";
+        assert_eq!(
+            sanitize_ass_packet(mkv_ass),
+            "Primeira\nSegunda linha &amp; &lt;teste&gt;"
+        );
+        let dialogue = "Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\b1}Olá, mundo!";
+        assert_eq!(sanitize_ass_packet(dialogue), "Olá, mundo!");
+        let drawing = "1,0,Default,,0,0,0,,{\\p1}m 0 0 l 100 0 100 100{\\p0}Texto visível";
+        assert_eq!(sanitize_ass_packet(drawing), "Texto visível");
+        let drawing_only = "2,0,Default,,0,0,0,,{\\p1}m 0 0 l 100 0";
+        assert_eq!(sanitize_ass_packet(drawing_only), "");
+
+        let vtt = build_webvtt(&[
+            SubtitleCue {
+                start_ms: 5000,
+                end_ms: 7500,
+                text: "Depois".into(),
+            },
+            SubtitleCue {
+                start_ms: 1000,
+                end_ms: 3000,
+                text: "Antes".into(),
+            },
+            SubtitleCue {
+                start_ms: 2000,
+                end_ms: 2000,
+                text: "Ignorado".into(),
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            vtt,
+            "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nAntes\n\n00:00:05.000 --> 00:00:07.500\nDepois\n"
+        );
     }
 }

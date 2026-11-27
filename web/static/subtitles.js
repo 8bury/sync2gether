@@ -14,7 +14,11 @@ export class Subtitles {
     this.hooks = hooks || {};
     this.host = null;
     this.local = null;
+    this.embeddedTracks = [];
+    this.embeddedVtt = new Map();
     this.active = "off";
+    this.activeEmbedded = null;
+    this.loadingEmbedded = null;
     this.delayMs = 0;
     this.error = null;
     this.trackEl = null;
@@ -22,7 +26,7 @@ export class Subtitles {
   }
 
   hasAny() {
-    return Boolean(this.host || this.local);
+    return Boolean(this.host || this.local || this.embeddedTracks.length > 0);
   }
 
   isShowing() {
@@ -32,6 +36,9 @@ export class Subtitles {
   currentSource() {
     if (this.active === "host") return this.host;
     if (this.active === "local") return this.local;
+    if (this.active === "embedded" && this.activeEmbedded !== null) {
+      return this.embeddedVtt.get(this.activeEmbedded) || null;
+    }
     return null;
   }
 
@@ -52,6 +59,8 @@ export class Subtitles {
       const vtt = parse(bytes);
       this.local = { name: file.name, vtt };
       this.active = "local";
+      this.activeEmbedded = null;
+      this.loadingEmbedded = null;
       this.delayMs = 0;
       this.applyTrack();
       this.hooks.onChange?.();
@@ -68,6 +77,8 @@ export class Subtitles {
     this.host = { name, vtt };
     if (this.active !== "local") {
       this.active = "host";
+      this.activeEmbedded = null;
+      this.loadingEmbedded = null;
       this.delayMs = 0;
     }
     this.applyTrack();
@@ -84,8 +95,65 @@ export class Subtitles {
     this.hooks.onChange?.();
   }
 
+  setEmbeddedTracks(tracks) {
+    this.embeddedTracks = Array.isArray(tracks) ? tracks : [];
+    this.embeddedVtt.clear();
+    this.loadingEmbedded = null;
+    if (this.active === "embedded") {
+      this.active = "off";
+      this.activeEmbedded = null;
+      this.delayMs = 0;
+      this.applyTrack();
+    }
+    this.hooks.onChange?.();
+  }
+
+  clearEmbedded() {
+    this.setEmbeddedTracks([]);
+  }
+
+  selectEmbedded(index) {
+    this.error = null;
+    if (!this.embeddedTracks.some((t) => t.index === index)) return;
+    if (this.embeddedVtt.has(index)) {
+      this.loadingEmbedded = null;
+      this.active = "embedded";
+      this.activeEmbedded = index;
+      this.delayMs = 0;
+      this.applyTrack();
+      this.hooks.onChange?.();
+      return;
+    }
+    this.loadingEmbedded = index;
+    this.hooks.onRequestEmbedded?.(index);
+    this.hooks.onChange?.();
+  }
+
+  setEmbeddedVtt(index, name, vtt) {
+    this.error = null;
+    this.embeddedVtt.set(index, { name, vtt });
+    if (this.loadingEmbedded === index || (this.active === "embedded" && this.activeEmbedded === index)) {
+      this.loadingEmbedded = null;
+      this.active = "embedded";
+      this.activeEmbedded = index;
+      this.delayMs = 0;
+      this.applyTrack();
+    }
+    this.hooks.onChange?.();
+  }
+
+  failEmbedded(index) {
+    if (this.loadingEmbedded === index) {
+      this.loadingEmbedded = null;
+      this.error = "Não foi possível carregar esta legenda embutida.";
+      this.hooks.onChange?.();
+    }
+  }
+
   select(source) {
     this.error = null;
+    this.loadingEmbedded = null;
+    this.activeEmbedded = null;
     if (source === "host" && this.host) {
       this.active = "host";
     } else if (source === "local" && this.local) {
@@ -115,7 +183,11 @@ export class Subtitles {
   clearAll() {
     this.host = null;
     this.local = null;
+    this.embeddedTracks = [];
+    this.embeddedVtt.clear();
     this.active = "off";
+    this.activeEmbedded = null;
+    this.loadingEmbedded = null;
     this.delayMs = 0;
     this.error = null;
     this.removeTrack();

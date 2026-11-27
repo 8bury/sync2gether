@@ -58,6 +58,7 @@ impl Worker {
                         chunk_size: host.chunk_size(),
                         hash_table_digest: host.digest().to_owned(),
                         mse: host.mse_info(),
+                        subtitle_tracks: host.subtitle_tracks(),
                     }),
                     host: Box::new(host),
                 },
@@ -71,6 +72,8 @@ impl Worker {
         let id = answer.id;
         self.stream_waiting_since = None;
         self.view.stream.phase = StreamPhase::Connecting;
+        self.embedded_subtitles = Some(host.embedded_subtitles());
+        self.embedded_subtitle_cache.clear();
         self.send(Message::WebStreamAnswer(Box::new(answer)));
         self.stream_task = Some(host.run(id, self.stream_tx.clone()));
     }

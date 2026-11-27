@@ -8,6 +8,7 @@ pub const MAX_SUBTITLE_BYTES: usize = 1024 * 1024;
 pub const MAX_SUBTITLE_CHUNK: usize = 6 * 1024;
 pub const MAX_SUBTITLE_CHUNKS: u32 = 256;
 pub const MAX_AUDIO_TRACKS: usize = 32;
+pub const MAX_SUBTITLE_TRACKS: usize = 32;
 pub const MAX_MSE_SEGMENTS: u32 = 100_000;
 pub const MAX_MSE_SEGMENT_BYTES: usize = 32 * 1024 * 1024;
 
@@ -154,6 +155,31 @@ impl WebStreamMse {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubtitleTrackInfo {
+    pub index: u8,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub codec: String,
+    pub default: bool,
+}
+impl SubtitleTrackInfo {
+    pub fn valid(&self) -> bool {
+        self.index < u8::MAX
+            && !self.codec.is_empty()
+            && self.codec.len() <= 32
+            && self.codec.bytes().all(|b| b.is_ascii_graphic())
+            && self
+                .language
+                .as_deref()
+                .is_none_or(|s| !s.is_empty() && s.len() <= 32 && !s.chars().any(char::is_control))
+            && self
+                .title
+                .as_deref()
+                .is_none_or(|s| !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WebStreamAnswer {
     pub id: u64,
@@ -165,6 +191,8 @@ pub struct WebStreamAnswer {
     pub hash_table_digest: String,
     #[serde(default)]
     pub mse: Option<WebStreamMse>,
+    #[serde(default)]
+    pub subtitle_tracks: Vec<SubtitleTrackInfo>,
 }
 impl WebStreamAnswer {
     pub fn valid(&self) -> bool {
@@ -180,6 +208,8 @@ impl WebStreamAnswer {
             && self.media.bytes.div_ceil(u64::from(self.chunk_size)) <= max_chunks
             && valid_hex_64(&self.hash_table_digest)
             && self.mse.as_ref().is_none_or(WebStreamMse::valid)
+            && self.subtitle_tracks.len() <= MAX_SUBTITLE_TRACKS
+            && self.subtitle_tracks.iter().all(SubtitleTrackInfo::valid)
     }
 }
 
@@ -190,6 +220,8 @@ pub struct SubtitleChunk {
     pub index: u32,
     pub total: u32,
     pub data: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track: Option<u8>,
 }
 impl SubtitleChunk {
     pub fn valid(&self) -> bool {
@@ -485,6 +517,12 @@ pub enum Message {
     WebStreamAnswer(Box<WebStreamAnswer>),
     SubtitleChunk(Box<SubtitleChunk>),
     SubtitleClear,
+    SubtitleRequest {
+        track: u8,
+    },
+    SubtitleFailed {
+        track: u8,
+    },
 }
 
 #[cfg(test)]
@@ -542,6 +580,13 @@ mod tests {
             chunk_size: 256 * 1024,
             hash_table_digest: "b".repeat(64),
             mse: None,
+            subtitle_tracks: vec![SubtitleTrackInfo {
+                index: 0,
+                language: Some("por".into()),
+                title: Some("Português".into()),
+                codec: "subrip".into(),
+                default: true,
+            }],
         };
         assert!(answer.valid());
         let mse = WebStreamMse {

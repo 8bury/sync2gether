@@ -156,7 +156,13 @@ function runPreview(scenario) {
   showRoom(previewFixture(scenario));
   if (scenario === "mkv-streaming" || scenario === "audio-menu") {
     const sampleVtt = "WEBVTT\n\n00:00:00.000 --> 02:00:00.000\nO mesmo filme, no mesmo segundo.\n";
+    subtitles.setEmbeddedTracks([
+      { index: 0, language: "por", title: "Português (SRT)", codec: "subrip", default: true },
+      { index: 1, language: "eng", title: "English (ASS)", codec: "ass", default: false },
+    ]);
+    subtitles.setEmbeddedVtt(0, "Português (SRT)", sampleVtt);
     subtitles.setHost("Filme.de.demonstracao.pt-BR.srt", sampleVtt);
+    subtitles.selectEmbedded(0);
     setAudioTracks(
       [
         { index: 0, language: "por", title: "Português (Dublado)", codec: "ac3", channels: 6, default: true },

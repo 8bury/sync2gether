@@ -1,7 +1,9 @@
 mod probe;
+mod subtitles;
 mod transcode;
 
 pub use probe::{AudioStreamMeta, MediaProbe, SegmentSpec, probe_file_with};
+pub use subtitles::{EmbeddedSubtitles, SubtitleStreamMeta, TextSubtitleCodec};
 
 use super::ffmpeg::{
     AV_NOPTS_VALUE, AV_PKT_FLAG_KEY, AVRational, AVSEEK_FLAG_BACKWARD, Ffmpeg, FfmpegVersions,
@@ -177,6 +179,44 @@ impl RemuxSession {
             probe,
             cache: Mutex::new(SegmentCache::default()),
         }))
+    }
+
+    pub fn open_for_web(path: &Path) -> (Option<Self>, EmbeddedSubtitles) {
+        let loaded = if let Some(dir) =
+            std::env::var_os("SYNC2GETHER_FFMPEG_DIR").filter(|v| !v.is_empty())
+        {
+            match Ffmpeg::load_from_dir(Some(Path::new(&dir))) {
+                Ok(ff) => Some(ff),
+                Err(_) => return (None, EmbeddedSubtitles::empty()),
+            }
+        } else {
+            None
+        };
+        let ff_ref = match &loaded {
+            Some(ff) => ff,
+            None => match super::ffmpeg::global() {
+                Ok(ff) => ff,
+                Err(_) => return (None, EmbeddedSubtitles::empty()),
+            },
+        };
+        let Ok(probe) = probe_file_with(ff_ref, path) else {
+            return (None, EmbeddedSubtitles::empty());
+        };
+        let remux = if probe.needs_remux
+            && !probe.segments.is_empty()
+            && verify_transcode_abi(ff_ref, path, &probe).is_ok()
+        {
+            Some(Self {
+                ff: loaded,
+                path: path.to_path_buf(),
+                probe: probe.clone(),
+                cache: Mutex::new(SegmentCache::default()),
+            })
+        } else {
+            None
+        };
+        let subtitles = EmbeddedSubtitles::from_probe(path.to_path_buf(), &probe, remux.is_some());
+        (remux, subtitles)
     }
 
     fn ff(&self) -> &Ffmpeg {
@@ -356,15 +396,17 @@ impl RemuxSession {
         )?;
         out.clear_bytes();
 
-        // SAFETY: Seeking input file to the segment's keyframe PTS.
-        let _ = unsafe {
-            (ff.av_seek_frame)(
-                input.ctx,
-                self.probe.video_stream,
-                seg.start_pts,
-                AVSEEK_FLAG_BACKWARD,
-            )
-        };
+        if index > 0 {
+            // SAFETY: Seeking input file to the segment's keyframe PTS.
+            let _ = unsafe {
+                (ff.av_seek_frame)(
+                    input.ctx,
+                    self.probe.video_stream,
+                    seg.start_pts,
+                    AVSEEK_FLAG_BACKWARD,
+                )
+            };
+        }
 
         let end_ms = seg.start_ms.saturating_add(u64::from(seg.duration_ms));
         let origin_audio_pts = audio.map(|meta| {
@@ -409,8 +451,9 @@ impl RemuxSession {
                 let ts = if pts != AV_NOPTS_VALUE { pts } else { dts };
                 let is_key = (flags & AV_PKT_FLAG_KEY) != 0;
                 if !video_started
+                    && is_key
                     && ts != AV_NOPTS_VALUE
-                    && (ts >= seg.start_pts || (is_key && ts >= seg.start_pts.saturating_sub(2)))
+                    && ts >= seg.start_pts.saturating_sub(2)
                 {
                     video_started = true;
                 }

@@ -4,14 +4,18 @@ use crate::{
     protocol::{MAX_SUBTITLE_BYTES, Message, SubtitleChunk},
 };
 use std::path::PathBuf;
-use sync2gether_core::subtitle::{SubtitleError, from_bytes, split_chunks};
+use sync2gether_core::subtitle::{SubtitleError, from_bytes, split_chunks, split_chunks_for_track};
 
 pub(super) struct SharedSubtitle {
     chunks: Vec<SubtitleChunk>,
 }
 
-pub(super) struct SubtitleLoad {
-    result: Result<Option<(PathBuf, String, Vec<SubtitleChunk>)>, String>,
+pub(super) enum SubtitleLoad {
+    External(Result<Option<(PathBuf, String, Vec<SubtitleChunk>)>, String>),
+    Embedded {
+        track: u8,
+        result: Result<Vec<SubtitleChunk>, String>,
+    },
 }
 
 fn load_subtitle_file(
@@ -62,7 +66,7 @@ impl Worker {
             let result = selected
                 .map(|path| load_subtitle_file(path, id))
                 .transpose();
-            let _ = tx.blocking_send(SubtitleLoad { result });
+            let _ = tx.blocking_send(SubtitleLoad::External(result));
         });
     }
 
@@ -70,8 +74,8 @@ impl Worker {
         if self.view.role != Role::Host {
             return;
         }
-        match loaded.result {
-            Ok(Some((path, name, chunks))) => {
+        match loaded {
+            SubtitleLoad::External(Ok(Some((path, name, chunks)))) => {
                 self.view.error = None;
                 self.view.shared_subtitle = Some(name);
                 self.shared_subtitle = Some(SharedSubtitle { chunks });
@@ -79,11 +83,72 @@ impl Worker {
                 self.queue_shared_subtitle();
                 self.drain_subtitle_outbox();
             }
-            Ok(None) => {}
-            Err(error) => {
+            SubtitleLoad::External(Ok(None)) => {}
+            SubtitleLoad::External(Err(error)) => {
                 self.view.error = Some(error);
             }
+            SubtitleLoad::Embedded { track, result } => {
+                if !self.view.connected || !self.session.state.guest.web_guest {
+                    return;
+                }
+                match result {
+                    Ok(chunks) => {
+                        self.embedded_subtitle_cache.insert(track, chunks.clone());
+                        self.queue_embedded_chunks(&chunks);
+                        self.drain_subtitle_outbox();
+                    }
+                    Err(_) => {
+                        self.subtitle_outbox
+                            .push_back(Message::SubtitleFailed { track });
+                        self.drain_subtitle_outbox();
+                    }
+                }
+            }
         }
+    }
+
+    pub(super) fn request_embedded_subtitle(&mut self, track: u8) {
+        if self.view.role != Role::Host
+            || !self.view.connected
+            || !self.session.state.guest.web_guest
+        {
+            return;
+        }
+        if let Some(cached) = self.embedded_subtitle_cache.get(&track).cloned() {
+            self.queue_embedded_chunks(&cached);
+            self.drain_subtitle_outbox();
+            return;
+        }
+        let Some(embedded) = self.embedded_subtitles.clone() else {
+            self.subtitle_outbox
+                .push_back(Message::SubtitleFailed { track });
+            self.drain_subtitle_outbox();
+            return;
+        };
+        self.subtitle_id = self.subtitle_id.wrapping_add(1).max(1);
+        let id = self.subtitle_id;
+        let tx = self.subtitle_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = embedded.extract(track).and_then(|(name, vtt)| {
+                split_chunks_for_track(id, &name, &vtt, Some(track))
+                    .map_err(|_| "Falha ao fatiar legenda embutida.".to_owned())
+            });
+            let _ = tx.blocking_send(SubtitleLoad::Embedded { track, result });
+        });
+    }
+
+    fn queue_embedded_chunks(&mut self, chunks: &[SubtitleChunk]) {
+        self.subtitle_outbox
+            .retain(|msg| !matches!(msg, Message::SubtitleChunk(c) if c.track.is_some()));
+        for chunk in chunks {
+            self.subtitle_outbox
+                .push_back(Message::SubtitleChunk(Box::new(chunk.clone())));
+        }
+    }
+
+    pub(super) fn clear_embedded_subtitles(&mut self) {
+        self.embedded_subtitles = None;
+        self.embedded_subtitle_cache.clear();
     }
 
     pub(super) fn clear_shared_subtitle(&mut self, notify: bool) {

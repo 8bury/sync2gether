@@ -146,7 +146,12 @@ vídeo, GPU ou sincronização entre PCs.
   `libavcodec`, `libswresample`, `libavutil`) para gerar sob demanda segmentos
   fMP4 com cópia direta de vídeo, conversão apenas do áudio incompatível para
   AAC e índice de quadros-chave para busca rápida no MSE (`web/static/mse.js`).
-  Sem as bibliotecas FFmpeg no anfitrião, cai de volta para o envio direto.
+  `stream/remux/subtitles.rs` extrai sob demanda faixas de legenda de texto
+  embutidas (SRT/SubRip, ASS/SSA, WebVTT, `text`, `mov_text`; legendas em bitmap
+  como PGS/VobSub/DVB são ignoradas), converte para WebVTT e envia pelo mesmo
+  caminho fatiado de `SubtitleChunk` (`core/src/subtitle.rs`,
+  `runtime/subtitle.rs`) ao convidado do navegador. Sem as bibliotecas FFmpeg no
+  anfitrião, cai de volta para o envio direto.
 - `network.rs` implementa TCP com mensagens enquadradas, limite de tamanho,
   autenticação da sala, timeout de heartbeat e reconexão.
 - `protocol.rs` define as mensagens Serde e a versão do protocolo.

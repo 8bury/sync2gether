@@ -68,8 +68,16 @@ const player = new Player($("video"), {
 export const subtitles = new Subtitles($("video"), {
   parse: (bytes) => parse_subtitle(bytes),
   shift: (vtt, delayMs) => shift_subtitle(vtt, delayMs),
+  onRequestEmbedded: (index) => call((g) => g.request_subtitle(index, now())),
   onChange: () => renderSubtitles(),
 });
+
+function subtitleTrackLabel(track) {
+  if (track.title && track.language) return `${track.title} · ${track.language}`;
+  if (track.title) return track.title;
+  if (track.language) return track.language;
+  return `Faixa ${track.index + 1}`;
+}
 
 function audioTrackLabel(track) {
   if (track.title && track.language) return `${track.title} · ${track.language}`;
@@ -149,6 +157,35 @@ function renderSubtitles() {
   };
 
   setOpt(offBtn, subtitles.active === "off");
+
+  const embeddedList = $("embedded-subtitle-list");
+  embeddedList.innerHTML = "";
+  embeddedList.hidden = subtitles.embeddedTracks.length === 0;
+  for (const track of subtitles.embeddedTracks) {
+    const selected = subtitles.active === "embedded" && subtitles.activeEmbedded === track.index;
+    const loading = subtitles.loadingEmbedded === track.index;
+    const item = document.createElement("button");
+    item.className = "subtitle-option" + (selected ? " is-selected" : "");
+    item.type = "button";
+    item.setAttribute("role", "radio");
+    item.setAttribute("aria-checked", String(selected));
+    item.dataset.embeddedIndex = String(track.index);
+    const tag = document.createElement("span");
+    tag.className = "subtitle-option-tag";
+    tag.textContent = loading ? "Carregando…" : "Embutida";
+    item.appendChild(tag);
+    const label = document.createElement("span");
+    label.className = "subtitle-option-label";
+    label.textContent = subtitleTrackLabel(track);
+    label.title = label.textContent;
+    item.appendChild(label);
+    item.addEventListener("click", () => {
+      noteActivity();
+      subtitles.selectEmbedded(track.index);
+    });
+    embeddedList.appendChild(item);
+  }
+
   hostBtn.hidden = !subtitles.host;
   if (subtitles.host) {
     $("sub-host-name").textContent = subtitles.host.name;
@@ -254,11 +291,17 @@ function pump() {
     } else if (command.kind.startsWith("stream_")) {
       app.stream?.command(command);
     } else if (command.kind === "subtitle_received") {
-      subtitles.setHost(command.name, command.vtt);
-      const peer = app.view?.peer || "o anfitrião";
-      setToast(`Legenda compartilhada por ${peer}.`);
+      if (command.track !== undefined && command.track !== null) {
+        subtitles.setEmbeddedVtt(command.track, command.name, command.vtt);
+      } else {
+        subtitles.setHost(command.name, command.vtt);
+        const peer = app.view?.peer || "o anfitrião";
+        setToast(`Legenda compartilhada por ${peer}.`);
+      }
     } else if (command.kind === "subtitle_cleared") {
       subtitles.clearHost();
+    } else if (command.kind === "subtitle_failed") {
+      subtitles.failEmbedded(command.track);
     } else {
       player.run(command);
     }
@@ -352,6 +395,7 @@ function chooseFile(file) {
   app.stream?.stop();
   app.stream = null;
   setAudioTracks([], null);
+  subtitles.clearEmbedded();
   app.forcePrepare = false;
   const id = ++app.hashJob;
   app.guest.set_loading(file.name, 0, file.size);
@@ -393,12 +437,14 @@ export function startStreaming(createStream) {
   $("hashing").hidden = true;
   app.stream?.stop();
   setAudioTracks([], null);
+  subtitles.clearEmbedded();
   app.stream = createStream({
     guest: app.guest,
     player,
     pump,
     now,
     onTracksChange: (tracks, active) => setAudioTracks(tracks, active),
+    onSubtitleTracks: (tracks) => subtitles.setEmbeddedTracks(tracks),
   });
 }
 

@@ -49,17 +49,43 @@ impl PlayerStatus {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Command {
-    Connect { at: f64 },
+    Connect {
+        at: f64,
+    },
     Close,
-    Prepare { token: u64, position: f64 },
-    Schedule { token: u64, at: f64 },
-    Pause { paused: bool },
-    Seek { position: f64 },
-    Speed { speed: f64 },
-    StreamAnswer { answer: Box<WebStreamAnswer> },
-    StreamStopped { id: u64 },
-    SubtitleReceived { name: String, vtt: String },
+    Prepare {
+        token: u64,
+        position: f64,
+    },
+    Schedule {
+        token: u64,
+        at: f64,
+    },
+    Pause {
+        paused: bool,
+    },
+    Seek {
+        position: f64,
+    },
+    Speed {
+        speed: f64,
+    },
+    StreamAnswer {
+        answer: Box<WebStreamAnswer>,
+    },
+    StreamStopped {
+        id: u64,
+    },
+    SubtitleReceived {
+        name: String,
+        vtt: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        track: Option<u8>,
+    },
     SubtitleCleared,
+    SubtitleFailed {
+        track: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -407,6 +433,13 @@ impl Guest {
         }
     }
 
+    pub fn request_subtitle(&mut self, track: u8, now: f64) {
+        self.now = now;
+        if self.connected {
+            self.send(Message::SubtitleRequest { track });
+        }
+    }
+
     fn end_stream(&mut self) {
         let was_streaming = self.presence.streaming;
         self.presence.streaming = false;
@@ -571,13 +604,20 @@ impl Guest {
                 }
             }
             Message::SubtitleChunk(chunk) if chunk.valid() => {
-                if let Some((name, vtt)) = self.subtitles.push(*chunk) {
-                    self.commands.push(Command::SubtitleReceived { name, vtt });
+                if let Some(assembled) = self.subtitles.push(*chunk) {
+                    self.commands.push(Command::SubtitleReceived {
+                        name: assembled.name,
+                        vtt: assembled.vtt,
+                        track: assembled.track,
+                    });
                 }
             }
             Message::SubtitleClear => {
                 self.subtitles.clear();
                 self.commands.push(Command::SubtitleCleared);
+            }
+            Message::SubtitleFailed { track } => {
+                self.commands.push(Command::SubtitleFailed { track });
             }
             Message::Pong {
                 sent_ms,

@@ -127,7 +127,7 @@ impl Browser {
                 }
                 Command::Prepare { token, position } => self.prepared.push((token, position)),
                 Command::Schedule { token, at } => self.scheduled.push((token, at)),
-                Command::SubtitleReceived { name, vtt } => self.subtitles.push((name, vtt)),
+                Command::SubtitleReceived { name, vtt, .. } => self.subtitles.push((name, vtt)),
                 Command::SubtitleCleared => self.subtitles_cleared += 1,
                 _ => {}
             }
@@ -641,7 +641,9 @@ async fn assert_desktop_guest_receives_no_subtitles(rx: &mut mpsc::Receiver<Even
     while Instant::now() < deadline {
         match timeout(Duration::from_millis(50), rx.recv()).await {
             Ok(Some(Event::Message(message, _))) => match *message {
-                Message::SubtitleChunk(_) | Message::SubtitleClear => {
+                Message::SubtitleChunk(_)
+                | Message::SubtitleClear
+                | Message::SubtitleFailed { .. } => {
                     panic!("convidado desktop recebeu mensagem de legenda");
                 }
                 Message::State(_) => states += 1,

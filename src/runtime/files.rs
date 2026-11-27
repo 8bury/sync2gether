@@ -145,6 +145,7 @@ impl Worker {
                         self.previous = None;
                         self.stop_stream(true);
                         self.clear_shared_subtitle(self.view.role == super::Role::Host);
+                        self.clear_embedded_subtitles();
                         self.local_media = Some((path.clone(), Arc::new(index)));
                         if self.view.role == super::Role::Host {
                             self.session.apply(Control::Pause, self.now());
